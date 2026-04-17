@@ -8,6 +8,7 @@ from .extractors import (
     PortAnalyzer,
 )
 from .params import ParameterResolver
+from .class_utils import ClassExtractor
 
 __all__ = [
     "SVParser",
@@ -15,4 +16,5 @@ __all__ = [
     "SignalExtractor",
     "PortAnalyzer",
     "ParameterResolver",
+    "ClassExtractor",
 ]
