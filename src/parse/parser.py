@@ -1,9 +1,8 @@
 """
-SystemVerilog 解析器 - 简化版
+SystemVerilog 解析器
 """
 import pyslang
 from typing import Optional, List, Dict, Any
-from pathlib import Path
 
 
 class SVParser:
@@ -32,7 +31,11 @@ class SVParser:
         
         tree = pyslang.SyntaxTree.fromText(code, filename)
         self.compilation.addSyntaxTree(tree)
+        
+        # 保存以便后续查询
+        self.trees[key] = tree
         self._parse_cache[key] = tree
+        
         return tree
     
     def parse_files(self, filepaths: List[str]) -> Dict[str, pyslang.SyntaxTree]:
@@ -61,29 +64,21 @@ class SVParser:
     def get_modules(self, filepath: str = None) -> List[Any]:
         """获取模块列表"""
         modules = []
-        trees = [self.trees[filepath]] if filepath else self.trees.values()
+        
+        if filepath:
+            trees = [self.trees.get(filepath)]
+        else:
+            trees = list(self.trees.values())
         
         for tree in trees:
-            # 遍历 member 查找 module
-            def find_modules(node):
-                if hasattr(node, 'kind'):
-                    # 检查是否是模块（通过字符串匹配）
-                    if 'ModuleDeclaration' in str(type(node)):
-                        return [node]
-                    # 递归查找
-                    if hasattr(node, 'members'):
-                        result = []
-                        for m in node.members:
-                            result.extend(find_modules(m))
-                        return result
-                    if hasattr(node, 'body'):
-                        result = []
-                        for m in node.body:
-                            result.extend(find_modules(m))
-                        return result
-                return []
+            if not tree:
+                continue
             
-            modules.extend(find_modules(tree.root))
+            # 检查 root 是否是模块
+            if hasattr(tree, 'root') and tree.root:
+                type_name = str(type(tree.root))
+                if 'Module' in type_name:
+                    modules.append(tree.root)
         
         return modules
     

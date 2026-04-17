@@ -2,8 +2,13 @@
 Driver Tracer - 追踪信号驱动源
 """
 import pyslang
-from typing import List, Dict, Any, Optional
-from ..core.models import Driver, DriverKind
+from typing import List, Any
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from core.models import Driver, DriverKind
 
 
 class DriverTracer:
@@ -17,146 +22,186 @@ class DriverTracer:
         """查找信号的驱动源"""
         drivers = []
         
-        # 获取模块
-        if module_name:
-            module = self.parser.get_module_by_name(module_name)
-            if module:
-                drivers.extend(self._find_in_module(module, signal_name))
-        else:
-            # 全局搜索
-            for module in self.parser.get_modules():
-                drivers.extend(self._find_in_module(module, signal_name))
+        for key, tree in self.parser.trees.items():
+            if not tree or not hasattr(tree, 'root') or not tree.root:
+                continue
+            
+            root = tree.root
+            
+            if 'ModuleDeclaration' not in str(type(root)):
+                continue
+            
+            header = getattr(root, 'header', None)
+            name = ""
+            if header:
+                name_attr = getattr(header, 'name', None)
+                if name_attr:
+                    name = name_attr.value
+            
+            if module_name and name != module_name:
+                continue
+            
+            drivers.extend(self._find_in_module(root, signal_name))
         
         return drivers
     
     def _find_in_module(self, module, signal_name: str) -> List[Driver]:
-        """在模块中查找驱动"""
+        if not module:
+            return []
+        
         drivers = []
         
-        # 遍历模块成员
-        if not hasattr(module, 'members'):
-            return drivers
+        # 检查 module.members
+        if hasattr(module, 'members') and module.members:
+            for m in module.members:
+                drivers.extend(self._visit_member(m, signal_name))
         
-        for member in module.members:
-            if not hasattr(member, 'kind'):
-                continue
-            
-            kind = member.kind
-            
-            if kind == pyslang.SyntaxKind.ContinuousAssign:
-                drivers.extend(self._extract_continuous_assign(member, signal_name))
-            elif kind == pyslang.SyntaxKind.AlwaysBlock:
-                drivers.extend(self._extract_always_block(member, signal_name))
+        # 检查 module.body
+        if hasattr(module, 'body') and module.body:
+            for b in module.body:
+                drivers.extend(self._visit_member(b, signal_name))
+        
+        return drivers
+    
+    def _visit_member(self, node, signal_name: str) -> List[Driver]:
+        if not node:
+            return []
+        
+        drivers = []
+        type_name = str(type(node))
+        
+        # ContinuousAssign
+        if 'ContinuousAssign' in type_name:
+            drivers.extend(self._extract_continuous_assign(node, signal_name))
+        
+        # Always block
+        elif 'Always' in type_name:
+            drivers.extend(self._extract_always_block(node, signal_name))
+        
+        # 递归遍历
+        elif 'Declaration' in type_name or 'Block' in type_name or 'Statement' in type_name:
+            for attr in ['members', 'body', 'statements']:
+                if hasattr(node, attr):
+                    child = getattr(node, attr)
+                    if child:
+                        if isinstance(child, list):
+                            for c in child:
+                                drivers.extend(self._visit_member(c, signal_name))
+                        else:
+                            drivers.extend(self._visit_member(child, signal_name))
         
         return drivers
     
     def _extract_continuous_assign(self, assign, signal_name: str) -> List[Driver]:
-        """提取连续赋值驱动"""
         drivers = []
         
-        if not hasattr(assign, 'assignment') or not assign.assignment:
+        if not hasattr(assign, 'assignments') or not assign.assignments:
             return drivers
         
-        for stmt in assign.assignment:
-            if not hasattr(stmt, 'variable') or not stmt.variable:
+        for stmt in assign.assignments:
+            if not hasattr(stmt, 'left'):
                 continue
             
-            # 检查是否是目标信号
-            var_name = stmt.variable.name.value if hasattr(stmt.variable, 'name') else ""
+            var = stmt.left
+            var_name = str(var).strip()
+            
             if var_name == signal_name:
+                # 获取位置
+                line = 0
+                try:
+                    if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
+                        loc = stmt.getFirstToken().location
+                        line = loc.offset  # 使用 offset 作为位置
+                except:
+                    pass
+                
+                source = str(stmt.right) if hasattr(stmt, 'right') else ""
+                
                 drivers.append(Driver(
                     signal_name=signal_name,
                     driver_kind=DriverKind.ASSIGN,
-                    source_expr=str(stmt.value) if hasattr(stmt, 'value') else "",
-                    line=stmt.getFirstToken().location.line if hasattr(stmt, 'getFirstToken') else 0,
+                    source_expr=source,
+                    line=line,
                 ))
         
         return drivers
     
     def _extract_always_block(self, always, signal_name: str) -> List[Driver]:
-        """提取 always 块驱动"""
         drivers = []
         
         if not hasattr(always, 'statement') or not always.statement:
             return drivers
         
-        # 判断 always 类型
-        block_kind = always.kind if hasattr(always, 'kind') else pyslang.SyntaxKind.AlwaysBlock
+        block_type = str(type(always))
+        if 'FF' in block_type:
+            driver_type = DriverKind.ALWAYS_FF
+        elif 'Comb' in block_type:
+            driver_type = DriverKind.ALWAYS_COMB
+        elif 'Latch' in block_type:
+            driver_type = DriverKind.ALWAYS_LATCH
+        else:
+            driver_type = DriverKind.ALWAYS_FF
         
-        # 递归查找赋值语句
-        drivers.extend(self._find_assignment_in_stmt(
-            always.statement, signal_name, block_kind
-        ))
+        self._find_assignment_in_stmt(always.statement, signal_name, driver_type, drivers)
         
         return drivers
     
-    def _find_assignment_in_stmt(self, stmt, signal_name: str, 
-                      block_kind) -> List[Driver]:
-        """在语句中查找赋值"""
-        drivers = []
-        
+    def _find_assignment_in_stmt(self, stmt, signal_name: str,
+                              driver_type: DriverKind, drivers: List[Driver]):
         if not stmt:
-            return drivers
+            return
         
-        # 查找阻塞/非阻塞赋值
-        if hasattr(stmt, 'kind'):
-            if stmt.kind in (pyslang.SyntaxKind.NonBlockingAssignment, 
-                        pyslang.SyntaxKind.BlockingAssignment):
-                drivers.extend(self._extract_assignment(stmt, signal_name, block_kind))
-            elif stmt.kind == pyslang.SyntaxKind.IfStatement:
-                if hasattr(stmt, 'ifBody'):
-                    drivers.extend(self._find_assignment_in_stmt(
-                        stmt.ifBody, signal_name, block_kind))
-                if hasattr(stmt, 'elseBody'):
-                    drivers.extend(self._find_assignment_in_stmt(
-                        stmt.elseBody, signal_name, block_kind))
-            elif stmt.kind == pyslang.SyntaxKind.CaseStatement:
-                if hasattr(stmt, 'caseItems'):
-                    for item in stmt.caseItems:
-                        if hasattr(item, 'body'):
-                            drivers.extend(self._find_assignment_in_stmt(
-                                item.body, signal_name, block_kind))
+        type_name = str(type(stmt))
         
-        return drivers
+        if 'Assignment' in type_name:
+            self._extract_assignment_stmt(stmt, signal_name, driver_type, drivers)
+        
+        elif 'If' in type_name:
+            if hasattr(stmt, 'ifBody') and stmt.ifBody:
+                self._find_assignment_in_stmt(stmt.ifBody, signal_name, driver_type, drivers)
+            if hasattr(stmt, 'elseBody') and stmt.elseBody:
+                self._find_assignment_in_stmt(stmt.elseBody, signal_name, driver_type, drivers)
+        
+        elif 'Case' in type_name:
+            if hasattr(stmt, 'items') and stmt.items:
+                for item in stmt.items:
+                    if hasattr(item, 'body') and item.body:
+                        self._find_assignment_in_stmt(item.body, signal_name, driver_type, drivers)
+        
+        for attr in ['statements', 'body', 'ifBody', 'elseBody']:
+            if hasattr(stmt, attr):
+                child = getattr(stmt, attr)
+                if child:
+                    if isinstance(child, list):
+                        for c in child:
+                            self._find_assignment_in_stmt(c, signal_name, driver_type, drivers)
+                    else:
+                        self._find_assignment_in_stmt(child, signal_name, driver_type, drivers)
     
-    def _extract_assignment(self, stmt, signal_name: str, 
-                         block_kind) -> List[Driver]:
-        """提取赋值语句"""
-        drivers = []
+    def _extract_assignment_stmt(self, stmt, signal_name: str,
+                            driver_type: DriverKind, drivers: List[Driver]):
+        if not hasattr(stmt, 'left') or not stmt.left:
+            return
         
-        if not hasattr(stmt, 'variable') or not stmt.variable:
-            return drivers
-        
-        # 获取目标信号名
-        var_name = ""
-        if hasattr(stmt.variable, 'name'):
-            var_name = stmt.variable.name.value
-        elif hasattr(stmt.variable, 'name') and stmt.variable.name:
-            var_name = stmt.variable.name.value
+        var = stmt.left
+        var_name = str(var).strip()
         
         if var_name != signal_name:
-            return drivers
+            return
         
-        # 确定驱动类型
-        if stmt.kind == pyslang.SyntaxKind.NonBlockingAssignment:
-            driver_type = self._detect_driver_kind(block_kind)
-        else:
-            driver_type = DriverKind.ALWAYS_COMB
+        line = 0
+        try:
+            if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
+                loc = stmt.getFirstToken().location
+                line = loc.offset
+        except:
+            pass
+        
+        source_expr = str(stmt.right) if hasattr(stmt, 'right') else ""
         
         drivers.append(Driver(
             signal_name=signal_name,
             driver_kind=driver_type,
-            source_expr=str(stmt.value) if hasattr(stmt, 'value') else "",
-            line=stmt.getFirstToken().location.line if hasattr(stmt, 'getFirstToken') else 0,
+            source_expr=source_expr,
+            line=line,
         ))
-        
-        return drivers
-    
-    def _detect_driver_kind(self, block_kind) -> DriverKind:
-        """检测驱动类型"""
-        kind_map = {
-            pyslang.SyntaxKind.AlwaysFFBlock: DriverKind.ALWAYS_FF,
-            pyslang.SyntaxKind.AlwaysCombBlock: DriverKind.ALWAYS_COMB,
-            pyslang.SyntaxKind.AlwaysLatchBlock: DriverKind.ALWAYS_LATCH,
-        }
-        return kind_map.get(block_kind, DriverKind.ALWAYS_FF)
