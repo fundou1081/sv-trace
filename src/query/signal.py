@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from core.models import Signal, SignalType
 from parse.params import ParameterResolver
 from typing import List, Optional
+import re
 
 
 class SignalQuery:
@@ -39,9 +40,11 @@ class SignalQuery:
             # 在 ports 中查找
             if header and hasattr(header, 'ports') and header.ports:
                 for port in header.ports.ports:
-                    port_name = self._get_port_name(port)
-                    if port_name == name:
-                        return self._port_to_signal(port)
+                    port_name = str(port)
+                    # 提取信号名
+                    match = re.search(r'(\w+)\s*$', port_name)
+                    if match and match.group(1) == name:
+                        return self._port_to_signal(port_name)
             
             # 在 body 中查找
             if hasattr(root, 'body') and root.body:
@@ -52,26 +55,18 @@ class SignalQuery:
         
         return None
     
-    def _get_port_name(self, port) -> str:
-        if hasattr(port, 'declarator') and port.declarator:
-            decl = port.declarator
-            if hasattr(decl, 'name') and decl.name:
-                return decl.name.value if hasattr(decl.name, 'value') else str(decl.name)
-        return ""
-    
-    def _port_to_signal(self, port) -> Signal:
-        name = self._get_port_name(port)
+    def _port_to_signal(self, port_str: str) -> Signal:
+        # 从端口字符串解析: "input [7:0] data" -> name=data, width=8
+        # 提取信号名
+        match = re.search(r'(\w+)\s*$', port_str)
+        name = match.group(1) if match else ""
         
-        width = 1
-        if hasattr(port, 'declarator') and port.declarator:
-            decl = port.declarator
-            if hasattr(decl, 'dimensions') and decl.dimensions:
-                for dim in decl.dimensions:
-                    if hasattr(dim, 'left') and dim.left and hasattr(dim, 'right') and dim.right:
-                        left = self.param_resolver.resolve(str(dim.left))
-                        right = self.param_resolver.resolve(str(dim.right))
-                        if isinstance(left, int) and isinstance(right, int):
-                            width *= (left - right + 1)
+        # 提取位宽 [7:0]
+        width_match = re.search(r'\[(\d+):(\d+)\]', port_str)
+        if width_match:
+            width = int(width_match.group(1)) - int(width_match.group(2)) + 1
+        else:
+            width = 1
         
         return Signal(
             name=name,
@@ -109,24 +104,17 @@ class SignalQuery:
     def _decl_to_signal(self, decl, decl_info) -> Signal:
         name = decl.name.value if hasattr(decl, 'name') and decl.name else ""
         
+        # 尝试从字符串解析位宽
         width = 1
-        if hasattr(decl, 'dimensions') and decl.dimensions:
-            for dim in decl.dimensions:
-                if hasattr(dim, 'left') and dim.left and hasattr(dim, 'right') and dim.right:
-                    left = self.param_resolver.resolve(str(dim.left))
-                    right = self.param_resolver.resolve(str(dim.right))
-                    if isinstance(left, int) and isinstance(right, int):
-                        width *= (left - right + 1)
-        
-        signed = False
-        if hasattr(decl_info, 'dataType') and decl_info.dataType:
-            if hasattr(decl_info.dataType, 'signed') and decl_info.dataType.signed:
-                signed = True
+        decl_str = str(decl)
+        width_match = re.search(r'\[(\d+):(\d+)\]', decl_str)
+        if width_match:
+            width = int(width_match.group(1)) - int(width_match.group(2)) + 1
         
         return Signal(
             name=name,
             width=width,
-            signed=signed,
+            signed=False,
             signal_type=SignalType.LOGIC,
         )
     
