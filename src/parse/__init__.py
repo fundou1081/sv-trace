@@ -10,6 +10,7 @@ from .extractors import (
 from .params import ParameterResolver
 from .class_utils import ClassExtractor
 from .constraint import ConstraintExtractor
+from .covergroup import CovergroupExtractor
 
 __all__ = [
     "SVParser",
@@ -19,4 +20,5 @@ __all__ = [
     "ParameterResolver",
     "ClassExtractor",
     "ConstraintExtractor",
+    "CovergroupExtractor",
 ]
