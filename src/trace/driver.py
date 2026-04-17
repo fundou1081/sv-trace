@@ -78,7 +78,11 @@ class DriverTracer:
         elif 'ProceduralBlock' in type_name:
             drivers.extend(self._extract_always_block(node, signal_name))
         
-        # 递归
+        # Function/Task
+        elif 'Function' in type_name or 'Task' in type_name:
+            drivers.extend(self._extract_func_driver(node, signal_name))
+        
+        # 递归 - Declaration, Block, Statement
         for attr in ['members', 'body', 'statements']:
             if hasattr(node, attr):
                 child = getattr(node, attr)
@@ -126,25 +130,52 @@ class DriverTracer:
     def _extract_always_block(self, always, signal_name: str) -> List[Driver]:
         drivers = []
         
-        if not hasattr(always, 'statement') or not always.statement:
+        # ProceduralBlockSyntax 的 statement 是 TimingControlStatementSyntax
+        # 需要深入找到实际的 statement
+        if not hasattr(always, 'statement'):
             return drivers
         
-        # 判断类型 - 通过检查 event control
-        driver_type = DriverKind.ALWAYS_FF
+        stmt = always.statement
         
-        # 检查 clock event
+        # 判断 always 类型
+        driver_type = self._detect_always_type(always)
+        
+        # 如果 statement 是 TimingControlStatementSyntax，继续深入
+        if hasattr(stmt, 'statement'):
+            self._find_assignment_in_stmt(stmt.statement, signal_name, driver_type, drivers)
+        else:
+            self._find_assignment_in_stmt(stmt, signal_name, driver_type, drivers)
+        
+        return drivers
+    
+    def _detect_always_type(self, always) -> DriverKind:
+        """检测 always 块类型"""
+        # 通过检查 timing control
         if hasattr(always, 'statement') and always.statement:
             stmt = always.statement
-            # 查找 event control
-            if hasattr(stmt, 'control') and stmt.control:
-                ctrl = stmt.control
-                if hasattr(ctrl, 'Event'):
-                    # FF
-                    driver_type = DriverKind.ALWAYS_FF
-                elif hasattr(ctrl, 'delay'):
-                    driver_type = DriverKind.ALWAYS_COMB
+            if hasattr(stmt, 'timingControl') and stmt.timingControl:
+                tc = stmt.timingControl
+                if hasattr(tc, 'event') and tc.event:
+                    return DriverKind.ALWAYS_FF
+                elif hasattr(tc, 'delay'):
+                    return DriverKind.ALWAYS_COMB
         
-        self._find_assignment_in_stmt(always.statement, signal_name, driver_type, drivers)
+        return DriverKind.ALWAYS_FF  # 默认
+    
+    def _extract_func_driver(self, func, signal_name: str) -> List[Driver]:
+        """提取函数/任务中的驱动"""
+        drivers = []
+        
+        # 检查 body
+        body = getattr(func, 'body', None)
+        if body:
+            driver_type = DriverKind.ALWAYS_COMB
+            self._find_assignment_in_stmt(body, signal_name, driver_type, drivers)
+        
+        # 检查 statements
+        if hasattr(func, 'statements') and func.statements:
+            for stmt in func.statements:
+                self._find_assignment_in_stmt(stmt, signal_name, DriverKind.ALWAYS_COMB, drivers)
         
         return drivers
     
@@ -155,8 +186,8 @@ class DriverTracer:
         
         type_name = str(type(stmt))
         
-        # 赋值语句 - 检查 NonBlocking 或 Blocking
-        if 'NonBlocking' in type_name or 'Blocking' in type_name:
+        # 赋值语句 - Blocking 或 NonBlocking
+        if 'Assignment' in type_name:
             self._extract_blocking_assignment(stmt, signal_name, driver_type, drivers)
         
         # If 语句
@@ -172,9 +203,22 @@ class DriverTracer:
                 for item in stmt.items:
                     if hasattr(item, 'body') and item.body:
                         self._find_assignment_in_stmt(item.body, signal_name, driver_type, drivers)
+            # 检查 default
+            if hasattr(stmt, 'defaultItem') and stmt.defaultItem:
+                self._find_assignment_in_stmt(stmt.defaultItem, signal_name, driver_type, drivers)
+        
+        # For 循环
+        elif 'ForLoop' in type_name:
+            if hasattr(stmt, 'body') and stmt.body:
+                self._find_assignment_in_stmt(stmt.body, signal_name, driver_type, drivers)
+        
+        # While 循环
+        elif 'WhileLoop' in type_name:
+            if hasattr(stmt, 'body') and stmt.body:
+                self._find_assignment_in_stmt(stmt.body, signal_name, driver_type, drivers)
         
         # 递归
-        for attr in ['statements', 'body', 'ifBody', 'elseBody', 'control']:
+        for attr in ['statements', 'body', 'ifBody', 'elseBody']:
             if hasattr(stmt, attr):
                 child = getattr(stmt, attr)
                 if child:
