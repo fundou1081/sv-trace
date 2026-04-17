@@ -101,3 +101,46 @@ if __name__ == "__main__":
     test_if_in_assign()
     
     print("\n✓ All driver tests passed!")
+
+
+def test_load_tracer():
+    """测试 Load 追踪"""
+    from trace import LoadTracer
+    
+    code = '''
+module top;
+    logic [7:0] a;
+    logic [7:0] b;
+    logic [7:0] out;
+    
+    assign out = a + b;
+endmodule
+'''
+    
+    parser = SVParser()
+    parser.parse_text(code)
+    
+    tracer = LoadTracer(parser)
+    loads = tracer.find_load("a")
+    
+    print(f"Found {len(loads)} load(s) for 'a'")
+    for l in loads:
+        print(f"  - {l}")
+    
+    return True
+
+
+if __name__ == "__main__":
+    print("Testing assign driver...")
+    test_assign_driver()
+    
+    print("\nTesting always_ff driver...")
+    test_always_ff_driver()
+    
+    print("\nTesting if in assign...")
+    test_if_in_assign()
+    
+    print("\nTesting load tracer...")
+    test_load_tracer()
+    
+    print("\n✓ All tests passed!")

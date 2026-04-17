@@ -74,21 +74,20 @@ class DriverTracer:
         if 'ContinuousAssign' in type_name:
             drivers.extend(self._extract_continuous_assign(node, signal_name))
         
-        # Always block
-        elif 'Always' in type_name:
+        # ProceduralBlock (always_ff/comb/latch)
+        elif 'ProceduralBlock' in type_name:
             drivers.extend(self._extract_always_block(node, signal_name))
         
-        # 递归遍历
-        elif 'Declaration' in type_name or 'Block' in type_name or 'Statement' in type_name:
-            for attr in ['members', 'body', 'statements']:
-                if hasattr(node, attr):
-                    child = getattr(node, attr)
-                    if child:
-                        if isinstance(child, list):
-                            for c in child:
-                                drivers.extend(self._visit_member(c, signal_name))
-                        else:
-                            drivers.extend(self._visit_member(child, signal_name))
+        # 递归
+        for attr in ['members', 'body', 'statements']:
+            if hasattr(node, attr):
+                child = getattr(node, attr)
+                if child:
+                    if isinstance(child, list):
+                        for c in child:
+                            drivers.extend(self._visit_member(c, signal_name))
+                    else:
+                        drivers.extend(self._visit_member(child, signal_name))
         
         return drivers
     
@@ -106,12 +105,10 @@ class DriverTracer:
             var_name = str(var).strip()
             
             if var_name == signal_name:
-                # 获取位置
                 line = 0
                 try:
                     if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
-                        loc = stmt.getFirstToken().location
-                        line = loc.offset  # 使用 offset 作为位置
+                        line = stmt.getFirstToken().location.offset
                 except:
                     pass
                 
@@ -132,15 +129,20 @@ class DriverTracer:
         if not hasattr(always, 'statement') or not always.statement:
             return drivers
         
-        block_type = str(type(always))
-        if 'FF' in block_type:
-            driver_type = DriverKind.ALWAYS_FF
-        elif 'Comb' in block_type:
-            driver_type = DriverKind.ALWAYS_COMB
-        elif 'Latch' in block_type:
-            driver_type = DriverKind.ALWAYS_LATCH
-        else:
-            driver_type = DriverKind.ALWAYS_FF
+        # 判断类型 - 通过检查 event control
+        driver_type = DriverKind.ALWAYS_FF
+        
+        # 检查 clock event
+        if hasattr(always, 'statement') and always.statement:
+            stmt = always.statement
+            # 查找 event control
+            if hasattr(stmt, 'control') and stmt.control:
+                ctrl = stmt.control
+                if hasattr(ctrl, 'Event'):
+                    # FF
+                    driver_type = DriverKind.ALWAYS_FF
+                elif hasattr(ctrl, 'delay'):
+                    driver_type = DriverKind.ALWAYS_COMB
         
         self._find_assignment_in_stmt(always.statement, signal_name, driver_type, drivers)
         
@@ -153,22 +155,26 @@ class DriverTracer:
         
         type_name = str(type(stmt))
         
-        if 'Assignment' in type_name:
-            self._extract_assignment_stmt(stmt, signal_name, driver_type, drivers)
+        # 赋值语句 - 检查 NonBlocking 或 Blocking
+        if 'NonBlocking' in type_name or 'Blocking' in type_name:
+            self._extract_blocking_assignment(stmt, signal_name, driver_type, drivers)
         
+        # If 语句
         elif 'If' in type_name:
             if hasattr(stmt, 'ifBody') and stmt.ifBody:
                 self._find_assignment_in_stmt(stmt.ifBody, signal_name, driver_type, drivers)
             if hasattr(stmt, 'elseBody') and stmt.elseBody:
                 self._find_assignment_in_stmt(stmt.elseBody, signal_name, driver_type, drivers)
         
+        # Case 语句
         elif 'Case' in type_name:
             if hasattr(stmt, 'items') and stmt.items:
                 for item in stmt.items:
                     if hasattr(item, 'body') and item.body:
                         self._find_assignment_in_stmt(item.body, signal_name, driver_type, drivers)
         
-        for attr in ['statements', 'body', 'ifBody', 'elseBody']:
+        # 递归
+        for attr in ['statements', 'body', 'ifBody', 'elseBody', 'control']:
             if hasattr(stmt, attr):
                 child = getattr(stmt, attr)
                 if child:
@@ -178,8 +184,8 @@ class DriverTracer:
                     else:
                         self._find_assignment_in_stmt(child, signal_name, driver_type, drivers)
     
-    def _extract_assignment_stmt(self, stmt, signal_name: str,
-                            driver_type: DriverKind, drivers: List[Driver]):
+    def _extract_blocking_assignment(self, stmt, signal_name: str,
+                             driver_type: DriverKind, drivers: List[Driver]):
         if not hasattr(stmt, 'left') or not stmt.left:
             return
         
@@ -192,8 +198,7 @@ class DriverTracer:
         line = 0
         try:
             if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
-                loc = stmt.getFirstToken().location
-                line = loc.offset
+                line = stmt.getFirstToken().location.offset
         except:
             pass
         
@@ -205,3 +210,7 @@ class DriverTracer:
             source_expr=source_expr,
             line=line,
         ))
+    
+    def _extract_assignment_stmt(self, stmt, signal_name: str,
+                            driver_type: DriverKind, drivers: List[Driver]):
+        self._extract_blocking_assignment(stmt, signal_name, driver_type, drivers)
