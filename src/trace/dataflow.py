@@ -1,8 +1,26 @@
 """
-Data Flow Tracer - 数据流分析
+DataFlowTracer - 数据流分析
+连接 Driver 和 Load，构建完整数据流
 """
-from typing import List, Dict, Set, Optional
-from ..core.models import Signal, Driver, Load, Connection
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from core.models import Driver, Load, Connection
+from .driver import DriverTracer
+from .load import LoadTracer
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional
+
+
+@dataclass
+class DataFlow:
+    """数据流"""
+    signal_name: str
+    drivers: List[Driver] = field(default_factory=list)
+    loads: List[Load] = field(default_factory=list)
+    paths: List[Dict] = field(default_factory=list)
 
 
 class DataFlowTracer:
@@ -10,73 +28,116 @@ class DataFlowTracer:
     
     def __init__(self, parser):
         self.parser = parser
-        self.driver_tracer = None  # 后续注入
-        self.load_tracer = None
+        self.driver_tracer = DriverTracer(parser)
+        self.load_tracer = LoadTracer(parser)
     
-    def find_data_flow(self, signal_name: str, 
-                   depth: int = 10) -> Dict[str, Any]:
+    def find_flow(self, signal_name: str, module_name: str = None) -> DataFlow:
         """查找信号的数据流"""
-        result = {
-            "signal": signal_name,
-            "drivers": [],
-            "loads": [],
-            "paths": [],
-            "depth": depth,
-        }
+        # 找驱动
+        drivers = self.driver_tracer.find_driver(signal_name, module_name)
         
-        # 收集驱动
-        if self.driver_tracer:
-            result["drivers"] = self.driver_tracer.find_driver(signal_name)
+        # 找加载点
+        loads = self.load_tracer.find_load(signal_name, module_name)
         
-        # 收集加载
-        if self.load_tracer:
-            result["loads"] = self.load_tracer.find_load(signal_name)
+        # 构建路径
+        paths = self._build_paths(signal_name, drivers, loads)
         
-        # 构建路径（简化版）
-        if result["drivers"] and result["loads"]:
-            for d in result["drivers"]:
-                for l in result["loads"]:
-                    result["paths"].append({
-                        "src": f"{d.file}:{d.line}",
-                        "dst": f"{l.file}:{l.line}",
-                    })
-        
-        return result
+        return DataFlow(
+            signal_name=signal_name,
+            drivers=drivers,
+            loads=loads,
+            paths=paths,
+        )
     
-    def find_path(self, src_signal: str, dst_signal: str,
-                max_depth: int = 10) -> List[str]:
-        """查找从源信号到目标信号的路径"""
-        path = []
+    def find_flow_chain(self, signal_name: str, max_depth: int = 5) -> List[Dict]:
+        """查找信号的数据流链（递归）"""
+        chain = []
         visited = set()
         
-        self._dfs_find_path(src_signal, dst_signal, path, visited, max_depth)
+        def dfs(signal, depth):
+            if depth > max_depth or signal in visited:
+                return
+            
+            visited.add(signal)
+            
+            flow = self.find_flow(signal)
+            
+            for d in flow.drivers:
+                # 尝试从驱动表达式提取使用的信号
+                src_signals = self._extract_signals(d.source_expr)
+                
+                for src in src_signals:
+                    chain.append({
+                        "from": src,
+                        "to": signal,
+                        "driver": d.driver_kind.name,
+                    })
+                    dfs(src, depth + 1)
         
-        return path
+        dfs(signal_name, 0)
+        
+        return chain
     
-    def _dfs_find_path(self, current: str, target: str,
-                     path: List[str], visited: Set[str],
-                     max_depth: int):
-        """DFS 查找路径"""
-        if len(path) > max_depth:
-            return
+    def _build_paths(self, signal_name: str, 
+                   drivers: List[Driver], loads: List[Load]) -> List[Dict]:
+        """构建驱动→载荷路径"""
+        paths = []
         
-        if current == target:
-            path.append(current)
-            return
+        for d in drivers:
+            for l in loads:
+                paths.append({
+                    "driver_expr": d.source_expr,
+                    "driver_line": d.line,
+                    "load_context": l.context,
+                    "load_line": l.line,
+                })
         
-        visited.add(current)
-        path.append(current)
+        return paths
+    
+    def _extract_signals(self, expr: str) -> List[str]:
+        """从表达式中提取信号名（简单实现）"""
+        if not expr:
+            return []
         
-        # 查找 current 信号的驱动
-        if self.driver_tracer:
-            drivers = self.driver_tracer.find_driver(current)
-            for d in drivers:
-                # 简化：假设驱动表达式中包含其他信号
-                # 实际需要解析表达式
-                pass
+        signals = []
         
-        # 继续查找
-        if path:
-            path.pop()
+        # 简单的标识符提取
+        import re
+        # 匹配字母开头，字母数字下划线
+        pattern = r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
         
-        visited.remove(current)
+        for match in re.finditer(pattern, expr):
+            name = match.group()
+            # 排除关键字
+            if name not in ['if', 'else', 'case', 'endcase', 'begin', 'end',
+                          'for', 'while', 'do', 'repeat', 'always', 'assign',
+                          'module', 'endmodule', 'input', 'output', 'inout',
+                          'wire', 'reg', 'logic', 'supply0', 'supply1',
+                          'posedge', 'negedge', 'or', 'and', 'not', 'xor',
+                          'new', 'null', 'this', 'super', 'return']:
+                signals.append(name)
+        
+        return signals
+    
+    def visualize(self, signal_name: str) -> str:
+        """生成可读的数据流描述"""
+        flow = self.find_flow(signal_name)
+        
+        lines = [f"Signal: {signal_name}"]
+        
+        if flow.drivers:
+            lines.append(f"  Drivers ({len(flow.drivers)}):")
+            for d in flow.drivers:
+                lines.append(f"    - {d.driver_kind.name}: {d.source_expr}")
+        
+        if flow.loads:
+            lines.append(f"  Loads ({len(flow.loads)}):")
+            for l in flow.loads:
+                lines.append(f"    - {l.context}")
+        
+        if flow.paths:
+            lines.append(f"  Paths ({len(flow.paths)}):")
+            for p in flow.paths[:3]:
+                lines.append(f"    {p['driver_expr']} → {p['load_context']}")
+        
+        return "\n".join(lines)
