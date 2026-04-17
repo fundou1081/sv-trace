@@ -7,10 +7,12 @@ from .extractors import (
     SignalExtractor,
     PortAnalyzer,
 )
+from .params import ParameterResolver
 
 __all__ = [
     "SVParser",
     "ModuleExtractor", 
     "SignalExtractor",
     "PortAnalyzer",
+    "ParameterResolver",
 ]
