@@ -95,17 +95,19 @@ class ClassHierarchyBuilder:
     def get_ancestors(self, class_name: str) -> List[str]:
         """Get all ancestor classes (parent, grandparent, etc.)."""
         ancestors = []
+        visited = set()
         current = class_name
         
         while True:
+            if current in visited:
+                break  # Circular reference
+            visited.add(current)
+            
             parent = self.get_parent(current)
             if not parent:
                 break
             ancestors.append(parent)
             current = parent
-            
-            if parent in ancestors:  # Prevent infinite loop
-                break
         
         return ancestors
 
@@ -173,7 +175,7 @@ class ClassHierarchyBuilder:
     def get_common_ancestors(self, class1: str, class2: str) -> List[str]:
         """Get common ancestors of two classes."""
         ancestors1 = set(self.get_ancestors(class1))
-        ancestors1.add(class1)
         ancestors2 = set(self.get_ancestors(class2))
+        ancestors1.add(class1)
         ancestors2.add(class2)
         return list(ancestors1 & ancestors2)
