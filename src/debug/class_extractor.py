@@ -351,7 +351,7 @@ class ClassExtractor:
             constraint_type = "implication"
         
         # Check for conditional (if-else without soft)
-        elif re.search(r'\bif\b.*\belse\b', expr, re.IGNORECASE) and constraint_type == "simple":
+        elif re.search(r'\bif\b.*\belse\b', expr, re.IGNORECASE | re.DOTALL) and constraint_type == "simple":
             constraint_type = "conditional"
         
         return constraint_type, is_soft, dist_items
