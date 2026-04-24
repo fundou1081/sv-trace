@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from typing import List, Dict, Set
 from dataclasses import dataclass
 from enum import Enum
+import pyslang
 
 
 class XValueCause(Enum):

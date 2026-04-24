@@ -78,59 +78,67 @@ class DanglingPortDetector:
     def _extract_ports(self, module) -> Dict[str, PortDirection]:
         ports = {}
         
-        # Try header.ports (ANSI style: module top(input clk, ...))
-        if hasattr(module, "header") and module.header:
-            header = module.header
-            ports_attr = getattr(header, "ports", None)
-            if ports_attr:
-                try:
-                    # Use count method (like pyslang SyntaxList)
-                    if hasattr(ports_attr, "count"):
-                        count = ports_attr.count
-                        for i in range(count):
-                            port = ports_attr[i]
-                            if not port:
-                                continue
-                            
-                            # Get port name
-                            port_name = None
-                            if hasattr(port, "name"):
-                                if hasattr(port.name, "value"):
-                                    port_name = port.name.value
-                                else:
-                                    port_name = str(port.name)
-                            
-                            # Get port direction
-                            direction = PortDirection.INPUT
-                            if hasattr(port, "direction") and port.direction:
-                                dir_str = str(port.direction).lower()
-                                if "output" in dir_str:
-                                    direction = PortDirection.OUTPUT
-                                elif "inout" in dir_str:
-                                    direction = PortDirection.INOUT
-                            
-                            if port_name:
-                                ports[port_name] = direction
-                except Exception as e:
-                    print(f"Warning: Error extracting ports: {e}")
-        
-        # Try module.portList (traditional style: module top; input clk; ...)
-        if not ports and hasattr(module, "portList") and module.portList:
-            port_list = module.portList
-            if hasattr(port_list, "ports") and port_list.ports:
-                for i in range(len(port_list.ports)):
-                    port = port_list.ports[i]
-                    port_name = getattr(getattr(port, "name", None), "value", str(port.name))
-                    
-                    direction = PortDirection.INPUT
-                    if hasattr(port, "direction"):
-                        dir_str = str(port.direction).lower()
-                        if "output" in dir_str:
-                            direction = PortDirection.OUTPUT
-                        elif "inout" in dir_str:
-                            direction = PortDirection.INOUT
-                    
+        try:
+            # Get ports from module header
+            ports_attr = getattr(module, 'ports', None)
+            if not ports_attr and hasattr(module, 'header'):
+                ports_attr = getattr(module.header, 'ports', None)
+            
+            if not ports_attr:
+                return ports
+            
+            # AnsiPortListSyntax: OpenParen, SeparatedList, CloseParen
+            # Find the SeparatedList
+            ports_list = []
+            for item in ports_attr:
+                if hasattr(item, 'kind') and 'SeparatedList' in str(item.kind):
+                    ports_list = item
+                    break
+            
+            if not ports_list:
+                return ports
+            
+            # Iterate over ports in the SeparatedList
+            for port in ports_list:
+                if not port or not hasattr(port, 'kind'):
+                    continue
+                
+                kind_name = str(port.kind)
+                
+                # Skip non-port nodes
+                if 'ImplicitAnsiPort' not in kind_name and 'PortDeclaration' not in kind_name and 'Comma' not in kind_name:
+                    continue
+                
+                # Get port name from declarator
+                port_name = None
+                if hasattr(port, 'declarator') and port.declarator:
+                    decl = port.declarator
+                    if hasattr(decl, 'name') and decl.name:
+                        port_name = str(decl.name).strip()
+                
+                # Get port direction from header
+                direction = PortDirection.INPUT  # default to input
+                header = None
+                if hasattr(port, 'header') and port.header:
+                    header = port.header
+                
+                if header and hasattr(header, 'direction') and header.direction:
+                    dir_str = str(header.direction).lower()
+                    if 'output' in dir_str:
+                        direction = PortDirection.OUTPUT
+                    elif 'inout' in dir_str:
+                        direction = PortDirection.INOUT
+                elif header:
+                    # No explicit direction keyword - in SV, this means output for implicit port
+                    # But for implicit ports without a direction keyword, it depends on context
+                    # For now, treat as output if there's no explicit input keyword
+                    pass
+                
+                if port_name:
                     ports[port_name] = direction
+                    
+        except Exception:
+            pass
         
         return ports
     
