@@ -113,7 +113,7 @@ class OverflowRiskDetector:
         # 检查是否是溢出风险类型
         
         # 1. data = data + 1 (无检查的累加)
-        if re.search(r'\1\s*\+\s*1\b', expr) and 'if' not in expr:
+        if re.search(r'[\w]+\s*\+\s*1\b', expr) and 'if' not in expr:
             return OverflowRisk(
                 signal=signal,
                 expression=expr,
@@ -123,7 +123,7 @@ class OverflowRiskDetector:
             )
         
         # 2. data = data + addend (无边界检查)
-        if re.search(r'\1\s*\+\s*\w+', expr) and 'if' not in expr and '{' not in expr:
+        if re.search(r'[\w]+\s*\+\s*\w+', expr) and 'if' not in expr and '{' not in expr:
             return OverflowRisk(
                 signal=signal,
                 expression=expr,
@@ -133,7 +133,7 @@ class OverflowRiskDetector:
             )
         
         # 3. data = data - 1 (无检查的递减)
-        if re.search(r'\1\s*-\s*1\b', expr) and 'if' not in expr:
+        if re.search(r'[\w]+\s*-\s*1\b', expr) and 'if' not in expr:
             return OverflowRisk(
                 signal=signal,
                 expression=expr,

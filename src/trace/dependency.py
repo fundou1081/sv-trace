@@ -63,11 +63,10 @@ class DependencyAnalyzer:
         forward_deps = set()
         
         for driver in drivers:
-            # 从驱动表达式中提取信号
-            signals = self._extract_signals(driver.sources)
-            # 排除自身
-            signals.discard(signal_name)
-            forward_deps.update(signals)
+            # driver.sources 已经是 List[str]，直接使用
+            for src in driver.sources:
+                if src and src != signal_name:
+                    forward_deps.add(src)
         
         return list(forward_deps)
     
