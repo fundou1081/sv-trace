@@ -198,3 +198,44 @@ OverflowRiskDetector: detect() -> type=OverflowResult [PASS]
 ### ADR 文档
 
 - `ADR-015-dependency-analyzer-sources-fix.md` - 记录 DependencyAnalyzer 修复
+
+---
+
+## 最终测试结果 (2026-04-25 凌晨)
+
+### 完整测试汇总
+
+| # | 模块 | 状态 |
+|---|------|------|
+| 1 | DriverCollector | ✅ PASS |
+| 2 | LoadTracer | ✅ PASS |
+| 3 | ControlFlowTracer | ✅ PASS |
+| 4 | DataPathAnalyzer | ✅ PASS |
+| 5 | ConnectionTracer | ✅ PASS |
+| 6 | BitSelectTracer | ✅ PASS |
+| 7 | DependencyAnalyzer | ✅ PASS |
+| 8 | PipelineAnalyzer | ✅ PASS |
+| 9 | TimingDepthAnalyzer | ✅ PASS |
+| 10 | TimingPathExtractor | ✅ PASS |
+| 11 | PowerEstimator | ✅ PASS |
+| 12 | CDCAnalyzer | ✅ PASS |
+| 13 | MultiDriverDetector | ✅ PASS |
+| 14 | UninitializedDetector | ✅ PASS |
+| 15 | XValueDetector | ✅ PASS |
+| 16 | DanglingPortDetector | ✅ PASS |
+| 17 | OverflowRiskDetector | ✅ PASS |
+| 18 | ConditionRelationExtractor | ✅ PASS |
+| 19 | DataPathBoundaryAnalyzer | ✅ PASS |
+| 20 | SampleConditionAnalyzer | ✅ PASS |
+
+**Total: 20 PASS, 0 FAIL**
+
+### 修复汇总
+
+| Bug | 文件 | 修复 |
+|-----|------|------|
+| DependencyAnalyzer sources type | dependency.py | 直接使用 driver.sources |
+| OverflowRiskDetector regex | overflow_risk_detector.py | 修复 \1 组引用 |
+| MultiDriverDetector API | multi_driver.py | driver_kind→kind, source_expr→sources |
+| UninitializedDetector API | uninitialized.py | 同上 |
+| XValueDetector API | xvalue.py | source_expr→sources[0] |
