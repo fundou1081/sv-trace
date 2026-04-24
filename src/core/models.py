@@ -1,126 +1,136 @@
-"""
-核心数据模型
-定义信号、驱动、加载等基础数据结构
-"""
+"""Data models for SV tracing"""
 from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Optional, List
-from dataclasses import dataclass
-
-
-class SignalType(Enum):
-    """信号类型"""
-    LOGIC = auto()
-    WIRE = auto()
-    REG = auto()
-    INT = auto()
-    UINT = auto()
-    REAL = auto()
-    STRING = auto()
-    UNKNOWN = auto()
+from enum import Enum
+from typing import List, Set, Optional
 
 
 class DriverKind(Enum):
-    """驱动类型"""
-    ASSIGN = auto()          # assign 语句
-    ALWAYS_FF = auto()      # always_ff 块
-    ALWAYS_COMB = auto()    # always_comb 块
-    ALWAYS_LATCH = auto()   # always_latch 块
-    INITIAL = auto()        # initial 块
-    MODULE_INST = auto()     # 模块实例输出
+    """Driver type based on always block kind"""
+    Continuous = 0   # assign statement
+    AlwaysComb = 1   # always_comb block
+    AlwaysFF = 2      # always_ff block
+    AlwaysLatch = 3    # always_latch block
+    Always = 4         # always block
 
 
-class ConnectionKind(Enum):
-    """连接类型"""
-    PORT = auto()           # 端口连接
-    WIRE = auto()          # 线连接
-    INTERFACE = auto()      # 接口连接
+class AssignKind(Enum):
+    """Assignment operator type"""
+    Blocking = 0     # = 
+    Nonblocking = 1  # <=
 
 
-@dataclass
-class Signal:
-    """信号定义"""
-    name: str
-    signal_type: SignalType = SignalType.LOGIC
-    width: int = 1         # 位宽
-    signed: bool = False
-    constant: bool = False   # const
-    array_dims: List[int] = field(default_factory=list)  # 数组维度
-    lifetime: str = "static"  # "static" or "automatic"
-    
-    # 位置信息
-    file: str = ""
-    line: int = 0
-    
-    def __str__(self):
-        suffix = f"[{self.width-1}:0]" if self.width > 1 else ""
-        sign = "signed " if self.signed else ""
-        return f"{sign}{self.signal_type.name.lower()} {self.name}{suffix}"
-
-
-@dataclass
-class Driver:
-    """信号驱动源"""
-    signal_name: str
-    driver_kind: DriverKind
-    source_expr: str = ""      # 驱动表达式
-    
-    # 位置
-    file: str = ""
-    line: int = 0
-    
-    # 时序信息
-    clock_edge: str = ""       # "posedge" / "negedge"
-    clock_signal: str = ""
-    level_sensitive: bool = False
-    
-    def __str__(self):
-        return f"{self.driver_kind.name}: {self.source_expr}"
 
 
 @dataclass
 class Load:
-    """信号加载点"""
+    """Signal load information (where signal is read)"""
     signal_name: str
-    context: str = ""         # 使用的上下文
-    
-    file: str = ""
+    context: str
     line: int = 0
-    
-    def __str__(self):
-        return f"Load: {self.signal_name} @ {self.file}:{self.line}"
+    module: str = ""
+    statement_type: str = ""
+    condition: str = ""
+
+@dataclass
+class Signal:
+    """Signal information"""
+    name: str
+    module: str
+    width: int = 1
+    is_input: bool = False
+    is_output: bool = False
+    is_reg: bool = False
+    is_wire: bool = False
+    is_logic: bool = False
+
+
+@dataclass
+class Driver:
+    """Signal driver information"""
+    signal: str
+    kind: DriverKind
+    module: str
+    sources: List[str] = field(default_factory=list)
+    clock: str = ""
+    reset: str = ""
+    enable: str = ""
+    lines: List[int] = field(default_factory=list)
+    assign_kind: AssignKind = AssignKind.Blocking
+    condition: str = ""
+    # 逻辑深度相关
+    operator_count: int = 0  # 运算符数量
+
+
+@dataclass
+class DataFlowPath:
+    """Data flow path"""
+    source: str
+    dest: str
+    signals: List[str] = field(default_factory=list)
+    logic_depth: int = 0  # 组合逻辑深度（运算符数）
+    timing_depth: int = 0  # 时序深度（寄存器数）
+
+
+@dataclass
+class CaseInfo:
+    """Case statement information"""
+    signal: str
+    module: str
+    items: List[str] = field(default_factory=list)
+    has_default: bool = False
+
+
+@dataclass
+class IfElseInfo:
+    """If-else chain information"""
+    signal: str
+    module: str
+    conditions: List[str] = field(default_factory=list)
+    branches: int = 0
+
+
+@dataclass
+class TimingPath:
+    """时序路径"""
+    start_reg: str
+    end_reg: str
+    timing_depth: int = 0  # 时序深度（寄存器数 - 1）
+    logic_depth: int = 0   # 逻辑深度（运算符数）
+    signals: List[str] = field(default_factory=list)
+    domains: List[str] = field(default_factory=list)  # 经过的时钟域
+
+
+@dataclass
+class Register:
+    """时序元素信息"""
+    name: str
+    module: str
+    clock: str = ""
+    lines: List[int] = field(default_factory=list)
+
+
+@dataclass
+class DomainInfo:
+    name: str
+    clock: str
+    registers: List[str] = field(default_factory=list)
+
+
+@dataclass
+class Parameter:
+    """参数信息"""
+    name: str
+    module: str
+    value: str = ""
+    width: int = 0
 
 
 @dataclass
 class Connection:
-    """信号连接关系"""
-    src_signal: str          # 源信号
-    dst_signal: str          # 目标信号
-    conn_kind: ConnectionKind = ConnectionKind.PORT
-    
-    # 实例信息
-    inst_name: str = ""
-    port_name: str = ""
-    
-    def __str__(self):
-        return f"{self.src_signal} -> {self.dst_signal}"
+    """Connection between modules"""
+    source_module: str
+    dest_module: str
+    source_signal: str
+    dest_signal: str
+    port_type: str = ""  # input, output, inout
 
-
-@dataclass 
-class Parameter:
-    """参数定义"""
-    name: str
-    value: str = ""          # 原始值字符串
-    
-    # 展开后的值
-    resolved_value: Optional[int] = None
-    
-    # 类型
-    is_localparam: bool = False
-    data_type: str = "logic"
-    
-    file: str = ""
-    line: int = 0
-    
-    def __str__(self):
-        return f"parameter {self.name} = {self.value}"
