@@ -1,7 +1,8 @@
 """
-Load Tracer - 追踪信号加载点
+Load Tracer - 追踪信号加载点 (使用 pyslang visit API)
 """
 import pyslang
+from pyslang import SyntaxKind
 from typing import List
 import sys
 import os
@@ -17,170 +18,217 @@ class LoadTracer:
     def __init__(self, parser):
         self.parser = parser
         self.compilation = parser.compilation
+        self._loads: List[Load] = []
+        self._target_signal = ""
+        self._current_module = ""
     
     def find_load(self, signal_name: str, module_name: str = None) -> List[Load]:
-        loads = []
+        """查找信号被加载的位置"""
+        self._loads = []
+        self._target_signal = signal_name
+        self._current_module = module_name or ""
         
         for key, tree in self.parser.trees.items():
-            if not tree or not hasattr(tree, 'root') or not tree.root:
+            if not tree or not tree.root:
                 continue
-            
-            root = tree.root
-            
-            if 'ModuleDeclaration' not in str(type(root)):
-                continue
-            
-            header = getattr(root, 'header', None)
-            name = ""
-            if header:
-                name_attr = getattr(header, 'name', None)
-                if name_attr:
-                    name = name_attr.value
-            
-            if module_name and name != module_name:
-                continue
-            
-            loads.extend(self._find_in_module(root, signal_name))
+            tree.root.visit(self._visit_callback)
         
-        return loads
+        return self._loads
     
-    def _find_in_module(self, module, signal_name: str) -> List[Load]:
-        if not module:
-            return []
+    def _visit_callback(self, node):
+        """Visit callback for finding loads"""
+        kind = node.kind
         
-        loads = []
+        # Track module name
+        if kind == SyntaxKind.ModuleDeclaration:
+            if hasattr(node, 'header') and hasattr(node.header, 'name'):
+                self._current_module = str(node.header.name)
+            return pyslang.VisitAction.Advance
         
-        if hasattr(module, 'members') and module.members:
-            for m in module.members:
-                loads.extend(self._visit_member(m, signal_name))
+        # Process always blocks
+        if kind == SyntaxKind.AlwaysBlock:
+            self._process_always_load(node)
+            return pyslang.VisitAction.Skip  # Handle manually
         
-        if hasattr(module, 'body') and module.body:
-            for b in module.body:
-                loads.extend(self._visit_member(b, signal_name))
+        # Process always_ff/comb/latch blocks
+        if kind in [SyntaxKind.AlwaysFFBlock, SyntaxKind.AlwaysCombBlock, SyntaxKind.AlwaysLatchBlock]:
+            self._process_always_load(node)
+            return pyslang.VisitAction.Skip
         
-        return loads
+        # Process continuous assignments
+        if kind == SyntaxKind.ContinuousAssign:
+            self._process_continuous_assign_load(node)
+            return pyslang.VisitAction.Advance
+        
+        return pyslang.VisitAction.Advance
     
-    def _visit_member(self, node, signal_name: str) -> List[Load]:
-        if not node:
-            return []
-        
-        loads = []
-        type_name = str(type(node))
-        
-        # ContinuousAssign
-        if 'ContinuousAssign' in type_name:
-            loads.extend(self._extract_continuous_assign(node, signal_name))
-        
-        # ProceduralBlock
-        elif 'ProceduralBlock' in type_name:
-            loads.extend(self._extract_always_load(node, signal_name))
-        
-        # 递归
-        for attr in ['members', 'body', 'statements']:
-            if hasattr(node, attr):
-                child = getattr(node, attr)
-                if child:
-                    if isinstance(child, list):
-                        for c in child:
-                            loads.extend(self._visit_member(c, signal_name))
-                    else:
-                        loads.extend(self._visit_member(child, signal_name))
-        
-        return loads
+    def _process_always_load(self, node):
+        """Process always/always_ff/always_comb/always_latch block for loads"""
+        try:
+            # Navigate: AlwaysBlock.statement = TimingControlStatement.statement = body
+            if hasattr(node, 'statement') and node.statement:
+                tcs = node.statement
+                if hasattr(tcs, 'statement') and tcs.statement:
+                    body = tcs.statement
+                    self._walk_for_load(body)
+        except Exception as e:
+            pass
     
-    def _extract_continuous_assign(self, assign, signal_name: str) -> List[Load]:
-        loads = []
-        
-        if not hasattr(assign, 'assignments') or not assign.assignments:
-            return loads
-        
-        for stmt in assign.assignments:
-            if not hasattr(stmt, 'right'):
-                continue
-            
-            rhs = str(stmt.right)
-            if signal_name in rhs:
-                line = 0
-                try:
-                    if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
-                        line = stmt.getFirstToken().location.offset
-                except:
-                    pass
-                
-                loads.append(Load(signal_name=signal_name, context=rhs, line=line))
-        
-        return loads
+    def _process_continuous_assign_load(self, node):
+        """Process continuous assignment for loads"""
+        try:
+            if hasattr(node, 'assignments') and node.assignments:
+                for i in range(len(node.assignments)):
+                    assign = node.assignments[i]
+                    self._check_rhs_for_load(assign)
+        except Exception as e:
+            pass
     
-    def _extract_always_load(self, always, signal_name: str) -> List[Load]:
-        loads = []
-        
-        # ProceduralBlockSyntax.statement 可能是 TimingControlStatementSyntax 或直接的 statement
-        if not hasattr(always, 'statement'):
-            return loads
-        
-        stmt = always.statement
-        
-        # 如果是 TimingControlStatementSyntax，获取内部的 statement
-        if hasattr(stmt, 'statement'):
-            self._find_load_in_stmt(stmt.statement, signal_name, loads)
-        else:
-            self._find_load_in_stmt(stmt, signal_name, loads)
-        
-        return loads
-    
-    def _find_load_in_stmt(self, stmt, signal_name: str, loads: List[Load]):
-        if not stmt:
+    def _walk_for_load(self, stmt):
+        """Walk statement tree to find loads"""
+        if stmt is None:
             return
         
-        type_name = str(type(stmt))
+        if not hasattr(stmt, 'kind'):
+            return
         
-        # 赋值 - 检查 RHS
-        if 'Assignment' in type_name:
-            if hasattr(stmt, 'right') and stmt.right:
-                rhs = str(stmt.right)
-                if signal_name in rhs:
-                    line = 0
-                    try:
-                        if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
-                            line = stmt.getFirstToken().location.offset
-                    except:
-                        pass
-                    loads.append(Load(signal_name=signal_name, context=rhs, line=line))
+        stmt_kind = str(stmt.kind)
         
-        # If - 检查条件
-        elif 'If' in type_name:
-            if hasattr(stmt, 'ifBody') and stmt.ifBody:
-                self._find_load_in_stmt(stmt.ifBody, signal_name, loads)
-            if hasattr(stmt, 'elseBody') and stmt.elseBody:
-                self._find_load_in_stmt(stmt.elseBody, signal_name, loads)
+        # Sequential block - iterate items
+        if stmt_kind == 'SyntaxKind.SequentialBlockStatement':
+            if hasattr(stmt, 'items'):
+                for i in range(len(stmt.items)):
+                    self._walk_for_load(stmt.items[i])
+            return
         
-        # Case 语句
-        elif 'Case' in type_name:
+        # Expression statement - check expr (not expression!)
+        if stmt_kind == 'SyntaxKind.ExpressionStatement':
+            if hasattr(stmt, 'expr') and stmt.expr:
+                self._check_assignment_for_load(stmt.expr)
+            return
+        
+        # If statement
+        if 'If' in stmt_kind:
+            # Check condition
             if hasattr(stmt, 'condition') and stmt.condition:
-                cond = str(stmt.condition)
-                if signal_name in cond:
-                    line = 0
-                    try:
-                        if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
-                            line = stmt.getFirstToken().location.offset
-                    except:
-                        pass
-                    loads.append(Load(signal_name=signal_name, context=cond, line=line))
-            
-            if hasattr(stmt, 'items') and stmt.items:
-                for item in stmt.items:
-                    if hasattr(item, 'body') and item.body:
-                        self._find_load_in_stmt(item.body, signal_name, loads)
-            if hasattr(stmt, 'defaultItem') and stmt.defaultItem:
-                self._find_load_in_stmt(stmt.defaultItem, signal_name, loads)
+                self._check_expr_for_load(stmt.condition)
+            # Recurse into branches
+            if hasattr(stmt, 'thenStatement') and stmt.thenStatement:
+                self._walk_for_load(stmt.thenStatement)
+            if hasattr(stmt, 'elseStatement') and stmt.elseStatement:
+                self._walk_for_load(stmt.elseStatement)
+            return
         
-        # 递归
-        for attr in ['statements', 'body', 'ifBody', 'elseBody', 'condition']:
-            if hasattr(stmt, attr):
-                child = getattr(stmt, attr)
-                if child:
-                    if isinstance(child, list):
-                        for c in child:
-                            self._find_load_in_stmt(c, signal_name, loads)
-                    else:
-                        self._find_load_in_stmt(child, signal_name, loads)
+        # Case statement
+        if 'Case' in stmt_kind:
+            if hasattr(stmt, 'condition') and stmt.condition:
+                self._check_expr_for_load(stmt.condition)
+            if hasattr(stmt, 'cases'):
+                for i in range(len(stmt.cases)):
+                    case = stmt.cases[i]
+                    if hasattr(case, 'statement') and case.statement:
+                        self._walk_for_load(case.statement)
+            return
+        
+        # For loop
+        if 'ForLoop' in stmt_kind:
+            if hasattr(stmt, 'statement') and stmt.statement:
+                self._walk_for_load(stmt.statement)
+            return
+        
+        # While loop
+        if 'WhileLoop' in stmt_kind:
+            if hasattr(stmt, 'statement') and stmt.statement:
+                self._walk_for_load(stmt.statement)
+            return
+    
+    def _check_assignment_for_load(self, expr):
+        """Check if assignment expression uses target signal"""
+        if expr is None:
+            return
+        
+        if not hasattr(expr, 'kind'):
+            return
+        
+        kind_str = str(expr.kind)
+        
+        # Assignment expression - check RHS
+        if 'Assignment' in kind_str or 'Nonblocking' in kind_str:
+            if hasattr(expr, 'right') and expr.right:
+                self._check_expr_for_load(expr.right)
+            return
+        
+        # Other expressions - recurse
+        self._check_expr_for_load(expr)
+    
+    def _check_expr_for_load(self, expr):
+        """Check if expression contains target signal"""
+        if expr is None:
+            return
+        
+        if not hasattr(expr, 'kind'):
+            return
+        
+        kind_str = str(expr.kind)
+        
+        # Identifier - check if it matches target signal
+        if 'Identifier' in kind_str:
+            name = str(expr).strip()
+            if name == self._target_signal:
+                self._add_load(str(expr), expr)
+            return
+        
+        # Binary expression - check both sides
+        if 'Binary' in kind_str:
+            if hasattr(expr, 'left') and expr.left:
+                self._check_expr_for_load(expr.left)
+            if hasattr(expr, 'right') and expr.right:
+                self._check_expr_for_load(expr.right)
+            return
+        
+        # Conditional expression (?:)
+        if 'Conditional' in kind_str or 'Ternary' in kind_str:
+            if hasattr(expr, 'condition') and expr.condition:
+                self._check_expr_for_load(expr.condition)
+            if hasattr(expr, 'whenTrue') and expr.whenTrue:
+                self._check_expr_for_load(expr.whenTrue)
+            if hasattr(expr, 'whenFalse') and expr.whenFalse:
+                self._check_expr_for_load(expr.whenFalse)
+            return
+        
+        # Function call - check arguments
+        if 'Call' in kind_str:
+            if hasattr(expr, 'arguments') and expr.arguments:
+                for i in range(len(expr.arguments)):
+                    arg = expr.arguments[i]
+                    if hasattr(arg, 'expr'):
+                        self._check_expr_for_load(arg.expr)
+            return
+    
+    def _check_rhs_for_load(self, assign):
+        """Check if assignment RHS contains target signal"""
+        if not hasattr(assign, 'right') or not assign.right:
+            return
+        
+        rhs = assign.right
+        self._check_expr_for_load(rhs)
+    
+    def _add_load(self, context: str, node):
+        """Add a load record"""
+        line = 0
+        if hasattr(node, 'sourceRange') and node.sourceRange:
+            try:
+                line = node.sourceRange.start.offset if hasattr(node.sourceRange.start, 'offset') else 0
+            except:
+                line = 0
+        
+        load = Load(
+            signal_name=self._target_signal,
+            context=context,
+            line=line,
+            module=self._current_module.strip(),
+            statement_type="",
+            condition=""
+        )
+        
+        self._loads.append(load)

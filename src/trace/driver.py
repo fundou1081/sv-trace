@@ -1,266 +1,316 @@
-"""
-Driver Tracer - 追踪信号驱动源
-"""
+"""Driver collector using pyslang visit API"""
 import sys
 import os
+from typing import List, Dict, Set, Optional, Tuple
+from dataclasses import dataclass, field
+
+import pyslang
+from pyslang import SyntaxKind
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from core.models import Driver, DriverKind, AssignKind
 
-from core.models import Driver, DriverKind
+
+@dataclass
+class DriverInfo:
+    """Driver information"""
+    signal: str
+    kind: DriverKind
+    sources: List[str] = field(default_factory=list)
+    clock: str = ""
+    line: int = 0
+    module: str = ""
 
 
-class DriverTracer:
-    """信号驱动源追踪器"""
+class DriverCollector:
+    """Collects drivers for all signals in the design"""
     
     def __init__(self, parser):
         self.parser = parser
-        self.compilation = parser.compilation
+        self.drivers: Dict[str, List[Driver]] = {}
+        self._collect()
     
-    def find_driver(self, signal_name: str, module_name: str = None):
-        drivers = []
-        
-        for key, tree in self.parser.trees.items():
-            if not tree or not hasattr(tree, 'root') or not tree.root:
+    def _collect(self):
+        """Collect drivers from all parsed files"""
+        for fname, tree in self.parser.trees.items():
+            if not tree or not tree.root:
                 continue
-            
-            root = tree.root
-            
-            if 'ModuleDeclaration' not in str(type(root)):
-                continue
-            
-            header = getattr(root, 'header', None)
-            name = ""
-            if header:
-                name_attr = getattr(header, 'name', None)
-                if name_attr:
-                    name = name_attr.value
-            
-            if module_name and name != module_name:
-                continue
-            
-            drivers.extend(self._find_in_module(root, signal_name))
-        
-        return drivers
+            self._visit_tree(tree.root)
     
-    def _find_in_module(self, module, signal_name: str):
-        if not module:
-            return []
+    def _visit_tree(self, root):
+        """Visit the entire tree to find assignments"""
+        module_name = ""
         
-        drivers = []
-        
-        if hasattr(module, 'members') and module.members:
-            for m in module.members:
-                drivers.extend(self._visit_member(m, signal_name))
-        
-        if hasattr(module, 'body') and module.body:
-            for b in module.body:
-                drivers.extend(self._visit_member(b, signal_name))
-        
-        return drivers
-    
-    def _visit_member(self, node, signal_name: str):
-        if not node:
-            return []
-        
-        drivers = []
-        type_name = str(type(node))
-        
-        if 'ContinuousAssign' in type_name:
-            drivers.extend(self._extract_continuous_assign(node, signal_name))
-        
-        elif 'ProceduralBlock' in type_name:
-            drivers.extend(self._extract_always_block(node, signal_name))
-        
-        elif 'Function' in type_name or 'Task' in type_name:
-            drivers.extend(self._extract_func_driver(node, signal_name))
-        
-        for attr in ['members', 'body', 'statements']:
-            if hasattr(node, attr):
-                child = getattr(node, attr)
-                if child:
-                    if isinstance(child, list):
-                        for c in child:
-                            drivers.extend(self._visit_member(c, signal_name))
-                    else:
-                        drivers.extend(self._visit_member(child, signal_name))
-        
-        return drivers
-    
-    def _extract_continuous_assign(self, assign, signal_name: str):
-        drivers = []
-        
-        if not hasattr(assign, 'assignments') or not assign.assignments:
-            return drivers
-        
-        for stmt in assign.assignments:
-            if not hasattr(stmt, 'left'):
-                continue
+        def callback(node):
+            nonlocal module_name
             
-            var_name = str(stmt.left).strip()
+            kind = node.kind
             
-            if var_name == signal_name:
-                line = 0
+            # Track module name
+            if kind == SyntaxKind.ModuleDeclaration:
+                if hasattr(node, 'header') and hasattr(node.header, 'name'):
+                    module_name = str(node.header.name)
+                return pyslang.VisitAction.Advance
+            
+            # Find always/always_ff/always_comb/always_latch blocks
+            if kind == SyntaxKind.AlwaysBlock:
+                self._process_always_block(node, module_name, DriverKind.AlwaysFF)
+                return pyslang.VisitAction.Skip
+            
+            if kind == SyntaxKind.AlwaysCombBlock:
+                self._process_always_block(node, module_name, DriverKind.AlwaysComb)
+                return pyslang.VisitAction.Skip
+            
+            if kind == SyntaxKind.AlwaysLatchBlock:
+                self._process_always_block(node, module_name, DriverKind.AlwaysLatch)
+                return pyslang.VisitAction.Skip
+            
+            if kind == SyntaxKind.AlwaysFFBlock:
+                self._process_always_block(node, module_name, DriverKind.AlwaysFF)
+                return pyslang.VisitAction.Skip
+            
+            # Find assignment expressions (in continuous assignments, etc.)
+            if kind == SyntaxKind.AssignmentExpression:
+                self._process_assignment(node, module_name, DriverKind.Continuous, "")
+                return pyslang.VisitAction.Advance
+            
+            # Find nonblocking assignment expressions (procedural)
+            if kind == SyntaxKind.NonblockingAssignmentExpression:
+                self._process_assignment(node, module_name, DriverKind.AlwaysFF, "")
+                return pyslang.VisitAction.Advance
+            
+            # Find continuous assignments
+            if kind == SyntaxKind.ContinuousAssign:
+                self._process_continuous_assign(node, module_name)
+                return pyslang.VisitAction.Advance
+            
+            return pyslang.VisitAction.Advance
+        
+        root.visit(callback)
+    
+    def _process_assignment(self, node, module_name: str, kind: DriverKind, clock: str):
+        """Process an assignment expression"""
+        try:
+            if not hasattr(node, 'left') or not node.left:
+                return
+            left = node.left
+            
+            target = self._get_signal_name(left)
+            if not target:
+                return
+            
+            sources = []
+            if hasattr(node, 'right') and node.right:
+                sources = self._extract_sources(node.right)
+            
+            line = 0
+            if hasattr(node, 'sourceRange') and node.sourceRange:
                 try:
-                    if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
-                        line = stmt.getFirstToken().location.offset
+                    line = node.sourceRange.start.offset if hasattr(node.sourceRange.start, 'offset') else 0
                 except:
-                    pass
-                
-                source = str(stmt.right) if hasattr(stmt, 'right') else ""
-                
-                drivers.append(Driver(
-                    signal_name=signal_name,
-                    driver_kind=DriverKind.ASSIGN,
-                    source_expr=source,
-                    line=line,
-                ))
-        
-        return drivers
-    
-    def _extract_always_block(self, always, signal_name: str):
-        drivers = []
-        
-        if not hasattr(always, 'statement'):
-            return drivers
-        
-        stmt = always.statement
-        driver_type = self._detect_always_type(always)
-        
-        if 'TimingControl' in str(type(stmt)):
-            if hasattr(stmt, 'statement'):
-                self._process_expression_stmt(stmt.statement, signal_name, driver_type, drivers)
-        else:
-            self._find_assignment_in_stmt(stmt, signal_name, driver_type, drivers)
-        
-        return drivers
-    
-    def _detect_always_type(self, always):
-        if hasattr(always, 'statement') and always.statement:
-            stmt = always.statement
-            if hasattr(stmt, 'timingControl') and stmt.timingControl:
-                tc = stmt.timingControl
-                if hasattr(tc, 'event') and tc.event:
-                    return DriverKind.ALWAYS_FF
-                elif hasattr(tc, 'delay'):
-                    return DriverKind.ALWAYS_COMB
-        
-        return DriverKind.ALWAYS_FF
-    
-    def _extract_func_driver(self, func, signal_name: str):
-        drivers = []
-        
-        body = getattr(func, 'body', None)
-        if body:
-            self._find_assignment_in_stmt(body, signal_name, DriverKind.ALWAYS_COMB, drivers)
-        
-        if hasattr(func, 'statements') and func.statements:
-            for stmt in func.statements:
-                self._find_assignment_in_stmt(stmt, signal_name, DriverKind.ALWAYS_COMB, drivers)
-        
-        return drivers
-    
-    def _process_expression_stmt(self, stmt, signal_name: str,
-                                  driver_type, drivers):
-        expr = getattr(stmt, 'expr', None)
-        if not expr:
-            return
-        
-        type_name = str(type(expr))
-        
-        if 'Binary' in type_name:
-            left = getattr(expr, 'left', None)
-            if left:
-                var_name = str(left).strip()
-                if var_name == signal_name:
                     line = 0
-                    try:
-                        if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
-                            line = stmt.getFirstToken().location.offset
-                    except:
-                        pass
-                    
-                    drivers.append(Driver(
-                        signal_name=signal_name,
-                        driver_kind=driver_type,
-                        source_expr=str(expr),
-                        line=line,
-                    ))
-        
-        if hasattr(expr, 'statements'):
-            for s in expr.statements:
-                self._find_assignment_in_stmt(s, signal_name, driver_type, drivers)
+            
+            driver = Driver(
+                signal=target,
+                kind=kind,
+                module=module_name,
+                sources=sources,
+                clock=clock,
+                lines=[line] if line else [],
+                condition=""
+            )
+            
+            if target not in self.drivers:
+                self.drivers[target] = []
+            self.drivers[target].append(driver)
+            
+        except Exception as e:
+            pass
     
-    def _find_assignment_in_stmt(self, stmt, signal_name: str,
-                              driver_type, drivers):
-        if not stmt:
-            return
-        
-        type_name = str(type(stmt))
-        
-        if 'Expression' in type_name:
-            self._process_expr_stmt(stmt, signal_name, driver_type, drivers)
-        
-        elif 'If' in type_name:
-            if hasattr(stmt, 'ifBody') and stmt.ifBody:
-                self._find_assignment_in_stmt(stmt.ifBody, signal_name, driver_type, drivers)
-            if hasattr(stmt, 'elseBody') and stmt.elseBody:
-                self._find_assignment_in_stmt(stmt.elseBody, signal_name, driver_type, drivers)
-        
-        elif 'Case' in type_name:
-            if hasattr(stmt, 'items') and stmt.items:
-                for item in stmt.items:
-                    if hasattr(item, 'body') and item.body:
-                        self._find_assignment_in_stmt(item.body, signal_name, driver_type, drivers)
-            if hasattr(stmt, 'defaultItem') and stmt.defaultItem:
-                self._find_assignment_in_stmt(stmt.defaultItem, signal_name, driver_type, drivers)
-        
-        elif 'ForLoop' in type_name:
-            if hasattr(stmt, 'body') and stmt.body:
-                self._find_assignment_in_stmt(stmt.body, signal_name, driver_type, drivers)
-        
-        elif 'WhileLoop' in type_name:
-            if hasattr(stmt, 'body') and stmt.body:
-                self._find_assignment_in_stmt(stmt.body, signal_name, driver_type, drivers)
-        
-        for attr in ['statements', 'body', 'ifBody', 'elseBody']:
-            if hasattr(stmt, attr):
-                child = getattr(stmt, attr)
-                if child:
-                    if isinstance(child, list):
-                        for c in child:
-                            self._find_assignment_in_stmt(c, signal_name, driver_type, drivers)
-                    else:
-                        self._find_assignment_in_stmt(child, signal_name, driver_type, drivers)
+    def _process_always_block(self, node, module_name: str, kind: DriverKind):
+        """Process always/always_ff/always_comb/always_latch block"""
+        try:
+            if hasattr(node, 'statement') and node.statement:
+                tcs = node.statement
+                if hasattr(tcs, 'statement') and tcs.statement:
+                    body = tcs.statement
+                    self._walk_statement(body, kind, module_name, "")
+        except Exception as e:
+            pass
     
-    def _process_expr_stmt(self, stmt, signal_name: str,
-                         driver_type, drivers):
-        expr = getattr(stmt, 'expr', None)
-        if not expr:
-            return
+    def _process_continuous_assign(self, node, module_name: str):
+        """Process continuous assignment"""
+        try:
+            if hasattr(node, 'assignments') and node.assignments:
+                for assign in node.assignments:
+                    self._process_assignment(assign, module_name, DriverKind.Continuous, "")
+        except Exception as e:
+            pass
+    
+    def _walk_statement(self, stmt, kind: DriverKind, module_name: str, clock: str):
+        """Walk a statement to find assignments"""
+        try:
+            if stmt is None:
+                return
+            
+            if not hasattr(stmt, 'kind'):
+                return
+            
+            stmt_kind = str(stmt.kind)
+            
+            if stmt_kind == 'SyntaxKind.SequentialBlockStatement':
+                if hasattr(stmt, 'items'):
+                    for i in range(len(stmt.items)):
+                        child = stmt.items[i]
+                        self._walk_statement(child, kind, module_name, clock)
+                return
+            
+            if stmt_kind == 'SyntaxKind.ExpressionStatement':
+                if hasattr(stmt, 'expr') and stmt.expr:
+                    expr = stmt.expr
+                    if hasattr(expr, 'kind'):
+                        expr_kind = str(expr.kind)
+                        if 'Assignment' in expr_kind or 'Nonblocking' in expr_kind:
+                            self._process_assignment(expr, module_name, kind, clock)
+                return
+            
+            if 'If' in stmt_kind:
+                if hasattr(stmt, 'thenStatement') and stmt.thenStatement:
+                    self._walk_statement(stmt.thenStatement, kind, module_name, clock)
+                if hasattr(stmt, 'elseStatement') and stmt.elseStatement:
+                    self._walk_statement(stmt.elseStatement, kind, module_name, clock)
+                return
+            
+            if 'Case' in stmt_kind:
+                if hasattr(stmt, 'cases'):
+                    for i in range(len(stmt.cases)):
+                        case = stmt.cases[i]
+                        if hasattr(case, 'statement') and case.statement:
+                            self._walk_statement(case.statement, kind, module_name, clock)
+                return
+            
+            if 'ForLoop' in stmt_kind:
+                if hasattr(stmt, 'statement') and stmt.statement:
+                    self._walk_statement(stmt.statement, kind, module_name, clock)
+                return
+            
+            if 'WhileLoop' in stmt_kind:
+                if hasattr(stmt, 'statement') and stmt.statement:
+                    self._walk_statement(stmt.statement, kind, module_name, clock)
+                return
+            
+        except Exception as e:
+            pass
+    
+    def _get_signal_name(self, node) -> str:
+        """Get the signal name from a node"""
+        if node is None:
+            return ""
         
-        type_name = str(type(expr))
+        kind_str = str(node.kind)
         
-        if 'Binary' in type_name:
-            left = getattr(expr, 'left', None)
-            if left:
-                var_name = str(left).strip()
-                if var_name == signal_name:
-                    line = 0
-                    try:
-                        if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
-                            line = stmt.getFirstToken().location.offset
-                    except:
-                        pass
-                    
-                    drivers.append(Driver(
-                        signal_name=signal_name,
-                        driver_kind=driver_type,
-                        source_expr=str(expr),
-                        line=line,
-                    ))
+        if 'Identifier' in kind_str:
+            return str(node).strip()
         
-        for attr in ['left', 'right']:
-            if hasattr(expr, attr):
-                child = getattr(expr, attr)
-                if child:
-                    self._process_expr_stmt(child, signal_name, driver_type, drivers)
+        if 'ElementSelect' in kind_str:
+            return str(node).strip()
+        
+        if 'RangeSelect' in kind_str:
+            return str(node).strip()
+        
+        return ""
+    
+    def _extract_sources(self, node) -> List[str]:
+        """Extract source signals from an expression"""
+        sources = []
+        
+        if node is None:
+            return sources
+        
+        if not hasattr(node, 'kind'):
+            return sources
+        
+        kind_str = str(node.kind)
+        
+        if 'Identifier' in kind_str and 'Pattern' not in kind_str:
+            name = str(node).strip()
+            if name and not self._is_literal(name):
+                sources.append(name)
+            return sources
+        
+        if 'Binary' in kind_str:
+            if hasattr(node, 'left') and node.left:
+                sources.extend(self._extract_sources(node.left))
+            if hasattr(node, 'right') and node.right:
+                sources.extend(self._extract_sources(node.right))
+            return sources
+        
+        if 'Conditional' in kind_str or 'Ternary' in kind_str:
+            if hasattr(node, 'whenTrue') and node.whenTrue:
+                sources.extend(self._extract_sources(node.whenTrue))
+            if hasattr(node, 'whenFalse') and node.whenFalse:
+                sources.extend(self._extract_sources(node.whenFalse))
+            return sources
+        
+        if 'Call' in kind_str:
+            return sources
+        
+        return sources
+    
+    def _is_literal(self, name: str) -> bool:
+        """Check if a name is a literal value"""
+        name = name.strip()
+        if not name:
+            return True
+        name_lower = name.lower()
+        if name_lower.isdigit():
+            return True
+        if name_lower.startswith("'h") or name_lower.startswith("'b") or name_lower.startswith("'d"):
+            return True
+        if name_lower.startswith("'"):
+            return True
+        if name_lower in ['x', 'z', '?']:
+            return True
+        return False
+    
+    def get_drivers(self, signal: str = '*') -> List[Driver]:
+        """Get drivers for a signal. Use '*' for all."""
+        if signal == '*':
+            all_drivers = []
+            for sig, drvs in self.drivers.items():
+                all_drivers.extend(drvs)
+            return all_drivers
+        return self.drivers.get(signal, [])
+    
+    def find_driver(self, signal_name: str, include_bit_select: bool = False) -> List[Driver]:
+        """Find drivers for a signal.
+        
+        Args:
+            signal_name: Name of the signal to find drivers for
+            include_bit_select: If True, also match signals with bit selects (e.g., sig[0])
+        
+        Returns:
+            List of Driver objects
+        """
+        drivers = self.drivers.get(signal_name, [])
+        
+        if include_bit_select:
+            # Also find drivers for signals that match the base name
+            for sig, drvs in self.drivers.items():
+                if sig.startswith(signal_name + '['):
+                    drivers.extend(drvs)
+        
+        return drivers
+    
+    def get_all_signals(self) -> List[str]:
+        """Get list of all signals with drivers"""
+        return list(self.drivers.keys())
+
+
+# Alias for backward compatibility
+DriverTracer = DriverCollector
+
+
+def collect_drivers(parser):
+    """Convenience function to collect drivers"""
+    return DriverCollector(parser)
