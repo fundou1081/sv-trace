@@ -1,0 +1,201 @@
+"""
+PowerEstimator - 功耗估算器 (简单实现)
+基于静态RTL分析的功耗估算
+"""
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from dataclasses import dataclass, field
+from typing import Dict, List
+
+
+# 功耗常量 (pJ per toggle @ 16nm 工艺)
+POWER_CONSTANTS = {
+    'LUT': 1.0,      # LUT 每翻转
+    'FF': 0.2,       # FF 每翻转
+    'DSP': 10.0,      # DSP 每操作
+    'BRAM': 50.0,    # BRAM 每访问
+    'IO': 5.0,       # I/O 每翻转
+}
+
+# 信号活动率默认
+ACTIVITY_RATE = {
+    'clk': 1.0,       # 时钟 100%
+    'enable': 0.5,    # enable 50%
+    'valid': 0.3,     # valid 30%
+    'ready': 0.3,     # ready 30%
+    'data': 0.25,     # data 25%
+    'pkt': 0.25,      # packet data 25%
+    'mode': 0.1,     # mode 10%
+    'addr': 0.2,      # address 20%
+    'rst': 0.1,       # 复位 10%
+}
+
+
+@dataclass
+class PowerBreakdown:
+    """功耗分解"""
+    clock_power: float = 0.0    # mW
+    logic_power: float = 0.0    # mW
+    memory_power: float = 0.0   # mW
+    io_power: float = 0.0       # mW
+    
+    def total(self) -> float:
+        return self.clock_power + self.logic_power + self.memory_power + self.io_power
+    
+    def visualize(self) -> str:
+        lines = []
+        lines.append(f"  Clock:  {self.clock_power:7.2f} mW ({self.clock_power/self.total()*100:5.1f}%)")
+        lines.append(f"  Logic: {self.logic_power:7.2f} mW ({self.logic_power/self.total()*100:5.1f}%)")
+        lines.append(f"  Memory:{self.memory_power:7.2f} mW ({self.memory_power/self.total()*100:5.1f}%)")
+        lines.append(f"  I/O:   {self.io_power:7.2f} mW ({self.io_power/self.total()*100:5.1f}%)")
+        lines.append(f"  -----------------")
+        lines.append(f"  Total: {self.total():7.2f} mW")
+        return '\n'.join(lines)
+
+
+@dataclass
+class PowerResult:
+    """功耗估算结果"""
+    module_name: str
+    clock_mhz: float = 100.0
+    
+    # 资源数量
+    luts: int = 0
+    ffs: int = 0
+    dsps: int = 0
+    brams: int = 0
+    ios: int = 0
+    
+    # 功耗分解
+    breakdown: PowerBreakdown = field(default_factory=PowerBreakdown)
+    
+    # 估算方法
+    method: str = "simple"
+    
+    def visualize(self) -> str:
+        lines = []
+        lines.append("=" * 60)
+        lines.append(f"POWER ESTIMATION: {self.module_name}")
+        lines.append("=" * 60)
+        
+        lines.append(f"\n⏱️ Clock: {self.clock_mhz} MHz")
+        
+        lines.append(f"\n📊 Resources:")
+        lines.append(f"  LUTs: {self.luts:,}")
+        lines.append(f"  FFs:  {self.ffs:,}")
+        lines.append(f"  DSPs: {self.dsps:,}")
+        lines.append(f"  BRAM: {self.brams:,}")
+        
+        lines.append(f"\n⚡ Power Breakdown (Simple):")
+        lines.append(self.breakdown.visualize())
+        
+        lines.append(f"\n📐 Method: {self.method}")
+        
+        lines.append("=" * 60)
+        return '\n'.join(lines)
+
+
+class PowerEstimator:
+    """功耗估算器 (简单实现)"""
+    
+    def __init__(self, parser):
+        self.parser = parser
+        self._resource = None
+    
+    def _get_resource(self):
+        if not self._resource:
+            from .resource_estimation import ResourceEstimation
+            self._resource = ResourceEstimation(self.parser)
+        return self._resource
+    
+    def estimate(self, module_name: str = None, 
+                clock_mhz: float = 100.0) -> PowerResult:
+        """估算功耗"""
+        
+        # 获取模块名
+        if not module_name:
+            module_name = self._get_default_module()
+        
+        result = PowerResult(
+            module_name=module_name,
+            clock_mhz=clock_mhz
+        )
+        
+        # 1. 获取资源统计
+        res = self._get_resource().analyze_module(module_name)
+        
+        result.luts = res.lut_count
+        result.ffs = res.ff_count
+        result.dsps = res.dsp_count
+        
+        # 2. 估算功耗 (简单方法)
+        breakdown = self._simple_estimate(
+            result.luts,
+            result.ffs,
+            result.dsps,
+            0,  # BRAM
+            0,  # IO
+            clock_mhz
+        )
+        
+        result.breakdown = breakdown
+        
+        return result
+    
+    def _simple_estimate(self, luts, ffs, dsps, brams, ios, clock_mhz) -> PowerBreakdown:
+        """
+        简单功耗估算:
+        
+        公式: P = (resources * activity * power_constant * frequency) / 1000
+        
+        假设:
+        - 时钟功耗占 35% (固定)
+        - 逻辑功耗占 45% (LUT + FF)
+        - 存储功耗占 15% (BRAM)
+        - I/O 功耗占 5% (IO)
+        """
+        
+        # 总逻辑功耗 (mW)
+        total_logic = (
+            luts * POWER_CONSTANTS['LUT'] * 0.25 +  # data活动率 ~25%
+            ffs * POWER_CONSTANTS['FF'] * 1.0 +     # FF每周期翻转
+            dsps * POWER_CONSTANTS['DSP'] * 0.3       # DSP ~30% activity
+        ) * clock_mhz / 1000
+        
+        # 时钟功耗 (时钟网络占总功耗 ~35%)
+        clock_power = total_logic * 0.35 / 0.45
+        
+        # 逻辑功耗 (去掉时钟)
+        logic_power = total_logic * 0.45
+        
+        # 存储功耗 (BRAM)
+        memory_power = brams * POWER_CONSTANTS['BRAM'] * clock_mhz / 1000 * 0.5
+        
+        # I/O功耗
+        io_power = ios * POWER_CONSTANTS['IO'] * clock_mhz / 1000 * 0.1
+        
+        return PowerBreakdown(
+            clock_power=clock_power,
+            logic_power=logic_power,
+            memory_power=memory_power,
+            io_power=io_power
+        )
+    
+    def _get_default_module(self) -> str:
+        for fname, tree in self.parser.trees.items():
+            if tree and hasattr(tree, 'root'):
+                import pyslang
+                for m in tree.root.members:
+                    if m.kind == pyslang.SyntaxKind.ModuleDeclaration:
+                        if hasattr(m, 'header'):
+                            return str(m.header.name).strip()
+        return "unknown"
+
+
+def estimate_power(parser, module_name: str = None, 
+                clock_mhz: float = 100.0) -> PowerResult:
+    """便捷函数"""
+    est = PowerEstimator(parser)
+    return est.estimate(module_name, clock_mhz)

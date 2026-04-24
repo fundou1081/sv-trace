@@ -69,17 +69,19 @@ class HierarchyQuery:
         
         for member in module.body:
             if hasattr(member, 'kind') and member.kind == pyslang.SyntaxKind.HierarchicalInstantiation:
-                for inst in member.instances:
-                    inst_name = inst.name.value if hasattr(inst, 'name') and inst.name else ""
-                    
-                    if target_name and inst.moduleName.value != target_name:
-                        continue
-                    
-                    instances.append({
-                        "name": inst_name,
-                        "module": inst.moduleName.value,
-                        "parameters": self._extract_parameters(inst),
-                    })
+                if hasattr(member, 'instances') and member.instances:
+                    for inst in member.instances:
+                        inst_name = inst.name.value if hasattr(inst, 'name') and inst.name else ""
+                        
+                        if target_name and hasattr(inst, 'moduleName') and inst.moduleName:
+                            if inst.moduleName.value != target_name:
+                                continue
+                        
+                        instances.append({
+                            "name": inst_name,
+                            "module": inst.moduleName.value if hasattr(inst, 'moduleName') and inst.moduleName else "",
+                            "parameters": self._extract_parameters(inst),
+                        })
         
         return instances
     
@@ -88,6 +90,10 @@ class HierarchyQuery:
         params = []
         if hasattr(inst, 'connections'):
             for conn in inst.connections:
-                if hasattr(conn, 'ordered':
+                # Skip ordered connections
+                if hasattr(conn, 'ordered') and conn.ordered:
                     continue
+                # Handle named connections
+                if hasattr(conn, 'port') and conn.port:
+                    params.append(str(conn.port))
         return params

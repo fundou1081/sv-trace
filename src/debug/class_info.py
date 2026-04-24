@@ -1,7 +1,33 @@
 """Class-related data structures for sv-trace."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Dict
+
+
+@dataclass
+class TypeParameterInfo:
+    """Information about a type parameter in a parameterized class."""
+    name: str
+    default_type: Optional[str] = None
+    
+    def __repr__(self):
+        if self.default_type:
+            return f"type {self.name} = {self.default_type}"
+        return f"type {self.name}"
+
+
+@dataclass
+class ValueParameterInfo:
+    """Information about a value parameter in a parameterized class."""
+    name: str
+    data_type: str                    # int, bit, logic, etc.
+    width: Optional[int] = None       # Bit width if applicable
+    default_value: Optional[str] = None
+    
+    def __repr__(self):
+        if self.default_value:
+            return f"{self.name} = {self.default_value}"
+        return f"{self.name}"
 
 
 @dataclass
@@ -96,6 +122,25 @@ class ClassInfo:
     is_virtual: bool = False
     is_abstract: bool = False
     line_number: int = 0
+    # Parameterized class support
+    type_parameters: List[TypeParameterInfo] = field(default_factory=list)
+    value_parameters: List[ValueParameterInfo] = field(default_factory=list)
+    
+    @property
+    def is_parameterized(self) -> bool:
+        """Check if class is parameterized (has type or value parameters)."""
+        return len(self.type_parameters) > 0 or len(self.value_parameters) > 0
+    
+    def get_parameters_summary(self) -> str:
+        """Get a summary string of all parameters."""
+        parts = []
+        for p in self.value_parameters:
+            parts.append(str(p))
+        for p in self.type_parameters:
+            parts.append(str(p))
+        if parts:
+            return "#(" + ", ".join(parts) + ")"
+        return ""
 
     def get_rand_properties(self) -> List[PropertyInfo]:
         """Get all random properties (rand/randc)."""

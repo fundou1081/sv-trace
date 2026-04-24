@@ -1,409 +1,312 @@
-"""Class declaration extractor for SystemVerilog classes."""
+"""Class extractor for SystemVerilog.
+
+Extracts:
+- Class declarations
+- Properties (variables)
+- Constraints
+- Methods
+"""
 
 import sys
 import re
-from typing import List, Dict, Optional, Set
+from typing import Dict, List
+from dataclasses import dataclass
 
 from .class_info import (
     ClassInfo, PropertyInfo, ConstraintInfo, MethodInfo,
-    ConstraintModeInfo
+    TypeParameterInfo, ValueParameterInfo
 )
 
 
-# Valid SystemVerilog property/method qualifiers
-VALID_QUALIFIERS: Set[str] = {
-    'rand', 'randc',           # Random qualifiers
-    'local', 'protected', 'public',  # Access qualifiers  
-    'static',                   # Storage
-    'const',                    # Constant
-    'virtual', 'pure',          # Method qualifiers
-    'automatic',                # Function/task qualifiers
-}
-
-
 class ClassExtractor:
-    """Extract class declarations from parsed SystemVerilog code."""
-
+    """Extract SystemVerilog class information from parsed AST."""
+    
     def __init__(self, parser):
         self.parser = parser
         self.classes: Dict[str, ClassInfo] = {}
-
+        self._extract()
+    
     def extract(self) -> Dict[str, ClassInfo]:
-        """Extract all class declarations from parsed code."""
-        self.classes = {}
-
-        for fname, tree in self.parser.trees.items():
-            self._extract_from_tree(tree)
-
+        """Return extracted classes dict."""
         return self.classes
-
-    def get_class(self, name: str) -> Optional[ClassInfo]:
-        """Get a specific class by name."""
-        return self.classes.get(name)
-
-    def _extract_from_tree(self, tree):
-        """Extract classes from a syntax tree."""
-        root = tree.root
-
-        # CompilationUnitSyntax has members
-        if hasattr(root, 'members') and root.members:
-            for i in range(len(root.members)):
-                member = root.members[i]
-                if self._is_class_declaration(member):
-                    class_info = self._extract_class(member)
-                    if class_info:
-                        self.classes[class_info.name] = class_info
-        # Direct ClassDeclarationSyntax (single file with one class)
-        elif self._is_class_declaration(root):
-            class_info = self._extract_class(root)
-            if class_info:
-                self.classes[class_info.name] = class_info
-
-    def _is_class_declaration(self, node) -> bool:
-        """Check if node is a class declaration."""
-        return "ClassDeclarationSyntax" in str(type(node))
-
-    def _extract_class(self, cls_node) -> Optional[ClassInfo]:
-        """Extract information from a ClassDeclarationSyntax node."""
+    
+    def _extract(self):
+        """Extract classes from all parsed trees."""
+        for fname, tree in self.parser.trees.items():
+            if tree and hasattr(tree, 'root') and tree.root:
+                self._extract_from_tree(tree.root, fname)
+    
+    def _extract_from_tree(self, node, filename: str):
+        """Recursively traverse AST to find class declarations."""
+        if node is None:
+            return
+        
+        node_type = type(node).__name__
+        
+        if 'ClassDeclaration' in node_type:
+            self._extract_class(node, filename)
+        
+        if hasattr(node, 'members') and node.members:
+            for child in node.members:
+                self._extract_from_tree(child, filename)
+    
+    def _extract_class(self, class_node, filename: str):
+        """Extract complete class information."""
         try:
-            name = self._get_name(cls_node.name)
+            name = str(class_node.name).strip() if hasattr(class_node, 'name') and class_node.name else ""
             if not name:
-                return None
-
-            info = ClassInfo(name=name)
-
-            # Get line number
-            try:
-                if hasattr(cls_node, 'getFirstToken') and cls_node.getFirstToken():
-                    info.line_number = cls_node.getFirstToken().location.line
-            except:
-                pass
-
-            # Check if virtual
-            if hasattr(cls_node, 'virtualOrInterface'):
-                virt = cls_node.virtualOrInterface
-                if virt and 'virtual' in str(virt).lower():
-                    info.is_virtual = True
-
-            # Check extends clause
-            if hasattr(cls_node, 'extendsClause') and cls_node.extendsClause:
-                info.extends = self._extract_extends(cls_node.extendsClause)
-
-            # Check abstract
-            if hasattr(cls_node, 'items'):
-                info.is_abstract = self._check_abstract(cls_node.items)
-
-            # Extract items
-            if hasattr(cls_node, 'items') and cls_node.items:
-                self._extract_items(cls_node.items, info)
-
-            return info
-
+                return
+            
+            info = ClassInfo(name=name, line_number=0)
+            
+            if hasattr(class_node, 'extendsClause') and class_node.extendsClause:
+                extends_str = str(class_node.extendsClause).strip()
+                if extends_str.startswith('extends '):
+                    info.extends = extends_str[8:].split('#')[0].strip()
+            
+            if hasattr(class_node, 'parameters') and class_node.parameters:
+                self._extract_parameters(class_node.parameters, info)
+            
+            if hasattr(class_node, 'items') and class_node.items:
+                self._extract_class_items(class_node.items, info)
+            
+            self.classes[name] = info
+            
         except Exception as e:
             print(f"Error extracting class: {e}")
-            return None
-
-    def _get_name(self, name_node) -> str:
-        """Get name from a name node."""
-        if not name_node:
-            return ""
-        if hasattr(name_node, 'value'):
-            return str(name_node.value).strip()
-        return str(name_node).strip()
-
-    def _extract_extends(self, extends_node) -> str:
-        """Extract the parent class name from extends clause."""
-        if not extends_node:
-            return ""
-        ext_str = str(extends_node).strip()
-        if ext_str.startswith("extends "):
-            ext_str = ext_str[8:]
-        return ext_str.strip()
-
-    def _check_abstract(self, items) -> bool:
-        """Check if class has abstract methods."""
+    
+    def _extract_parameters(self, params_node, info: ClassInfo):
+        """Extract class type parameters."""
         try:
-            for i in range(len(items)):
-                item = items[i]
-                item_str = str(type(item))
-                if 'ClassMethod' in item_str or 'Prototype' in item_str:
-                    if hasattr(item, 'qualifiers'):
-                        quals = str(item.qualifiers)
-                        if 'pure' in quals.lower() or 'abstract' in quals.lower():
-                            return True
-        except:
-            pass
-        return False
-
-    def _filter_qualifiers(self, quals_list: List[str]) -> List[str]:
-        """Filter qualifiers to only include valid SV keywords."""
-        return [q for q in quals_list if q in VALID_QUALIFIERS]
-
-    def _extract_items(self, items, info: ClassInfo):
-        """Extract properties, constraints, and methods from class items."""
+            if not hasattr(params_node, 'declarations'):
+                return
+            
+            decls = params_node.declarations
+            if not hasattr(decls, '__iter__'):
+                return
+            
+            for decl in decls:
+                decl_type = type(decl).__name__
+                
+                if 'TypeParameterDeclaration' in decl_type:
+                    name = ""
+                    default_type = None
+                    if hasattr(decl, 'declarators'):
+                        for d in decl.declarators:
+                            if hasattr(d, 'name'):
+                                name = str(d.name).strip()
+                            if hasattr(d, 'assignment') and d.assignment:
+                                default_type = str(d.assignment).lstrip('= ').strip()
+                    if name:
+                        info.type_parameters.append(TypeParameterInfo(name=name, default_type=default_type))
+                
+                elif 'ParameterDeclaration' in decl_type:
+                    data_type = "int"
+                    if hasattr(decl, 'type') and decl.type:
+                        data_type = str(decl.type).strip()
+                    
+                    if hasattr(decl, 'declarators'):
+                        for d in decl.declarators:
+                            if hasattr(d, 'name'):
+                                name = str(d.name).strip()
+                                default_value = None
+                                if hasattr(d, 'initializer') and d.initializer:
+                                    default_value = str(d.initializer).lstrip('= ').strip()
+                                info.value_parameters.append(
+                                    ValueParameterInfo(name=name, data_type=data_type, default_value=default_value)
+                                )
+        except Exception as e:
+            print(f"Error extracting parameters: {e}")
+    
+    def _extract_class_items(self, items, info: ClassInfo):
+        """Extract properties, constraints, methods from class items."""
+        if not items:
+            return
+        
         try:
-            for i in range(len(items)):
-                item = items[i]
-                item_type = str(type(item))
-
-                if 'ClassPropertyDeclaration' in item_type:
-                    prop = self._extract_property(item)
-                    if prop:
-                        info.properties.append(prop)
-
-                elif 'ConstraintDeclaration' in item_type:
-                    constraint = self._extract_constraint(item)
-                    if constraint:
-                        info.constraints.append(constraint)
-
-                elif 'ClassMethod' in item_type or 'MethodDeclaration' in item_type:
-                    method = self._extract_method(item)
-                    if method:
-                        info.methods.append(method)
-                        
-                elif 'ClassMethodPrototype' in item_type:
-                    # Pure virtual method prototypes
-                    method = self._extract_method(item)
-                    if method:
-                        info.methods.append(method)
-
+            for item in items:
+                item_type = type(item).__name__
+                
+                if 'Property' in item_type:
+                    self._extract_property(item, info)
+                elif 'Constraint' in item_type:
+                    self._extract_constraint(item, info)
+                elif 'Method' in item_type:
+                    self._extract_method(item, info)
+                    
         except Exception as e:
             print(f"Error extracting class items: {e}")
-
-    def _extract_property(self, prop_node) -> Optional[PropertyInfo]:
-        """Extract property information from ClassPropertyDeclarationSyntax."""
+    
+    def _extract_property(self, prop_node, info: ClassInfo):
+        """Extract a class property."""
         try:
-            name = ""
-            data_type = ""
-            width = None
-            dimensions = []
+            data_type = "logic"
+            prop_name = ""
             qualifiers = []
             rand_mode = "none"
-            default_value = None
-
-            # Get qualifiers
-            if hasattr(prop_node, 'qualifiers') and prop_node.qualifiers:
-                quals_str = str(prop_node.qualifiers).strip()
-                quals_list = quals_str.split()
-                qualifiers = self._filter_qualifiers(quals_list)
-                
-                if 'rand' in qualifiers:
-                    rand_mode = 'rand'
-                elif 'randc' in qualifiers:
-                    rand_mode = 'randc'
-
-            # Get declaration (the actual variable declaration)
+            dimensions = []
+            
+            decl = prop_node
             if hasattr(prop_node, 'declaration') and prop_node.declaration:
                 decl = prop_node.declaration
-
-                # type contains the base type and width
-                if hasattr(decl, 'type') and decl.type:
-                    data_type = str(decl.type).strip()
-                    # Parse width from type string like "bit [7:0]"
-                    width = self._parse_width_from_type(data_type)
-
-                # declarators contains the variable names and dimensions
-                if hasattr(decl, 'declarators') and decl.declarators:
-                    declarators = decl.declarators
-                    try:
-                        for i in range(len(declarators)):
-                            dec = declarators[i]
-                            dec_name = self._get_name(dec.name)
-                            if dec_name:
-                                name = dec_name
-                                
-                                # Extract dimensions
-                                if hasattr(dec, 'dimensions') and dec.dimensions:
-                                    dims = dec.dimensions
-                                    dims_str = str(dims).strip()
-                                    if dims_str:
-                                        dimensions = self._parse_dimensions(dims_str)
-                                    
-                                    # Check for initializer/default value
-                                    if hasattr(dec, 'initializer') and dec.initializer:
-                                        default_value = str(dec.initializer)
-                            
-                            if name:
-                                break
-                    except:
-                        pass
-
-            if not name:
-                return None
-
-            return PropertyInfo(
-                name=name,
+            
+            # Extract qualifiers from prop_node (not decl)
+            if hasattr(prop_node, 'qualifiers') and prop_node.qualifiers:
+                quals_str = str(prop_node.qualifiers).lower()
+                for q in ['rand', 'randc', 'local', 'protected', 'static', 'const', 'var']:
+                    if q in quals_str:
+                        qualifiers.append(q)
+                if 'randc' in quals_str:
+                    rand_mode = "randc"
+                elif 'rand' in quals_str:
+                    rand_mode = "rand"
+            
+            # Get base type
+            if hasattr(decl, 'type') and decl.type:
+                data_type = str(decl.type).strip()
+            
+            # Extract declarators (may contain array dimensions)
+            if hasattr(decl, 'declarators') and decl.declarators:
+                for d in decl.declarators:
+                    if hasattr(d, 'name'):
+                        prop_name = str(d.name).strip()
+                    # Check for array dimensions in declarator
+                    if hasattr(d, 'dimensions') and d.dimensions:
+                        for dim in d.dimensions:
+                            dim_str = str(dim).strip()
+                            if dim_str:
+                                dimensions.append(dim_str)
+            
+            if not prop_name:
+                return
+            
+            # Parse dimensions from data_type if not already extracted
+            if not dimensions and '[' in data_type:
+                dims = re.findall(r'\[[^\]]+\]', data_type)
+                dimensions = dims
+            
+            prop = PropertyInfo(
+                name=prop_name,
                 data_type=data_type,
-                width=width,
                 dimensions=dimensions,
                 qualifiers=qualifiers,
-                rand_mode=rand_mode,
-                default_value=default_value
+                rand_mode=rand_mode
             )
-
+            info.properties.append(prop)
+            
         except Exception as e:
             print(f"Error extracting property: {e}")
-            return None
-
-    def _parse_width_from_type(self, type_str: str) -> Optional[int]:
-        """Parse width from type string like 'bit [7:0]' or 'logic [15:0]'."""
-        if not type_str:
-            return None
-        # Match [high:low] pattern with numeric values
-        match = re.search(r'\[(\d+):(\d+)\]', type_str)
-        if match:
-            high = int(match.group(1))
-            low = int(match.group(2))
-            return high - low + 1
-        # If no numeric range found but has brackets, it's parameterized
-        if '[' in type_str and ']' in type_str:
-            return 1  # Parameterized width
-        return 1  # Scalar defaults to width 1
-
-    def _parse_dimensions(self, dims_str: str) -> List[str]:
-        """Parse array dimensions from string like '[4]' or '[$]'."""
-        if not dims_str:
-            return []
-        
-        dimensions = []
-        matches = re.findall(r'\[.*?\]', dims_str)
-        for m in matches:
-            if m not in dimensions:
-                dimensions.append(m)
-        
-        return dimensions
-
-    def _extract_constraint(self, cons_node) -> Optional[ConstraintInfo]:
-        """Extract constraint information."""
+    
+    def _extract_constraint(self, const_node, info: ClassInfo):
+        """Extract a constraint."""
         try:
-            name = ""
-            constraint_type = "simple"
+            const_name = ""
+            const_type = "simple"
             expression = ""
-            raw_text = str(cons_node)
             is_soft = False
+            
+            if hasattr(const_node, 'name') and const_node.name:
+                const_name = str(const_node.name).strip()
+            
+            if not const_name:
+                return
+            
+            # Get expression and check for soft from the block's first statement
+            if hasattr(const_node, 'block') and const_node.block:
+                block = const_node.block
+                expression = str(block).strip()
+                
+                # Check for soft keyword in constraint block statements
+                if hasattr(block, 'items') and block.items:
+                    for stmt in block.items:
+                        # ExpressionConstraintSyntax has 'soft' attribute
+                        if hasattr(stmt, 'soft') and stmt.soft:
+                            is_soft = True
+                            const_type = "soft"
+                            break
+                        # For other statement types, check string
+                        elif 'soft' in str(stmt).lower():
+                            is_soft = True
+                            const_type = "soft"
+                            break
+                
+                # Clean expression
+                expression = re.sub(r'^\{', '', expression)
+                expression = re.sub(r'\}$', '', expression)
+                expression = expression.strip()
+                
+                # Detect other types only if not soft
+                if not is_soft:
+                    expr_lower = expression.lower()
+                    if '->' in expression:
+                        const_type = "implication"
+                    elif 'dist' in expr_lower:
+                        const_type = "dist"
+                    elif 'solve' in expr_lower and 'before' in expr_lower:
+                        const_type = "solve_before"
+            
+            # Extract dist items - use simple pattern
             dist_items = []
-
-            # Get constraint name
-            if hasattr(cons_node, 'name') and cons_node.name:
-                name = self._get_name(cons_node.name)
-
-            # Get constraint body from 'block' attribute
-            if hasattr(cons_node, 'block') and cons_node.block:
-                block_str = str(cons_node.block).strip()
-                # Remove braces
-                if block_str.startswith('{'):
-                    block_str = block_str[1:]
-                if block_str.endswith('}'):
-                    block_str = block_str[:-1]
-                expression = block_str.strip()
-
-                # Determine constraint type by analyzing expression
-                constraint_type, is_soft, dist_items = self._classify_constraint(expression)
-
-            if not name:
-                return None
-
-            return ConstraintInfo(
-                name=name,
-                constraint_type=constraint_type,
+            if const_type == "dist":
+                dist_matches = re.findall(r'\[.*?\] := \d+', expression)
+                dist_items = dist_matches
+            
+            const = ConstraintInfo(
+                name=const_name,
+                constraint_type=const_type,
                 expression=expression,
-                raw_text=raw_text,
                 is_soft=is_soft,
                 dist_items=dist_items
             )
-
+            info.constraints.append(const)
+            
         except Exception as e:
             print(f"Error extracting constraint: {e}")
-            return None
-
-    def _classify_constraint(self, expr: str) -> tuple:
-        """Classify constraint type and extract additional info."""
-        expr_lower = expr.lower()
-        constraint_type = "simple"
-        is_soft = False
-        dist_items = []
-        
-        # Check for soft constraint
-        if 'soft ' in expr_lower or expr_lower.startswith('soft '):
-            constraint_type = "soft"
-            is_soft = True
-            # Remove soft keyword for further analysis
-            expr = re.sub(r'\bsoft\b', '', expr, flags=re.IGNORECASE).strip()
-        
-        # Check for distribution constraint
-        if 'dist {' in expr_lower:
-            constraint_type = "dist"
-            # Extract dist items
-            dist_match = re.search(r'dist\s*\{([^}]+)\}', expr, re.IGNORECASE)
-            if dist_match:
-                dist_items = [item.strip() for item in dist_match.group(1).split(',')]
-        
-        # Check for solve before
-        elif 'solve ' in expr_lower and ' before ' in expr_lower:
-            constraint_type = "solve_before"
-        
-        # Check for foreach
-        elif 'foreach' in expr_lower:
-            constraint_type = "loop"
-        
-        # Check for implication (after soft check)
-        elif '->' in expr:
-            constraint_type = "implication"
-        
-        # Check for conditional (if-else without soft)
-        elif re.search(r'\bif\b.*\belse\b', expr, re.IGNORECASE | re.DOTALL) and constraint_type == "simple":
-            constraint_type = "conditional"
-        
-        return constraint_type, is_soft, dist_items
-
-    def _extract_method(self, method_node) -> Optional[MethodInfo]:
-        """Extract method information from ClassMethodDeclarationSyntax."""
+    
+    def _extract_method(self, method_node, info: ClassInfo):
+        """Extract a class method."""
         try:
-            name = ""
+            method_name = ""
             qualifiers = []
-            return_type = ""
-            prototype_str = ""
-
-            # Get qualifiers from the method node
+            prototype = ""
+            return_type = "void"
+            
+            # Get qualifiers from ClassMethodDeclarationSyntax
             if hasattr(method_node, 'qualifiers') and method_node.qualifiers:
-                quals_str = str(method_node.qualifiers).strip()
-                quals_list = quals_str.split()
-                qualifiers = self._filter_qualifiers(quals_list)
-
-            # Try to get name and prototype
+                for q in method_node.qualifiers:
+                    qualifiers.append(str(q).strip())
+            
+            # Get declaration and prototype
+            decl = method_node
             if hasattr(method_node, 'declaration') and method_node.declaration:
                 decl = method_node.declaration
-                prototype_str = str(decl)
-
-                if hasattr(decl, 'prototype') and decl.prototype:
-                    proto = decl.prototype
-                    if hasattr(proto, 'name') and proto.name:
-                        name = self._get_name(proto.name)
-                    
-                    if hasattr(proto, 'returnType') and proto.returnType:
-                        return_type = str(proto.returnType).strip()
             
-            elif hasattr(method_node, 'prototype') and method_node.prototype:
-                proto = method_node.prototype
-                prototype_str = str(proto)
-                if hasattr(proto, 'name') and proto.name:
-                    name = self._get_name(proto.name)
-                if hasattr(proto, 'returnType') and proto.returnType:
-                    return_type = str(proto.returnType).strip()
-
-            if not name and hasattr(method_node, 'name') and method_node.name:
-                name = self._get_name(method_node.name)
-
-            if not name:
-                return None
-
-            return MethodInfo(
-                name=name,
-                prototype=prototype_str[:100] if prototype_str else str(method_node)[:100],
+            proto = decl
+            if hasattr(decl, 'prototype') and decl.prototype:
+                proto = decl.prototype
+            
+            if proto is None:
+                return
+            
+            if hasattr(proto, 'name') and proto.name:
+                method_name = str(proto.name).strip()
+            
+            if not method_name:
+                return
+            
+            if hasattr(proto, 'returnType') and proto.returnType:
+                return_type = str(proto.returnType).strip()
+            
+            if hasattr(proto, 'portList') and proto.portList:
+                prototype = f"({proto.portList})"
+            
+            method = MethodInfo(
+                name=method_name,
+                prototype=prototype,
                 qualifiers=qualifiers,
                 return_type=return_type
             )
-
+            info.methods.append(method)
+            
         except Exception as e:
             print(f"Error extracting method: {e}")
-            return None

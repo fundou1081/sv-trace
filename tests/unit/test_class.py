@@ -319,5 +319,104 @@ class TestClassInstantiation(unittest.TestCase):
             os.unlink(fname)
 
 
+    def test_parameterized_class_value_params(self):
+        """Test parameterized class with value parameters."""
+        code = 'class generic #(parameter int WIDTH = 16, parameter int DEPTH = 32); logic [WIDTH-1:0] mem [DEPTH]; endclass'
+        fname = write_temp_file(code)
+        
+        try:
+            parser = SVParser()
+            parser.parse_file(fname)
+            
+            extractor = ClassExtractor(parser)
+            classes = extractor.extract()
+            
+            self.assertIn('generic', classes)
+            g = classes['generic']
+            self.assertTrue(g.is_parameterized)
+            self.assertEqual(len(g.value_parameters), 2)
+            
+            params = {p.name: p for p in g.value_parameters}
+            self.assertEqual(params['WIDTH'].default_value, '16')
+            self.assertEqual(params['DEPTH'].default_value, '32')
+            
+        finally:
+            os.unlink(fname)
+
+    def test_parameterized_class_type_params(self):
+        """Test parameterized class with type parameters."""
+        code = 'class packet #(parameter type T = bit, parameter type U = logic); T data_t; U data_u; endclass'
+        fname = write_temp_file(code)
+        
+        try:
+            parser = SVParser()
+            parser.parse_file(fname)
+            
+            extractor = ClassExtractor(parser)
+            classes = extractor.extract()
+            
+            self.assertIn('packet', classes)
+            p = classes['packet']
+            self.assertTrue(p.is_parameterized)
+            self.assertEqual(len(p.type_parameters), 2)
+            
+            params = {p.name: p for p in p.type_parameters}
+            self.assertEqual(params['T'].default_type, 'bit')
+            self.assertEqual(params['U'].default_type, 'logic')
+            
+        finally:
+            os.unlink(fname)
+
+    def test_parameterized_class_mixed_params(self):
+        """Test parameterized class with both value and type parameters."""
+        code = 'class bus #(parameter int ADDR_WIDTH = 8, parameter type T = bit); T data; bit [ADDR_WIDTH-1:0] addr; endclass'
+        fname = write_temp_file(code)
+        
+        try:
+            parser = SVParser()
+            parser.parse_file(fname)
+            
+            extractor = ClassExtractor(parser)
+            classes = extractor.extract()
+            
+            self.assertIn('bus', classes)
+            b = classes['bus']
+            self.assertTrue(b.is_parameterized)
+            self.assertEqual(len(b.value_parameters), 1)
+            self.assertEqual(len(b.type_parameters), 1)
+            self.assertEqual(b.value_parameters[0].name, 'ADDR_WIDTH')
+            self.assertEqual(b.type_parameters[0].name, 'T')
+            self.assertEqual(b.type_parameters[0].default_type, 'bit')
+            
+            # Test get_parameters_summary
+            summary = b.get_parameters_summary()
+            self.assertIn('ADDR_WIDTH', summary)
+            self.assertIn('T', summary)
+            
+        finally:
+            os.unlink(fname)
+
+    def test_non_parameterized_class(self):
+        """Test that non-parameterized class has is_parameterized=False."""
+        code = 'class simple; int data; endclass'
+        fname = write_temp_file(code)
+        
+        try:
+            parser = SVParser()
+            parser.parse_file(fname)
+            
+            extractor = ClassExtractor(parser)
+            classes = extractor.extract()
+            
+            self.assertIn('simple', classes)
+            s = classes['simple']
+            self.assertFalse(s.is_parameterized)
+            self.assertEqual(len(s.value_parameters), 0)
+            self.assertEqual(len(s.type_parameters), 0)
+            self.assertEqual(s.get_parameters_summary(), '')
+            
+        finally:
+            os.unlink(fname)
+
 if __name__ == '__main__':
     unittest.main()

@@ -6,7 +6,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from core.models import Signal, SignalType
+from core.models import Signal, Signal
 from parse.params import ParameterResolver
 from typing import List, Optional
 import re
@@ -72,7 +72,7 @@ class SignalQuery:
             name=name,
             width=width,
             signed=False,
-            signal_type=SignalType.LOGIC,
+            signal_type=Signal.LOGIC,
         )
     
     def _find_in_member(self, member, name: str) -> Optional[Signal]:
@@ -115,7 +115,7 @@ class SignalQuery:
             name=name,
             width=width,
             signed=False,
-            signal_type=SignalType.LOGIC,
+            signal_type=Signal.LOGIC,
         )
     
     def get_hierarchical_path(self, signal_name: str, instance_path: str = "") -> str:
