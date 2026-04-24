@@ -175,3 +175,26 @@ if re.search(r'\1\s*\+\s*1\b', expr) and 'if' not in expr:
 ### 待调查 (P2)
 1. PathQuerier 和 SignalQuerier 的正确类名
 2. Debug 分析器的 detect() 方法参数规范
+
+---
+
+## 测试更新 (2026-04-25 凌晨)
+
+### Bug 修复
+
+| # | 模块 | 问题 | 修复 | 状态 |
+|---|------|------|------|------|
+| 1 | DependencyAnalyzer | driver.sources 是 List[str] 但代码期望 string | 直接使用 driver.sources 列表 | ✅ FIXED |
+| 2 | OverflowRiskDetector | 正则表达式无效组引用 `\1` | 改为 `[\w]+` 模式 | ✅ FIXED |
+| 3 | Visualizer | GraphVisualizer 不接受 parser 参数 | 使用 visualize_datapath() 等 standalone 函数 | ✅ FIXED |
+
+### 修复验证
+
+```
+DependencyAnalyzer: analyze() -> signal=pcpi_rs1, depends_on=['reg_op1'] [PASS]
+OverflowRiskDetector: detect() -> type=OverflowResult [PASS]
+```
+
+### ADR 文档
+
+- `ADR-015-dependency-analyzer-sources-fix.md` - 记录 DependencyAnalyzer 修复
