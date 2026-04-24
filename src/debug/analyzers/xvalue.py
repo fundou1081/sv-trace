@@ -84,11 +84,11 @@ class XValueDetector:
                     cause=XValueCause.MULTIPLE_DRIVERS,
                     severity="high",
                     description=f"Multiple drivers ({len(drivers)}) - conditional assignment may cause X",
-                    location=d.source_expr[:50] if d.source_expr else ""
+                    location=d.sources[0][:50] if d.sources and d.sources[0] else ''
                 ))
             
             # 2. 检查条件未覆盖 (Case/If)
-            src = d.source_expr if d.source_expr else ""
+            src = d.sources[0] if d.sources and d.sources[0] else ''
             
             # case 语句 default 分支缺失
             if 'case' in src.lower() and 'default' not in src.lower():

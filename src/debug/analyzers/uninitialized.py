@@ -44,7 +44,7 @@ class UninitializedDetector:
         drivers = driver_tracer.find_driver(signal)
         
         # 只关心 always_ff 驱动的寄存器
-        ff_drivers = [d for d in drivers if d.driver_kind.name == 'ALWAYS_FF']
+        ff_drivers = [d for d in drivers if d.kind.name == 'AlwaysFF']
         
         if not ff_drivers:
             return issues
@@ -54,7 +54,7 @@ class UninitializedDetector:
         has_init = False
         
         for d in ff_drivers:
-            src = d.source_expr if d.source_expr else ""
+            src = d.sources[0] if (d.sources and d.sources[0]) else ''
             
             # 检查复位分支
             if '<=' in src and ('0' in src or '1' in src or 'reset' in src.lower()):

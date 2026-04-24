@@ -52,16 +52,16 @@ class MultiDriverDetector:
             return issues
         
         # 分析驱动类型组合
-        driver_kinds = set(d.driver_kind.name for d in drivers)
+        driver_kinds = set(d.kind.name for d in drivers)
         
         # 判断多驱动类型
-        if 'ASSIGN' in driver_kinds and len(driver_kinds) > 1:
+        if 'Continuous' in driver_kinds and len(driver_kinds) > 1:
             issue_type = MultiDriverType.ALWAYS_COMB_ASSIGN
             severity = "error"
-        elif 'ALWAYS_FF' in driver_kinds and 'ALWAYS_COMB' in driver_kinds:
+        elif 'AlwaysFF' in driver_kinds and 'AlwaysComb' in driver_kinds:
             issue_type = MultiDriverType.ALWAYS_FF_COMB
             severity = "error"
-        elif len(driver_kinds) == 1 and 'ALWAYS_COMB' in driver_kinds:
+        elif len(driver_kinds) == 1 and 'AlwaysComb' in driver_kinds:
             issue_type = MultiDriverType.MULTIPLE_ALWAYS
             severity = "error"
         else:
@@ -71,7 +71,7 @@ class MultiDriverDetector:
         issues.append(MultiDriverIssue(
             signal=signal,
             driver_type=issue_type,
-            drivers=[d.source_expr.strip()[:40] for d in drivers if d.source_expr],
+            drivers=[d.sources[0].strip()[:40] if d.sources else '' for d in drivers],
             severity=severity
         ))
         
