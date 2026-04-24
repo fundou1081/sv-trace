@@ -97,7 +97,7 @@ class StimulusPathFinder:
         self._collect_assignments()
         self._collect_memories()
         
-        path = self._trace_path(target)
+        path = self._trace_path(target, target_value or 0)
         result.path_segments = path
         
         result.io_inputs = self._calculate_requirements(path, target_value)

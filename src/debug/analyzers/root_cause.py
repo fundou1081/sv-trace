@@ -15,6 +15,7 @@ class SymptomType(Enum):
     X_VALUE = "x_value"
     MULTIPLE_DRIVERS = "multiple_drivers"
     UNINITIALIZED = "uninitialized"
+    UNCOVERED_CASE = "uncovered_case"
     UNUSED_SIGNAL = "unused_signal"
     TIMING_VIOLATION = "timing_violation"
 
@@ -152,11 +153,11 @@ class RootCauseAnalyzer:
         drivers = tracer.find_driver(signal)
         
         # Check for always_ff without reset
-        ff_drivers = [d for d in drivers if d.driver_kind.name == "ALWAYS_FF"]
+        ff_drivers = [d for d in drivers if d.kind.name == "AlwaysFF"]
         if ff_drivers:
             has_reset = False
             for d in ff_drivers:
-                src = d.source_expr if d.source_expr else ""
+                src = d.sources[0] if d.sources and d.sources[0] else ""
                 if "if" in src and ("rst" in src.lower() or "reset" in src.lower()):
                     has_reset = True
                     break
@@ -179,7 +180,7 @@ class RootCauseAnalyzer:
         drivers = tracer.find_driver(signal)
         
         for d in drivers:
-            src = d.source_expr if d.source_expr else ""
+            src = d.sources[0] if d.sources and d.sources[0] else ""
             if "case" in src.lower() and "default" not in src.lower():
                 causes.append(Cause(
                     description="Case statement may not cover all values",

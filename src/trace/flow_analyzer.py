@@ -303,10 +303,10 @@ class SignalFlowAnalyzer:
         flow = SignalFlow(root_signal=signal_name, path=signal_path, node=node)
         
         drivers = self._get_driver().find_driver(signal_name)
-        node.drivers = [{'kind': d.driver_kind.name, 'expr': d.source_expr} for d in drivers]
+        node.drivers = [{'kind': d.kind.name, 'expr': d.sources[0] if d.sources else ''} for d in drivers]
         
         for d in drivers:
-            sigs = self._extract_signals(d.source_expr)
+            sigs = self._extract_signals(d.sources[0] if d.sources else '')
             for s in sigs:
                 if s not in flow.upstream_signals and s != signal_name:
                     flow.upstream_signals.append(s)
