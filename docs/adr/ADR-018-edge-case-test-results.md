@@ -22,7 +22,7 @@
 
 ## 结果
 - 总计 40 个测试用例
-- 通过 30 个 (78%)
+- 通过 31 个 (82%)
 - 已修复问题: 从 18 个减少到 7 个
 
 ### 测试结果汇总
@@ -116,6 +116,15 @@
   - 添加 _check_overflow ptype 参数
 
 **已知问题**: 临时文件读取被截断 - 需要在解析后保留原始代码
+
+
+### 提交 d036601 (2026-04-25)
+- **LoadTracer**:
+  - 添加 InvocationExpression 支持 (函数调用)
+  - 修复 arguments 迭代 (ArgumentListSyntax 包含 SeparatedList)
+  - func_param 现在可以追踪函数参数
+
+**pyslang 发现**: InvocationExpression.arguments 是 ArgumentListSyntax，需要遍历 SeparatedList 获取实际参数
 
 ## 引用
 - `docs/EDGE_CASE_RESULTS_V2.md` - 详细测试结果
