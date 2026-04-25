@@ -119,8 +119,8 @@ class LoadTracer:
         # If statement
         if 'If' in stmt_kind:
             # Check condition
-            if hasattr(stmt, 'condition') and stmt.condition:
-                self._check_expr_for_load(stmt.condition)
+            if hasattr(stmt, 'expr') and stmt.expr:
+                self._check_expr_for_load(stmt.expr)
             # Recurse into branches
             if hasattr(stmt, 'statement') and stmt.statement:
                 self._walk_for_load(stmt.statement)
@@ -130,8 +130,8 @@ class LoadTracer:
         
         # Case statement
         if 'Case' in stmt_kind:
-            if hasattr(stmt, 'condition') and stmt.condition:
-                self._check_expr_for_load(stmt.condition)
+            if hasattr(stmt, 'expr') and stmt.expr:
+                self._check_expr_for_load(stmt.expr)
             if hasattr(stmt, 'items'):
                 for i in range(len(stmt.items)):
                     case = stmt.items[i]
@@ -188,7 +188,7 @@ class LoadTracer:
             return
         
         # Binary/Arithmetic/Logic expression - check both sides
-        if 'Binary' in kind_str or 'Expression' in kind_str:
+        if kind_str.endswith('Expression') or 'Binary' in kind_str:
             if hasattr(expr, 'left') and expr.left:
                 self._check_expr_for_load(expr.left)
             if hasattr(expr, 'right') and expr.right:
