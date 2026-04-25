@@ -28,7 +28,7 @@ try:
     print(f'=== Simple If/Else ===')
     print(f'Drivers for r: {len(drivers1)}')
     for d in drivers1:
-        print(f'  - kind={d.driver_kind}, source={d.source_expr.strip()[:60]}')
+        print(f'  - kind={d.kind}, source={d.sources[0].strip()[:60]}')
     print()
 finally:
     os.unlink(tmp1)
@@ -59,6 +59,6 @@ try:
     print(f'=== Nested If/Else-If/Else ===')
     print(f'Drivers for r: {len(drivers2)}')
     for d in drivers2:
-        print(f'  - kind={d.driver_kind}, source={d.source_expr.strip()[:60]}')
+        print(f'  - kind={d.kind}, source={d.sources[0].strip()[:60]}')
 finally:
     os.unlink(tmp2)

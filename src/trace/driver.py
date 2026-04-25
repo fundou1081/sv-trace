@@ -130,11 +130,9 @@ class DriverCollector:
     def _process_always_block(self, node, module_name: str, kind: DriverKind):
         """Process always/always_ff/always_comb/always_latch block"""
         try:
+            # node.statement 是 BlockStatementSyntax，直接传给 _walk_statement
             if hasattr(node, 'statement') and node.statement:
-                tcs = node.statement
-                if hasattr(tcs, 'statement') and tcs.statement:
-                    body = tcs.statement
-                    self._walk_statement(body, kind, module_name, "")
+                self._walk_statement(node.statement, kind, module_name, "")
         except Exception as e:
             pass
     
@@ -165,7 +163,7 @@ class DriverCollector:
                         self._walk_statement(child, kind, module_name, clock)
                 return
             
-            if stmt_kind == 'SyntaxKind.ExpressionStatement':
+            if 'ExpressionStatement' in stmt_kind:
                 if hasattr(stmt, 'expr') and stmt.expr:
                     expr = stmt.expr
                     if hasattr(expr, 'kind'):
@@ -174,17 +172,17 @@ class DriverCollector:
                             self._process_assignment(expr, module_name, kind, clock)
                 return
             
-            if 'If' in stmt_kind:
-                if hasattr(stmt, 'thenStatement') and stmt.thenStatement:
-                    self._walk_statement(stmt.thenStatement, kind, module_name, clock)
-                if hasattr(stmt, 'elseStatement') and stmt.elseStatement:
-                    self._walk_statement(stmt.elseStatement, kind, module_name, clock)
+            if 'If' in stmt_kind or 'Conditional' in stmt_kind:
+                if hasattr(stmt, 'statement') and stmt.statement:
+                    self._walk_statement(stmt.statement, kind, module_name, clock)
+                if hasattr(stmt, 'elseClause') and stmt.elseClause.clause:
+                    self._walk_statement(stmt.elseClause.clause, kind, module_name, clock)
                 return
             
             if 'Case' in stmt_kind:
-                if hasattr(stmt, 'cases'):
-                    for i in range(len(stmt.cases)):
-                        case = stmt.cases[i]
+                if hasattr(stmt, 'items'):
+                    for i in range(len(stmt.items)):
+                        case = stmt.items[i]
                         if hasattr(case, 'statement') and case.statement:
                             self._walk_statement(case.statement, kind, module_name, clock)
                 return

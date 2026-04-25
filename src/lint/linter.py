@@ -127,7 +127,7 @@ class SVLinter:
         for sig in self._all_signals:
             drivers = driver_tracer.find_driver(sig)
             if len(drivers) > 1:
-                driver_types = set(d.driver_kind.name for d in drivers)
+                driver_types = set(d.kind.name for d in drivers)
                 if 'ASSIGN' in driver_types and len(driver_types) > 1:
                     report.add(IssueSeverity.ERROR, f"Signal '{sig}' has multiple drivers: {driver_types}",
                               signal=sig, issue_type="multiple_drivers")
@@ -139,9 +139,9 @@ class SVLinter:
         driver_tracer = DriverTracer(self.parser)
         for sig in self._all_signals:
             drivers = driver_tracer.find_driver(sig)
-            assign_drivers = [d for d in drivers if d.driver_kind.name == 'ASSIGN']
+            assign_drivers = [d for d in drivers if d.kind.name == 'ASSIGN']
             for d in assign_drivers:
-                expr = d.source_expr.strip()
+                expr = d.sources[0].strip() if d.sources else ''
                 if self._is_constant_expression(expr):
                     report.add(IssueSeverity.INFO, f"Signal '{sig}' is constant: {expr[:40]}",
                               signal=sig, line=d.line, issue_type="constant_signal")
@@ -164,13 +164,13 @@ class SVLinter:
         
         for sig in self._all_signals:
             drivers = driver_tracer.find_driver(sig)
-            ff_drivers = [d for d in drivers if d.driver_kind.name == 'ALWAYS_FF']
+            ff_drivers = [d for d in drivers if d.kind.name == 'ALWAYS_FF']
             if not ff_drivers:
                 continue
             
             # 简单检查：每个 always_ff 驱动是否都有对应的 if (rst) 条件
             # 通过检查是否有多个驱动（一个复位分支，一个正常分支）
-            has_rst_branch = any('<=' in d.source_expr and '0' in d.source_expr for d in ff_drivers)
+            has_rst_branch = any('<=' in (d.sources[0] if d.sources else '') and '0' in (d.sources[0] if d.sources else '') for d in ff_drivers)
             
             if not has_rst_branch:
                 # 没有看到复位分支，可能未初始化
