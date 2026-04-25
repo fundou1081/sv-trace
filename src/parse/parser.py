@@ -11,6 +11,7 @@ class SVParser:
     def __init__(self):
         self.compilation = pyslang.Compilation()
         self.trees: Dict[str, pyslang.SyntaxTree] = {}
+        self.sources: Dict[str, str] = {}  # 保存源代码
         self._parse_cache: Dict[str, Any] = {}
     
     def parse_file(self, filepath: str) -> pyslang.SyntaxTree:

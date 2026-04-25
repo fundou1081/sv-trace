@@ -87,7 +87,7 @@ class OverflowRiskDetector:
         return result
     
     def _find_add_sub_assignments(self, code: str) -> List:
-        """查找加法和减法赋值"""
+        """查找加法、减法、乘法、移位赋值"""
         
         assignments = []
         
