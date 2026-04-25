@@ -108,6 +108,10 @@ class OverflowRiskDetector:
                         target = match.group(1)
                         expr = match.group(2)
                         assignments.append((target, expr))
+
+            # Concat: {overflow, sum} = a + b (has overflow protection)
+            if re.search(r'\{[^}]+\}\s*=\s*', line):
+                assignments.append(('CONCAT', 'PROTECTED', 'concat'))
                 continue
 
             # Multiplication
@@ -190,6 +194,15 @@ class OverflowRiskDetector:
                 risk_level='MEDIUM',
                 description='Left shift may overflow',
                 suggestion='Add bounds check on shift amount'
+            )
+        
+        if ptype == 'concat':
+            return OverflowRisk(
+                signal=signal,
+                expression=expr,
+                risk_level='LOW',
+                description='Has overflow protection via concat',
+                suggestion='Good practice'
             )
         
         return None
