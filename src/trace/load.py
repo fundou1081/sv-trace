@@ -183,8 +183,22 @@ class LoadTracer:
         # Identifier - check if it matches target signal
         if 'Identifier' in kind_str:
             name = str(expr).strip()
-            if name == self._target_signal:
+            # Handle array subscript: data_in[i] -> extract base name
+            base_name = name.split('[')[0] if '[' in name else name
+            if base_name == self._target_signal:
                 self._add_load(str(expr), expr)
+            return
+        
+        # ElementSelect (array[i]) - extract base name and check
+        if 'ElementSelect' in kind_str:
+            name = str(expr).strip()
+            # Extract base name (before [)
+            base_name = name.split('[')[0] if '[' in name else name
+            if base_name == self._target_signal:
+                self._add_load(str(expr), expr)
+            # Also recurse into the selector for nested cases
+            if hasattr(expr, 'selector') and expr.selector:
+                self._check_expr_for_load(expr.selector)
             return
         
         # Binary/Arithmetic/Logic expression - check both sides

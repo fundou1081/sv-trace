@@ -14,8 +14,9 @@ def test_load_edge_cases():
         logic [7:0] mem [0:15][0:15];
         logic [3:0] i, j;
         logic [7:0] data;
-        always_comb
+        always_comb begin
             data = mem[i][j];
+        end
     endmodule'''
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
@@ -33,8 +34,9 @@ def test_load_edge_cases():
     # 2. 嵌套表达式中的加载
     code2 = '''module edge_nested_expr;
         logic [7:0] a, b, c, r;
-        always_comb
+        always_comb begin
             r = (a + b) * c;
+        end
     endmodule'''
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
@@ -76,8 +78,9 @@ def test_load_edge_cases():
     # 4. 三元表达式中的加载
     code4 = '''module edge_ternary_load;
         logic [7:0] a, b, sel, r;
-        always_comb
+        always_comb begin
             r = sel ? a : b;
+        end
     endmodule'''
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
@@ -100,8 +103,9 @@ def test_load_edge_cases():
         genvar i;
         generate
             for (i = 0; i < N; i = i + 1) begin : gen_loop
-                always_comb
+                always_comb begin
                     data_out = data_in[i];
+                end
             end
         endgenerate
     endmodule'''
@@ -127,8 +131,9 @@ def test_load_edge_cases():
             input [7:0] sel;
             my_func = sel ? x : y;
         endfunction
-        always_comb
+        always_comb begin
             result = my_func(a, b, 8'hFF);
+        end
     endmodule'''
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
@@ -170,8 +175,9 @@ def test_load_edge_cases():
         logic [7:0] data;
         logic [2:0] idx;
         logic bit_val;
-        always_comb
+        always_comb begin
             bit_val = data[idx];
+        end
     endmodule'''
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
