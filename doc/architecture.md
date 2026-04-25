@@ -142,3 +142,28 @@ analyzers (诊断工具) ← dependency: trace, parse
 - [ ] 插件系统
 - [ ] 配置管理
 
+
+---
+
+## 6. 新增功能 (2026-04-26)
+
+### 6.1 FSM增强
+
+| 功能 | 文件 | 说明 |
+|------|------|------|
+| 状态编码建议 | fsm_analyzer.py | recommend_encoding() |
+| 功耗估算 | fsm_analyzer.py | get_encoding_power_estimate() |
+
+### 6.2 报告生成
+
+| 功能 | 文件 | 说明 |
+|------|------|------|
+| 通用HTML报告 | html_report.py | HTMLReportGenerator |
+| 时序报告 | reports/timing_report.py | 已有完整HTML/JSON |
+
+### 6.3 文档
+
+| 文件 | 说明 |
+|------|------|
+| TODO_V2.md | 多视角需求分析 |
+| ADR-020.md | FSM深度分析架构 |

@@ -344,3 +344,272 @@ __all__ = [
     'CDCAutoReport',
     'Severity',
 ]
+
+
+# =============================================================================
+# CDC增强功能 - 多时钟域检测
+# =============================================================================
+
+from trace.load import LoadTracer
+
+
+@dataclass
+class ClockDomain:
+    """时钟域信息"""
+    name: str
+    clock_signal: str
+    frequency: str = "unknown"  # slow, fast, unknown
+    registers: List[str] = field(default_factory=list)
+    async_signals: List[str] = field(default_factory=list)
+
+
+@dataclass
+class CDCPath:
+    """CDC路径"""
+    signal: str
+    source_domain: str
+    dest_domain: str
+    path_type: str  # "slow_to_fast", "fast_to_slow", "async"
+    bit_width: int = 1
+    synch_type: str = ""  # "2ff", "gray", "handshake", "unprotected"
+    risk_level: str = "unknown"
+    mtbf_hours: float = 0.0
+
+
+@dataclass
+class CDCReportEnh:
+    """增强CDC报告"""
+    clock_domains: List[ClockDomain] = field(default_factory=list)
+    cdc_paths: List[CDCPath] = field(default_factory=list)
+    unprotected_signals: List[str] = field(default_factory=list)
+    multi_bit_crossings: List[str] = field(default_factory=list)
+    synch_recommendations: Dict[str, str] = field(default_factory=dict)
+
+
+class CDCExtendedAnalyzer:
+    """CDC扩展分析器 - 多时钟域检测增强"""
+    
+    def __init__(self, parser):
+        self.parser = parser
+        self._load_trace = LoadTracer(parser)
+        self._domains: Dict[str, ClockDomain] = {}
+        self._registers: Dict[str, str] = {}  # signal -> clock_domain
+        self._cdc_paths: List[CDCPath] = []
+    
+    def analyze(self) -> CDCReportEnh:
+        """执行完整CDC分析"""
+        # 1. 提取时钟域
+        self._extract_clock_domains()
+        
+        # 2. 识别跨时钟域信号
+        self._find_cdc_paths()
+        
+        # 3. 生成同步器建议
+        synch_recs = self._generate_synch_recommendations()
+        
+        return CDCReportEnh(
+            clock_domains=list(self._domains.values()),
+            cdc_paths=self._cdc_paths,
+            unprotected_signals=[p.signal for p in self._cdc_paths if p.synch_type == "unprotected"],
+            multi_bit_crossings=[p.signal for p in self._cdc_paths if p.bit_width > 1],
+            synch_recommendations=synch_recs
+        )
+    
+    def _extract_clock_domains(self):
+        """提取所有时钟域"""
+        from debug.analyzers.clock_domain import ClockDomainAnalyzer
+        
+        cda = ClockDomainAnalyzer(self.parser)
+        regs = cda.get_all_registers()
+        
+        # 按时钟信号分组
+        domain_by_clock: Dict[str, List[str]] = {}
+        
+        for sig, info in regs.items():
+            clk = info.clock
+            if clk and clk != "unknown":
+                if clk not in domain_by_clock:
+                    domain_by_clock[clk] = []
+                domain_by_clock[clk].append(sig)
+                self._registers[sig] = clk
+        
+        # 创建时钟域对象
+        for clk, signals in domain_by_clock.items():
+            # 简单判断频率: 基于信号名模式
+            freq = self._estimate_frequency(clk)
+            self._domains[clk] = ClockDomain(
+                name=clk,
+                clock_signal=clk,
+                frequency=freq,
+                registers=signals
+            )
+    
+    def _estimate_frequency(self, clock: str) -> str:
+        """估算时钟频率类型"""
+        clock_lower = clock.lower()
+        
+        # 高速时钟模式
+        if any(kw in clock_lower for kw in ['clk', 'clock', 'core', 'cpu', 'high']):
+            if any(kw in clock_lower for kw in ['fast', '200', '400', '800', '1600']):
+                return "fast"
+        
+        # 低速时钟模式
+        if any(kw in clock_lower for kw in ['slow', '32k', 'rtc', 'timer', 'low']):
+            return "slow"
+        
+        return "unknown"
+    
+    def _find_cdc_paths(self):
+        """查找跨时钟域路径"""
+        for sig in self._registers:
+            # 追溯信号源
+            drivers = self._get_signal_drivers(sig)
+            
+            for driver_sig in drivers:
+                if driver_sig in self._registers:
+                    src_domain = self._registers[driver_sig]
+                    dst_domain = self._registers[sig]
+                    
+                    if src_domain != dst_domain:
+                        # 确定CDC类型
+                        src_freq = self._domains.get(src_domain, ClockDomain("")).frequency
+                        dst_freq = self._domains.get(dst_domain, ClockDomain("")).frequency
+                        
+                        if src_freq == "slow" and dst_freq == "fast":
+                            path_type = "slow_to_fast"
+                        elif src_freq == "fast" and dst_freq == "slow":
+                            path_type = "fast_to_slow"
+                        else:
+                            path_type = "async"
+                        
+                        # 判断保护类型
+                        synch_type = self._detect_synchronizer(sig)
+                        
+                        # 计算风险
+                        risk = self._calculate_risk(path_type, synch_type, 1)
+                        
+                        self._cdc_paths.append(CDCPath(
+                            signal=sig,
+                            source_domain=src_domain,
+                            dest_domain=dst_domain,
+                            path_type=path_type,
+                            bit_width=self._estimate_bit_width(sig),
+                            synch_type=synch_type,
+                            risk_level=risk,
+                            mtbf_hours=self._estimate_mtbf(risk)
+                        ))
+    
+    def _get_signal_drivers(self, signal: str) -> List[str]:
+        """获取信号的驱动源"""
+        from trace.driver import DriverTracer
+        tracer = DriverTracer(self.parser)
+        drivers = tracer.find_driver(signal)
+        return [d.sources[0] if d.sources else "" for d in drivers]
+    
+    def _detect_synchronizer(self, signal: str) -> str:
+        """检测同步器类型"""
+        # 检查是否有多级寄存器（2FF同步器）
+        context = self._get_signal_context(signal)
+        
+        if 'sync' in context.lower() or 'synchronizer' in context.lower():
+            return "2ff"
+        
+        # 检查Gray编码
+        if 'gray' in context.lower():
+            return "gray"
+        
+        # 检查握手协议
+        if 'req' in context.lower() and 'ack' in context.lower():
+            return "handshake"
+        
+        # 检查MUX
+        if 'mux' in context.lower() or 'select' in context.lower():
+            return "mux"
+        
+        return "unprotected"
+    
+    def _get_signal_context(self, signal: str) -> str:
+        """获取信号上下文"""
+        # TODO: 从源码中提取信号周围的上下文
+        return ""
+    
+    def _estimate_bit_width(self, signal: str) -> int:
+        """估算信号位宽"""
+        # 简单检查: 如果信号名包含[数字]
+        match = re.search(r'\[(\d+)\]', signal)
+        if match:
+            return int(match.group(1)) + 1
+        return 1
+    
+    def _calculate_risk(self, path_type: str, synch_type: str, bit_width: int) -> str:
+        """计算风险等级"""
+        if synch_type in ["gray", "handshake"]:
+            return "low"
+        if synch_type == "2ff":
+            if bit_width == 1:
+                return "low"
+            else:
+                return "medium"
+        if synch_type == "mux":
+            return "medium"
+        # unprotected
+        if path_type == "fast_to_slow":
+            return "critical"
+        if path_type == "slow_to_fast":
+            return "high"
+        return "critical"
+    
+    def _estimate_mtbf(self, risk: str) -> float:
+        """估算MTBF(小时)"""
+        mtbf_map = {
+            "low": 1e10,      # 1000年以上
+            "medium": 1e6,    # ~100年
+            "high": 1e4,      # ~1年
+            "critical": 1e2   # ~10天
+        }
+        return mtbf_map.get(risk, 1e6)
+    
+    def _generate_synch_recommendations(self) -> Dict[str, str]:
+        """生成同步器建议"""
+        recs = {}
+        
+        for path in self._cdc_paths:
+            if path.synch_type == "unprotected":
+                if path.bit_width == 1:
+                    recs[path.signal] = f"添加2级寄存器同步器 (2FF)"
+                elif path.bit_width <= 4:
+                    recs[path.signal] = f"使用握手协议或异步FIFO"
+                else:
+                    recs[path.signal] = f"使用异步FIFO (depth={path.bit_width * 2})"
+        
+        return recs
+
+
+# 添加到CDCAnalyzer类
+def enhanced_analyze(self) -> Tuple[List[CDCIssue], CDCReportEnh]:
+    """增强分析 - 包含CDC路径分析"""
+    # 标准CDC分析
+    report = self.analyze()
+    
+    # 扩展CDC分析
+    extended = CDCExtendedAnalyzer(self.parser)
+    ext_report = extended.analyze()
+    
+    return report.issues, ext_report
+
+
+# Monkey-patch CDCAnalyzer
+CDCAnalyzer.enhanced_analyze = enhanced_analyze
+
+
+__all__ = [
+    'CDCAnalyzer', 
+    'CDCIssue', 
+    'CDCIssueType',
+    'CDCAutoReport',
+    'CDCReportEnh',
+    'CDCExtendedAnalyzer',
+    'ClockDomain',
+    'CDCPath',
+    'Severity',
+]

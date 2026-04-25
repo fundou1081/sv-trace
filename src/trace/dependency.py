@@ -235,3 +235,273 @@ class DependencyAnalyzer:
         dfs(from_signal, to_signal, [], 0)
         
         return paths
+
+
+# =============================================================================
+# Fanin/Fanout 增强功能
+# =============================================================================
+
+from collections import deque
+from typing import Tuple
+
+
+@dataclass
+class FanoutInfo:
+    """Fanout信息"""
+    signal: str
+    direct_fanout: int = 0       # 直接驱动的信号数
+    total_fanout: int = 0         # 总扇出（含多级）
+    max_depth: int = 0            # 最大深度
+    driven_signals: List[str] = field(default_factory=list)
+    high_fanout: bool = False
+    critical: bool = False
+
+
+@dataclass
+class FaninInfo:
+    """Fanin信息"""
+    signal: str
+    direct_fanin: int = 0         # 直接驱动的信号数
+    total_fanin: int = 0          # 总扇入（含多级）
+    source_signals: List[str] = field(default_factory=list)
+    is_primary_input: bool = False  # 是否是原始输入
+
+
+class FanoutAnalyzer:
+    """Fanout分析器 - 精确计算信号扇出"""
+    
+    def __init__(self, parser):
+        self.parser = parser
+        self._fanout_cache: Dict[str, FanoutInfo] = {}
+    
+    def analyze_signal(self, signal_name: str) -> FanoutInfo:
+        """分析单个信号的扇出"""
+        if signal_name in self._fanout_cache:
+            return self._fanout_cache[signal_name]
+        
+        info = self._calculate_fanout(signal_name)
+        self._fanout_cache[signal_name] = info
+        return info
+    
+    def _calculate_fanout(self, signal_name: str) -> FanoutInfo:
+        """计算扇出"""
+        from .load import LoadTracer
+        
+        tracer = LoadTracer(self.parser)
+        loads = tracer.find_load(signal_name)
+        
+        # 直接扇出
+        direct = set()
+        for load in loads:
+            if hasattr(load, 'signal_name') and load.signal_name:
+                direct.add(load.signal_name)
+            # 从context中提取
+            if load.context:
+                # 简单提取所有标识符
+                tokens = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', load.context)
+                for t in tokens:
+                    if t != signal_name and not t.startswith('clk') and not t.startswith('rst'):
+                        direct.add(t)
+        
+        # 计算总扇出（多级追溯）
+        total_fanout = len(direct)
+        max_depth = 0
+        all_directed = set(direct)
+        
+        # BFS追溯
+        queue = deque([(s, 1) for s in direct])
+        visited = set([signal_name])
+        
+        while queue:
+            current, depth = queue.popleft()
+            if current in visited:
+                continue
+            visited.add(current)
+            
+            # 找当前信号驱动的信号
+            sub_loads = tracer.find_load(current)
+            sub_direct = set()
+            for load in sub_loads:
+                if hasattr(load, 'signal_name') and load.signal_name:
+                    sub_direct.add(load.signal_name)
+            
+            for sd in sub_direct:
+                if sd not in visited:
+                    all_directed.add(sd)
+                    total_fanout += 1
+                    max_depth = max(max_depth, depth + 1)
+                    queue.append((sd, depth + 1))
+        
+        info = FanoutInfo(
+            signal=signal_name,
+            direct_fanout=len(direct),
+            total_fanout=total_fanout,
+            max_depth=max_depth,
+            driven_signals=list(all_directed),
+            high_fanout=len(direct) > 10,
+            critical=len(direct) > 20
+        )
+        
+        return info
+    
+    def find_high_fanout_signals(self, threshold: int = 10) -> List[FanoutInfo]:
+        """找出高扇出信号"""
+        from .driver import DriverCollector
+        
+        collector = DriverCollector(self.parser)
+        signals = collector.get_all_signals()
+        
+        results = []
+        for sig in signals:
+            info = self.analyze_signal(sig)
+            if info.direct_fanout >= threshold:
+                results.append(info)
+        
+        return sorted(results, key=lambda x: -x.direct_fanout)
+    
+    def get_fanout_report(self, top_n: int = 20) -> List[FanoutInfo]:
+        """获取扇出报告"""
+        results = self.find_high_fanout_signals(2)  # 从2开始
+        return results[:top_n]
+
+
+class FaninAnalyzer:
+    """Fanin分析器 - 精确计算信号扇入"""
+    
+    def __init__(self, parser):
+        self.parser = parser
+    
+    def analyze_signal(self, signal_name: str) -> FaninInfo:
+        """分析单个信号的扇入"""
+        from .driver import DriverTracer
+        
+        tracer = DriverTracer(self.parser)
+        drivers = tracer.find_driver(signal_name)
+        
+        # 直接扇入
+        direct = set()
+        for driver in drivers:
+            for src in driver.sources:
+                if src:
+                    direct.add(src)
+        
+        # 判断是否原始输入（没有前向依赖）
+        is_input = len(direct) == 0
+        
+        return FaninInfo(
+            signal=signal_name,
+            direct_fanin=len(direct),
+            total_fanin=len(direct),
+            source_signals=list(direct),
+            is_primary_input=is_input
+        )
+    
+    def find_source_signals(self) -> List[str]:
+        """找出所有源头信号（无扇入）"""
+        from .driver import DriverCollector
+        
+        collector = DriverCollector(self.parser)
+        signals = collector.get_all_signals()
+        
+        sources = []
+        for sig in signals:
+            info = self.analyze_signal(sig)
+            if info.is_primary_input:
+                sources.append(sig)
+        
+        return sources
+
+
+class ConnectivityMatrix:
+    """连接矩阵 - 分析模块间连接"""
+    
+    def __init__(self, parser):
+        self.parser = parser
+        self._module_signals: Dict[str, Set[str]] = {}
+        self._signal_modules: Dict[str, str] = {}
+    
+    def build(self):
+        """构建连接矩阵"""
+        from .driver import DriverCollector
+        from .load import LoadTracer
+        
+        driver_collector = DriverCollector(self.parser)
+        load_tracer = LoadTracer(self.parser)
+        
+        all_signals = driver_collector.get_all_signals()
+        
+        for sig in all_signals:
+            # 确定信号所属模块（简化处理）
+            module = self._find_signal_module(sig)
+            if module:
+                if module not in self._module_signals:
+                    self._module_signals[module] = set()
+                self._module_signals[module].add(sig)
+                self._signal_modules[sig] = module
+    
+    def _find_signal_module(self, signal: str) -> Optional[str]:
+        """确定信号所属模块"""
+        # TODO: 实现模块确定
+        return "top"
+    
+    def get_module_inputs(self, module: str) -> Set[str]:
+        """获取模块的输入信号"""
+        if module not in self._module_signals:
+            return set()
+        
+        signals = self._module_signals[module]
+        inputs = set()
+        
+        from .driver import DriverTracer
+        tracer = DriverTracer(self.parser)
+        
+        for sig in signals:
+            drivers = tracer.find_driver(sig)
+            for d in drivers:
+                for src in d.sources:
+                    if src not in signals:
+                        inputs.add(src)
+        
+        return inputs
+    
+    def get_module_outputs(self, module: str) -> Set[str]:
+        """获取模块的输出信号"""
+        if module not in self._module_signals:
+            return set()
+        return self._module_signals[module]
+
+
+# 添加便捷方法到DependencyAnalyzer
+def get_fanin(self, signal_name: str, module_name: str = None) -> FaninInfo:
+    """获取信号的扇入信息"""
+    analyzer = FaninAnalyzer(self.parser)
+    return analyzer.analyze_signal(signal_name)
+
+
+def get_fanout(self, signal_name: str, module_name: str = None) -> FanoutInfo:
+    """获取信号的扇出信息"""
+    analyzer = FanoutAnalyzer(self.parser)
+    return analyzer.analyze_signal(signal_name)
+
+
+def get_connectivity(self) -> ConnectivityMatrix:
+    """获取连接矩阵"""
+    matrix = ConnectivityMatrix(self.parser)
+    matrix.build()
+    return matrix
+
+
+DependencyAnalyzer.get_fanin = get_fanin
+DependencyAnalyzer.get_fanout = get_fanout
+DependencyAnalyzer.get_connectivity = get_connectivity
+
+
+__all__ = [
+    'DependencyAnalyzer', 
+    'SignalDependency',
+    'FanoutAnalyzer',
+    'FaninAnalyzer',
+    'FanoutInfo',
+    'FaninInfo',
+    'ConnectivityMatrix',
+]

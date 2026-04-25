@@ -363,3 +363,123 @@ class FSMAnalyzer:
 
 
 __all__ = ['FSMAnalyzer', 'FSMReport']
+
+
+# ============================================================================
+# FSM 增强功能 - 状态编码建议
+# ============================================================================
+
+def recommend_encoding(self, state_count: int) -> dict:
+    """根据状态数量推荐状态编码方式"""
+    
+    if state_count <= 0:
+        return {"encoding": "unknown", "bits": 0, "reason": "无有效状态"}
+    
+    if state_count == 1:
+        return {
+            "encoding": "binary", 
+            "bits": 1, 
+            "reason": "单状态只需要1位",
+            "one_hot_value": "1b0",
+            "power_estimate": "low"
+        }
+    
+    if state_count == 2:
+        return {
+            "encoding": "binary", 
+            "bits": 1, 
+            "reason": "2状态用binary最省资源",
+            "binary_value": "1'b0 / 1'b1",
+            "gray_value": "1'b0 / 1'b1",
+            "one_hot_value": "2'b01 / 2'b10",
+            "power_estimate": "low"
+        }
+    
+    if state_count <= 4:
+        return {
+            "encoding": "binary", 
+            "bits": 2, 
+            "reason": "4状态用binary最省资源",
+            "binary_value": "2'b00/01/10/11",
+            "gray_value": "2'b00/01/11/10",
+            "one_hot_value": "4'b0001/0010/0100/1000",
+            "power_estimate": "low"
+        }
+    
+    if state_count <= 8:
+        return {
+            "encoding": "gray", 
+            "bits": 3, 
+            "reason": "3-8状态推荐Gray编码，减少亚稳态",
+            "binary_value": "3'b000-111",
+            "gray_value": "3'b000/001/011/010/110/111/101/100",
+            "one_hot_value": "8'b00000001/.../10000000",
+            "power_estimate": "medium"
+        }
+    
+    if state_count <= 16:
+        return {
+            "encoding": "one_hot", 
+            "bits": state_count, 
+            "reason": "8-16状态推荐one-hot，高速设计首选",
+            "encoding_scheme": "one_hot",
+            "power_estimate": "medium-high",
+            "note": "one-hot每个状态1位寄存器，组合逻辑少"
+        }
+    
+    # 16+ 状态
+    if state_count <= 32:
+        return {
+            "encoding": "one_hot", 
+            "bits": state_count, 
+            "reason": "多状态建议one-hot或考虑拆分",
+            "power_estimate": "high",
+            "suggestion": "状态数超过16，建议考虑模块化拆分"
+        }
+    
+    # 32+ 状态：强烈建议拆分
+    return {
+        "encoding": "one_hot", 
+        "bits": state_count, 
+        "reason": "状态数过多，必须拆分或使用层级状态机",
+        "power_estimate": "very_high",
+        "warning": "CRITICAL: 状态数过多，必须拆分!"
+    }
+
+
+def get_encoding_power_estimate(self, encoding: str, bits: int, 
+                                  toggle_rate: float = 0.2) -> dict:
+    """估算不同编码的功耗"""
+    
+    base_power = bits * toggle_rate
+    
+    estimates = {
+        "binary": {
+            "description": "二进制编码",
+            "switching_power": base_power * 1.0,
+            "glitch_risk": "medium",
+            "notes": "状态跳转时多位翻转，功耗较高"
+        },
+        "gray": {
+            "description": "格雷码",
+            "switching_power": base_power * 0.5,
+            "glitch_risk": "low",
+            "notes": "相邻状态只有1位翻转"
+        },
+        "one_hot": {
+            "description": "独热码",
+            "switching_power": base_power * 0.3,
+            "glitch_risk": "low",
+            "notes": "每次跳转只翻转1位，但寄存器多"
+        }
+    }
+    
+    return estimates.get(encoding, {})
+
+
+# 添加到 FSMAnalyzer 类
+FSMAnalyzer.recommend_encoding = recommend_encoding
+FSMAnalyzer.get_encoding_power_estimate = get_encoding_power_estimate
+
+
+__all__ = ['FSMAnalyzer', 'FSMReport', 'FSMComplexity', 'StateInfo', 'Transition']

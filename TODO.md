@@ -269,3 +269,77 @@ HIGH_COMPLEXITY = 150 # > 150 需拆分
 | TimingPathAnalyzer | 跨时钟域路径 | TODO |
 
 
+
+---
+
+## 2026-04-26 更新
+
+### 新增功能
+
+#### 1. FSM状态编码建议 ✅
+- 根据状态数量推荐 binary/gray/one-hot 编码
+- 功耗估算
+- 编码方案对比
+
+#### 2. HTML报告生成器 ✅
+- 通用HTMLReportGenerator类
+- 支持章节、表格、徽章、警告
+- 多主题支持 (blue/green/purple/dark)
+- JSON导出支持
+
+#### 3. 文档更新
+- TODO_V2.md - 多视角需求分析
+- ADR-020 - FSM深度分析架构
+
+### 下一步任务
+
+| 功能 | 优先级 | 状态 |
+|------|--------|------|
+| FSM SVA属性生成 | P2 | TODO |
+| FSM验证计划生成 | P2 | TODO |
+| CDC增强(多时钟域) | P1 | TODO |
+| 复位完整性检查增强 | P1 | TODO |
+| fanin/fanout精确统计 | P1 | TODO |
+| 多文件联合分析 | P2 | TODO |
+| 跨时钟域Timed Path | P2 | TODO |
+
+---
+
+## 2026-04-26 上午更新 (第二批)
+
+### 已完成功能
+
+| 功能 | 文件 | 说明 |
+|------|------|------|
+| **CDC多时钟域检测增强** | `cdc.py` | CDCExtendedAnalyzer, 多时钟域路径分析, MTBF估算 |
+| **fanin/fanout精确统计** | `dependency.py` | FanoutAnalyzer, FaninAnalyzer, ConnectivityMatrix |
+| **复位完整性检查增强** | `reset_domain_analyzer.py` | ResetIntegrityChecker, 复位树分析, 上电序列生成 |
+
+### 新增类/方法
+
+```python
+# CDC增强
+CDCExtendedAnalyzer     # 多时钟域检测
+ClockDomain             # 时钟域信息
+CDCPath                 # CDC路径信息
+CDCReportEnh           # 增强报告
+
+# Fanin/Fanout增强
+FanoutAnalyzer         # 扇出分析
+FaninAnalyzer          # 扇入分析
+ConnectivityMatrix     # 模块连接矩阵
+
+# 复位增强
+ResetIntegrityChecker  # 复位完整性检查
+ResetIntegrityReport   # 完整性报告
+ResetTreeNode          # 复位树节点
+```
+
+### 待完成
+
+| 功能 | 优先级 | 状态 |
+|------|--------|------|
+| FSM SVA属性生成 | P2 | TODO |
+| FSM验证计划生成 | P2 | TODO |
+| 多文件联合分析 | P2 | TODO |
+| 跨时钟域Timed Path | P2 | TODO |
