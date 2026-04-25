@@ -130,9 +130,22 @@ class DriverCollector:
     def _process_always_block(self, node, module_name: str, kind: DriverKind):
         """Process always/always_ff/always_comb/always_latch block"""
         try:
-            # node.statement 是 BlockStatementSyntax，直接传给 _walk_statement
-            if hasattr(node, 'statement') and node.statement:
-                self._walk_statement(node.statement, kind, module_name, "")
+            if not hasattr(node, 'statement') or not node.statement:
+                return
+            
+            stmt = node.statement
+            stmt_kind = str(stmt.kind) if hasattr(stmt, 'kind') else ''
+            
+            # always_comb: statement 是 SequentialBlockStatement
+            if 'SequentialBlockStatement' in stmt_kind or 'BlockStatement' in stmt_kind:
+                self._walk_statement(stmt, kind, module_name, "")
+            
+            # always_ff/always_latch: statement 是 TimingControlStatement
+            # 需要再取一层 .statement
+            elif 'TimingControl' in stmt_kind:
+                if hasattr(stmt, 'statement') and stmt.statement:
+                    self._walk_statement(stmt.statement, kind, module_name, "")
+                    
         except Exception as e:
             pass
     
