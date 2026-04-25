@@ -65,12 +65,21 @@ class LoadTracer:
     def _process_always_load(self, node):
         """Process always/always_ff/always_comb/always_latch block for loads"""
         try:
-            # Navigate: AlwaysBlock.statement = TimingControlStatement.statement = body
-            if hasattr(node, 'statement') and node.statement:
-                tcs = node.statement
-                if hasattr(tcs, 'statement') and tcs.statement:
-                    body = tcs.statement
-                    self._walk_for_load(body)
+            if not hasattr(node, 'statement') or not node.statement:
+                return
+            
+            stmt = node.statement
+            stmt_kind = str(stmt.kind) if hasattr(stmt, 'kind') else ''
+            
+            # always_comb: statement 是 SequentialBlockStatement
+            if 'SequentialBlockStatement' in stmt_kind or 'BlockStatement' in stmt_kind:
+                self._walk_for_load(stmt)
+            
+            # always_ff/always_latch: statement 是 TimingControlStatement
+            elif 'TimingControl' in stmt_kind:
+                if hasattr(stmt, 'statement') and stmt.statement:
+                    self._walk_for_load(stmt.statement)
+                    
         except Exception as e:
             pass
     
@@ -113,21 +122,21 @@ class LoadTracer:
             if hasattr(stmt, 'condition') and stmt.condition:
                 self._check_expr_for_load(stmt.condition)
             # Recurse into branches
-            if hasattr(stmt, 'thenStatement') and stmt.thenStatement:
-                self._walk_for_load(stmt.thenStatement)
-            if hasattr(stmt, 'elseStatement') and stmt.elseStatement:
-                self._walk_for_load(stmt.elseStatement)
+            if hasattr(stmt, 'statement') and stmt.statement:
+                self._walk_for_load(stmt.statement)
+            if hasattr(stmt, 'elseClause') and stmt.elseClause:
+                self._walk_for_load(stmt.elseClause.clause)
             return
         
         # Case statement
         if 'Case' in stmt_kind:
             if hasattr(stmt, 'condition') and stmt.condition:
                 self._check_expr_for_load(stmt.condition)
-            if hasattr(stmt, 'cases'):
-                for i in range(len(stmt.cases)):
-                    case = stmt.cases[i]
-                    if hasattr(case, 'statement') and case.statement:
-                        self._walk_for_load(case.statement)
+            if hasattr(stmt, 'items'):
+                for i in range(len(stmt.items)):
+                    case = stmt.items[i]
+                    if hasattr(case, 'clause') and case.clause:
+                        self._walk_for_load(case.clause)
             return
         
         # For loop
@@ -178,8 +187,8 @@ class LoadTracer:
                 self._add_load(str(expr), expr)
             return
         
-        # Binary expression - check both sides
-        if 'Binary' in kind_str:
+        # Binary/Arithmetic/Logic expression - check both sides
+        if 'Binary' in kind_str or 'Expression' in kind_str:
             if hasattr(expr, 'left') and expr.left:
                 self._check_expr_for_load(expr.left)
             if hasattr(expr, 'right') and expr.right:
