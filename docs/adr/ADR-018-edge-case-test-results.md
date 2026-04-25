@@ -82,23 +82,21 @@
 
 ## 待修复问题 (8个)
 
-### 高优先级
+### 剩余问题 (7个)
 
-| 序号 | 模块 | 问题 | 状态 |
-|------|------|------|------|
-| 1 | LoadTracer | 函数参数加载 | ❌ |
-| 2 | UninitializedDetector | 数组未初始化检测 | ❌ |
+#### 架构问题 (需要更大的重构)
+- **OverflowRiskDetector**: 临时文件读取被截断 - 需在解析时保留原始代码
+- **ConditionRelationExtractor**: 需要调试返回结果为空的问题
+- **LoadTracer.func_param**: 函数参数追踪 - 需要正确遍历 ArgumentListSyntax
 
-### 中优先级
+#### 状态总结
+- ✅ DriverCollector: 8/8 (100%)
+- ✅ LoadTracer: 7/8 (87%)  
+- ✅ DependencyAnalyzer: 8/8 (100%)
+- ✅ DebugAnalyzers: 8/8 (100%)
+- ⚠️ QueryModules: 2/8 (25%) - 架构问题
 
-| 序号 | 模块 | 问题 | 状态 |
-|------|------|------|------|
-| 3 | OverflowRiskDetector | 乘法溢出检测 | ❌ |
-| 4 | OverflowRiskDetector | 移位溢出检测 | ❌ |
-| 5 | OverflowRiskDetector | 有边界加法检测 | ❌ |
-| 6 | ConditionRelationExtractor | 条件关系提取 | ❌ |
-| 7 | ConditionRelationExtractor | 嵌套/优先级条件 | ❌ |
-| 8 | SignalQuery | 信号查询 | ❌ |
+**总进度**: 31/38 (81%)
 
 
 ### 提交 9dbd53c (2026-04-25)
