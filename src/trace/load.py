@@ -198,6 +198,24 @@ class LoadTracer:
                 self._check_expr_for_load(expr.expression)
             return
         
+        # InvocationExpression (function call) - recurse into arguments
+        if 'Invocation' in kind_str or 'Call' in kind_str:
+            if hasattr(expr, 'arguments') and expr.arguments:
+                args = expr.arguments
+                # arguments 可能是列表或 ArgumentListSyntax
+                try:
+                    # 尝试找到 SeparatedList
+                    for item in args:
+                        if hasattr(item, '__iter__') and not isinstance(item, str):
+                            for sub_item in item:
+                                if hasattr(sub_item, 'kind') and 'Expression' in str(sub_item.kind):
+                                    self._check_expr_for_load(sub_item)
+                        elif hasattr(item, 'kind') and 'Expression' in str(item.kind):
+                            self._check_expr_for_load(item)
+                except:
+                    pass
+            return
+        
         # ElementSelect (array[i]) - extract base name and check
         if 'ElementSelect' in kind_str:
             name = str(expr).strip()
