@@ -182,9 +182,9 @@ days = hours / 24
 
 | 工具 | 目标 | 关键指标 | 状态 |
 |------|------|----------|------|
-| CoverageAnalyzer | 代码覆盖率 | 行/分支/条件/FSM | TODO |
-| TestabilityAnalyzer | 可测试性 | 可控性/可观测性 | TODO |
-| TimingAnalyzer | 时序分析 | slack/关键路径 | TODO |
+| CoverageAnalyzer | 代码覆盖率 | 行/分支/条件/FSM | ✅ DONE |
+| TestabilityAnalyzer | 可测试性 | 可控性/可观测性 | ✅ DONE |
+| TimingAnalyzer | 时序分析 | slack/关键路径 | ✅ DONE |
 
 ### P2 - 进阶评价工具
 
