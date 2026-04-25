@@ -183,8 +183,8 @@ class DriverCollector:
                 if hasattr(stmt, 'items'):
                     for i in range(len(stmt.items)):
                         case = stmt.items[i]
-                        if hasattr(case, 'statement') and case.statement:
-                            self._walk_statement(case.statement, kind, module_name, clock)
+                        if hasattr(case, 'clause') and case.clause:
+                            self._walk_statement(case.clause, kind, module_name, clock)
                 return
             
             if 'ForLoop' in stmt_kind:

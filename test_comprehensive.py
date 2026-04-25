@@ -84,8 +84,8 @@ for name, code, signal in tests:
         print(f"=== {name} ===")
         print(f"Signal: {signal}, Drivers: {len(drivers)}")
         for d in drivers:
-            src = d.source_expr.strip()[:50].replace('\n', ' ')
-            print(f"  - {d.driver_kind.name}: {src}")
+            src = d.sources[0].strip() if d.sources else ''[:50].replace('\n', ' ')
+            print(f"  - {d.kind.name}: {src}")
         print()
     except Exception as e:
         print(f"=== {name} ===")
