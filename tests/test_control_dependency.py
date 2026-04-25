@@ -3,7 +3,8 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from parse import SVParser
-from trace import ControlFlowTracer, DependencyAnalyzer
+from trace.controlflow import ControlFlowTracer
+from trace.dependency import DependencyAnalyzer
 
 
 TEST_CODE = """
