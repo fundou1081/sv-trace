@@ -32,6 +32,7 @@ class ComputationStats:
 class StructureStats:
     if_count: int = 0
     case_count: int = 0
+    always_comb_count: int = 0
     always_ff_count: int = 0
 
 @dataclass

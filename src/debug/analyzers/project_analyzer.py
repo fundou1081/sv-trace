@@ -1,296 +1,289 @@
 """
-ProjectAnalyzer - 项目批量分析器
-支持多视角: 设计/验证/管理
+ProjectAnalyzer - 项目分析器 (基于pyslang)
 """
 
-import sys
 import os
-import re
+import sys
 from typing import Dict, List, Tuple
 from dataclasses import dataclass, field
-from collections import defaultdict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from parse import SVParser
 from debug.analyzers.code_metrics_analyzer import CodeMetricsAnalyzer
+from trace.driver import DriverCollector
 
 
 @dataclass
 class ModuleMetrics:
     name: str
     path: str
-    # Basic
+    
+    # Basic metrics
     signals: int = 0
-    max_fanout: int = 0
     io_count: int = 0
     total_lines: int = 0
     comment_lines: int = 0
     
     # Design metrics
-    always_ff_count: int = 0
-    always_comb_count: int = 0
+    always_ff: int = 0
+    always_comb: int = 0
+    always_latch: int = 0
     if_count: int = 0
     case_count: int = 0
-    fsm_states: int = 0
-    reset_covered: bool = False
     parameter_count: int = 0
+    localparam_count: int = 0
     
-    # Computation
+    # Complexity metrics
+    complexity_score: int = 0
+    
+    # CDC metrics
+    multi_clock: int = 0
+    no_reset: int = 0
+    
+    # Compute metrics
     and_count: int = 0
     or_count: int = 0
     add_count: int = 0
     mul_count: int = 0
     div_count: int = 0
     
+    # Signal width
+    max_reg_width: int = 0
+    max_io_width: int = 0
+    
+    # Fanout metrics
+    max_fanout: int = 0
+    high_fanout_signals: List[str] = field(default_factory=list)
+    
     # Verification metrics
-    tb_exists: bool = False
     assert_count: int = 0
     cover_count: int = 0
     rand_count: int = 0
+    tb_exists: bool = False
     
-    # Width
-    io_widths: Dict[int, int] = field(default_factory=dict)
-    reg_widths: Dict[int, int] = field(default_factory=dict)
-    avg_reg_width: float = 0.0
-    max_reg_width: int = 0
-
-
-@dataclass
-class ProjectReport:
-    modules: List[ModuleMetrics] = field(default_factory=list)
-    
-    # Design views
-    design_complex_modules: List[Tuple[str, int]] = field(default_factory=list)
-    fsm_modules: List[Tuple[str, int]] = field(default_factory=list)
-    cdc_risk_modules: List[Tuple[str, int]] = field(default_factory=list)
-    reset_issues: List[str] = field(default_factory=list)
-    
-    # Verification views
-    verification_ready_modules: List[Tuple[str, float]] = field(default_factory=list)  # (name, score)
-    tb_modules: List[str] = field(default_factory=list)
-    assertion_modules: List[Tuple[str, int]] = field(default_factory=list)
-    
-    # Management views
-    large_modules: List[Tuple[str, int]] = field(default_factory=list)
-    complex_modules: List[Tuple[str, int]] = field(default_factory=list)
-    well_documented: List[Tuple[str, float]] = field(default_factory=list)
-    parameterized_modules: List[str] = field(default_factory=list)
-    
-    # Aggregated
-    total_modules: int = 0
-    total_signals: int = 0
-    total_lines: int = 0
-    total_parameters: int = 0
-    modules_with_tb: int = 0
-    modules_with_assert: int = 0
+    # Quality metrics
+    comment_ratio: float = 0.0
 
 
 class ProjectAnalyzer:
+    """项目分析器"""
+    
     def __init__(self, project_path: str):
         self.project_path = project_path
+        self.modules: List[ModuleMetrics] = []
     
-    def analyze(self) -> ProjectReport:
+    def analyze(self) -> 'ProjectAnalyzer':
+        """分析整个项目"""
         rtl_files = self._find_rtl_files()
+        
         print(f"Found {len(rtl_files)} RTL files")
         
-        report = ProjectReport()
-        report.total_modules = len(rtl_files)
-        
         for f in rtl_files:
-            name = os.path.basename(f).replace('.sv', '')
-            
             try:
-                parser = SVParser()
-                parser.parse_file(f)
-                content = self._read_file(f)
-                
-                m = self._extract_metrics(name, f, content)
-                report.modules.append(m)
-                
+                m = self._analyze_file(f)
+                self.modules.append(m)
             except Exception as e:
-                print(f"Error: {f}: {e}")
+                print(f"Error {os.path.basename(f)}: {e}")
         
-        self._generate_views(report)
-        return report
-    
-    def _read_file(self, path: str) -> str:
-        with open(path, 'r') as f:
-            return f.read()
+        return self
     
     def _find_rtl_files(self) -> List[str]:
+        """查找RTL文件"""
         files = []
+        
+        skip_dirs = {'dv', 'doc', 'fpv', 'spec', '.git', 'tb', 'testbench', 'bench', 'verif'}
+        
         for root, dirs, filenames in os.walk(self.project_path):
-            dirs[:] = [d for d in dirs if d not in ['dv', 'doc', 'spec', '.git', 'tb', 'testbench']]
+            # 跳过特定目录
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            
             for f in filenames:
-                if f.endswith('.sv') and 'pkg' not in f and '_reg_' not in f:
+                # 排除pkg和_reg文件
+                if f.endswith('.sv') and 'pkg' not in f and '_reg_' not in f and '_assert' not in f:
                     files.append(os.path.join(root, f))
-        return files[:150]
+        
+        return files[:100]  # 限制数量
     
-    def _extract_metrics(self, name: str, path: str, content: str) -> ModuleMetrics:
-        m = ModuleMetrics(name=name, path=path)
+    def _analyze_file(self, f: str) -> ModuleMetrics:
+        """分析单个文件"""
+        name = os.path.basename(f).replace('.sv', '')
+        m = ModuleMetrics(name=name, path=f)
         
-        # Basic
-        m.total_lines = len(content.split('\n'))
-        m.comment_lines = len(re.findall(r'//.*$', content, re.MULTILINE))
+        # 读取内容
+        with open(f, 'r') as fp:
+            content = fp.read()
         
-        # Signals
-        sigs = re.findall(r'\blogic\b\s*(?:\[[^\]]+\])?\s*(\w+)', content)
-        m.signals = len(set(sigs))
+        lines = content.split('\n')
+        m.total_lines = len([l for l in lines if l.strip()])
+        m.comment_lines = len([l for l in lines if l.strip().startswith('//')])
         
-        # IO
-        m.io_count = len(re.findall(r'\b(input|output)\b', content))
+        if m.total_lines > 0:
+            m.comment_ratio = m.comment_lines / m.total_lines * 100
         
-        # Design - logic
-        m.always_ff_count = len(re.findall(r'always_ff\s+@', content, re.IGNORECASE))
-        m.always_comb_count = len(re.findall(r'always_comb\s+@', content, re.IGNORECASE))
-        m.if_count = len(re.findall(r'\bif\s*\(', content))
-        m.case_count = len(re.findall(r'\bcase\s*\(', content))
+        # 解析
+        parser = SVParser()
+        parser.parse_file(f)
         
-        # FSM detection
-        enum_match = re.search(r'typedef\s+enum.*?\{.*?\}(\w+)', content, re.DOTALL)
-        if enum_match:
-            states = re.findall(r'(\w+)\s*=', enum_match.group())
-            m.fsm_states = len(states)
+        # 使用CodeMetricsAnalyzer
+        try:
+            cm = CodeMetricsAnalyzer(parser)
+            report = cm.analyze()
+            
+            m.signals = report.control.total_signals
+            m.always_ff = report.structure.always_ff_count
+            m.always_comb = report.structure.always_comb_count
+            m.if_count = report.structure.if_count
+            m.case_count = report.structure.case_count
+            m.parameter_count = report.reusability.parameter_count
+            
+            m.complexity_score = report.maintainability.cyclomatic_complexity
+            
+            m.and_count = report.computation.and_count
+            m.or_count = report.computation.or_count
+            m.add_count = report.computation.add_count
+            m.mul_count = report.computation.mul_count
+            
+            m.max_fanout = report.control.max_fanout
+            m.high_fanout_signals = report.control.high_fanout_signals[:5]
+            
+            # Width from IO
+            if report.control.reg_widths:
+                m.max_reg_width = max(report.control.reg_widths.keys())
         
-        # Reset coverage
-        m.reset_covered = bool(re.search(r'if.*?\(!.*?rst', content, re.IGNORECASE))
+        except Exception as e:
+            print(f"Analyzer error for {name}: {e}")
         
-        # Parameters
-        m.parameter_count = len(re.findall(r'\bparameter\b', content))
+        # 额外验证指标
+        m.assert_count = content.count('assert')
+        m.cover_count = content.count('cover')
+        m.rand_count = content.count('rand')
         
-        # Computation
-        m.and_count = content.count('&') - content.count('&&')
-        m.or_count = content.count('|') - content.count('||')
-        m.add_count = content.count('+')
-        m.mul_count = content.count('*')
-        m.div_count = content.count('/')
+        # TB检测
+        tb_path = f.replace('/rtl/', '/tb/').replace('.sv', '_tb.sv')
+        if os.path.exists(tb_path):
+            m.tb_exists = True
         
-        # Fanout (simplified)
-        m.max_fanout = max([content.count(s) for s in set(sigs)[:10]] + [0])
-        
-        # Verification
-        m.tb_exists = os.path.exists(path.replace('/rtl/', '/tb/').replace('.sv', '_tb.sv'))
-        m.assert_count = len(re.findall(r'\bassert\b', content, re.IGNORECASE))
-        m.cover_count = len(re.findall(r'\bcover\b', content, re.IGNORECASE))
-        m.rand_count = len(re.findall(r'\brand\b', content, re.IGNORECASE))
-        
-        # Reg widths
-        for match in re.finditer(r'\blogic\b\s*\[(\d+):0\]\s+(\w+)', content):
-            w = int(match.group(1)) + 1
-            m.reg_widths[w] = m.reg_widths.get(w, 0) + 1
-        
-        if m.reg_widths:
-            m.avg_reg_width = sum(w*c for w,c in m.reg_widths.items()) / sum(m.reg_widths.values())
-            m.max_reg_width = max(m.reg_widths.keys())
+        # IO count
+        m.io_count = content.count('input ') + content.count('output ')
         
         return m
     
-    def _generate_views(self, report: ProjectReport):
-        mods = report.modules
-        
-        # Design views
-        design_complex = [(m.name, m.if_count + m.case_count*2) for m in mods]
-        report.design_complex_modules = sorted(design_complex, key=lambda x: -x[1])[:20]
-        
-        fsm = [(m.name, m.fsm_states) for m in mods if m.fsm_states > 0]
-        report.fsm_modules = sorted(fsm, key=lambda x: -x[1])[:20]
-        
-        # CDC risk (multi-clock without reset)
-        cdc = []
-        for m in mods:
-            if m.always_ff_count > 1 and not m.reset_covered:
-                cdc.append((m.name, m.always_ff_count))
-        report.cdc_risk_modules = sorted(cdc, key=lambda x: -x[1])[:20]
-        
-        # Reset issues
-        for m in mods:
-            if m.always_ff_count > 0 and not m.reset_covered:
-                report.reset_issues.append(m.name)
-        
-        # Verification views
-        verif_score = []
-        for m in mods:
-            score = (m.assert_count * 0.5 + m.cover_count * 0.3 + (1 if m.tb_exists else 0) * 0.2) * 10
-            verif_score.append((m.name, score))
-        report.verification_ready_modules = sorted(verif_score, key=lambda x: -x[1])[:20]
-        
-        report.tb_modules = [m.name for m in mods if m.tb_exists]
-        report.modules_with_tb = len(report.tb_modules)
-        
-        assertions = [(m.name, m.assert_count) for m in mods if m.assert_count > 0]
-        report.assertion_modules = sorted(assertions, key=lambda x: -x[1])[:20]
-        report.modules_with_assert = len(report.assertion_modules)
-        
-        # Management views
-        large = [(m.name, m.signals) for m in mods]
-        report.large_modules = sorted(large, key=lambda x: -x[1])[:20]
-        
-        complex_m = [(m.name, m.total_lines) for m in mods]
-        report.complex_modules = sorted(complex_m, key=lambda x: -x[1])[:20]
-        
-        doc_ratio = [(m.name, m.comment_lines/m.total_lines*100 if m.total_lines else 0) for m in mods]
-        report.well_documented = sorted(doc_ratio, key=lambda x: -x[1])[:20]
-        
-        report.parameterized_modules = [m.name for m in mods if m.parameter_count > 0]
-        
-        # Aggregated
-        report.total_signals = sum(m.signals for m in mods)
-        report.total_lines = sum(m.total_lines for m in mods)
-        report.total_parameters = sum(m.parameter_count for m in mods)
+    def _sort_by(self, key: str, reverse: bool = True) -> List[Tuple]:
+        """排序"""
+        if key == 'lines':
+            return [(m.name, m.total_lines) for m in self.modules]
+        elif key == 'signals':
+            return [(m.name, m.signals) for m in self.modules]
+        elif key == 'complexity':
+            return [(m.name, m.complexity_score) for m in self.modules]
+        elif key == 'fanout':
+            return [(m.name, m.max_fanout) for m in self.modules]
+        elif key == 'assert':
+            return [(m.name, m.assert_count) for m in self.modules]
+        elif key == 'comment':
+            return [(m.name, m.comment_ratio) for m in self.modules]
+        return []
     
-    def print_report(self, report: ProjectReport, view: str = "summary"):
+    def print_report(self, view: str = 'summary'):
+        """打印报告
+        
+        Views:
+        - summary: 总览
+        - design: 设计质量
+        - verification: 验证覆盖
+        - management: 管理指标
+        """
         print("="*70)
-        print(f"Project Analysis: {report.total_modules} modules")
+        print(f"Project Analysis: {len(self.modules)} modules")
         print("="*70)
         
-        if view == "summary":
-            print(f"\n[Basic]")
-            print(f"  Modules: {report.total_modules}")
-            print(f"  Signals: {report.total_signals}")
-            print(f"  Lines: {report.total_lines}")
-            print(f"  Parameters: {report.total_parameters}")
+        if view == 'summary':
+            total = sum(m.total_lines for m in self.modules)
+            total_sigs = sum(m.signals for m in self.modules)
+            total_params = sum(m.parameter_count for m in self.modules)
             
-            print(f"\n[Verification]")
-            print(f"  Modules with TB: {report.modules_with_tb}")
-            print(f"  Modules with Assert: {report.modules_with_assert}")
+            print(f"\n[Basic Statistics]")
+            print(f"  Total modules: {len(self.modules)}")
+            print(f"  Total lines: {total:,}")
+            print(f"  Total signals: {total_sigs}")
+            print(f"  Total parameters: {total_params}")
+            
+            # 聚合
+            total_and = sum(m.and_count for m in self.modules)
+            total_add = sum(m.add_count for m in self.modules)
+            total_mul = sum(m.mul_count for m in self.modules)
+            
+            print(f"\n[Operations]")
+            print(f"  AND: {total_and:,}")
+            print(f"  ADD: {total_add:,}")
+            print(f"  MUL: {total_mul:,}")
+            
+            # FF统计
+            total_ff = sum(m.always_ff for m in self.modules)
+            total_comb = sum(m.always_comb for m in self.modules)
+            print(f"\n[Logic Blocks]")
+            print(f"  always_ff: {total_ff}")
+            print(f"  always_comb: {total_comb}")
         
-        elif view == "design":
-            print("\n=== Design: 复杂度 TOP ===")
-            for i, (n, v) in enumerate(report.design_complex_modules[:10], 1):
-                print(f"{i:2}. {n:30} complexity={v}")
+        elif view == 'design':
+            print("\n=== DESIGN QUALITY ===")
             
-            print("\n=== FSM modules ===")
-            for n, v in report.fsm_modules[:10]:
-                print(f"  {n:30} states={v}")
+            print("\n[Top 15 - Complexity]")
+            items = sorted(self.modules, key=lambda x: x.complexity_score, reverse=True)[:15]
+            for i, m in enumerate(items, 1):
+                print(f"{i:2}. {m.name:30} complexity={m.complexity_score}, if={m.if_count}, case={m.case_count}")
             
-            print("\n=== CDC Risk (multi-clock, no reset) ===")
-            for n, v in report.cdc_risk_modules[:10]:
-                print(f"  {n:30} always_ff={v}")
+            print("\n[Top 10 - High Fanout]")
+            items = sorted(self.modules, key=lambda x: x.max_fanout, reverse=True)[:10]
+            for i, m in enumerate(items, 1):
+                print(f"{i:2}. {m.name:30} fanout={m.max_fanout}")
+            
+            print("\n[Top 10 - Large Width]")
+            items = sorted(self.modules, key=lambda x: x.max_reg_width, reverse=True)[:10]
+            for i, m in enumerate(items, 1):
+                if m.max_reg_width > 0:
+                    print(f"{i:2}. {m.name:30} width={m.max_reg_width}bit")
         
-        elif view == "verification":
-            print("\n=== Verification Ready ===")
-            for i, (n, v) in enumerate(report.verification_ready_modules[:10], 1):
-                print(f"{i:2}. {n:30} score={v:.1f}")
+        elif view == 'verification':
+            print("\n=== VERIFICATION COVERAGE ===")
             
-            print("\n=== With Assertions ===")
-            for n, v in report.assertion_modules[:10]:
-                print(f"  {n:30} assert={v}")
+            with_tb = sum(1 for m in self.modules if m.tb_exists)
+            with_assert = sum(1 for m in self.modules if m.assert_count > 0)
+            with_cover = sum(1 for m in self.modules if m.cover_count > 0)
+            
+            print(f"\n[Summary]")
+            print(f"  Modules with TB: {with_tb}/{len(self.modules)} ({with_tb*100//len(self.modules)}%)")
+            print(f"  Modules with assert: {with_assert}/{len(self.modules)} ({with_assert*100//len(self.modules)}%)")
+            print(f"  Modules with cover: {with_cover}/{len(self.modules)} ({with_cover*100//len(self.modules)}%)")
+            
+            print("\n[Top 10 - Assertions]")
+            items = sorted(self.modules, key=lambda x: x.assert_count, reverse=True)[:10]
+            for i, m in enumerate(items, 1):
+                if m.assert_count > 0:
+                    print(f"{i:2}. {m.name:30} assert={m.assert_count}, cover={m.cover_count}")
         
-        elif view == "management":
-            print("\n=== Large Modules ===")
-            for i, (n, v) in enumerate(report.large_modules[:10], 1):
-                print(f"{i:2}. {n:30} signals={v}")
+        elif view == 'management':
+            print("\n=== MANAGEMENT METRICS ===")
             
-            print("\n=== Well Documented ===")
-            for i, (n, v) in enumerate(report.well_documented[:10], 1):
-                print(f"{i:2}. {n:30} comment={v:.1f}%")
+            print("\n[Top 15 - Largest Modules]")
+            items = sorted(self.modules, key=lambda x: x.total_lines, reverse=True)[:15]
+            for i, m in enumerate(items, 1):
+                print(f"{i:2}. {m.name:30} lines={m.total_lines}, signals={m.signals}")
             
-            print("\n=== Parameterized ===")
-            for n in report.parameterized_modules[:10]:
-                print(f"  {n}")
+            print("\n[Top 10 - Well Documented]")
+            items = sorted(self.modules, key=lambda x: x.comment_ratio, reverse=True)[:10]
+            for i, m in enumerate(items, 1):
+                if m.comment_ratio > 0:
+                    print(f"{i:2}. {m.name:30} comments={m.comment_ratio:.1f}%")
+            
+            print("\n[Top 10 - Parameterized]")
+            items = sorted(self.modules, key=lambda x: x.parameter_count, reverse=True)[:10]
+            for i, m in enumerate(items, 1):
+                if m.parameter_count > 0:
+                    print(f"{i:2}. {m.name:30} params={m.parameter_count}")
         
         print("="*70)
 
 
-__all__ = ['ProjectAnalyzer', 'ProjectReport']
+__all__ = ['ProjectAnalyzer']
