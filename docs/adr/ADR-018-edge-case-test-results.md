@@ -22,15 +22,15 @@
 
 ## 结果
 - 总计 40 个测试用例
-- 通过 26 个 (68%)
-- 已修复问题: 从 18 个减少到 12 个
+- 通过 29 个 (76%)
+- 已修复问题: 从 18 个减少到 9 个
 
 ### 测试结果汇总
 
 | 模块 | 通过 | 失败 | 通过率 |
 |------|------|------|--------|
-| DriverCollector | 6 | 2 | 75% |
-| LoadTracer | 4 | 4 | 50% |
+| DriverCollector | 8 | 0 | 100% ✅ |
+| LoadTracer | 6 | 2 | 75% |
 | DependencyAnalyzer | 8 | 0 | 100% |
 | Debug Analyzers | 7 | 1 | 87% |
 | Query Modules | 1 | 7 | 12% |
@@ -80,29 +80,33 @@
 5. **generate 块**:
    - 内部的 always_comb 可以被正常遍历
 
-## 待修复问题 (12个)
+## 待修复问题 (9个)
 
 ### 高优先级
 
 | 序号 | 模块 | 问题 | 状态 |
 |------|------|------|------|
-| 1 | DriverCollector | 数组下标赋值 (mem[idx] = data) | ❌ |
-| 2 | DriverCollector | 位选择赋值 (data[idx] = val) | ❌ |
-| 3 | LoadTracer | 嵌套表达式加载 | ❌ |
-| 4 | LoadTracer | generate for 加载 | ❌ |
-| 5 | LoadTracer | 函数参数加载 | ❌ |
-| 6 | UninitializedDetector | 数组未初始化检测 | ❌ |
+| 1 | LoadTracer | 嵌套表达式加载 | ❌ |
+| 2 | LoadTracer | 函数参数加载 | ❌ |
+| 3 | UninitializedDetector | 数组未初始化检测 | ❌ |
 
 ### 中优先级
 
 | 序号 | 模块 | 问题 | 状态 |
 |------|------|------|------|
-| 7 | OverflowRiskDetector | 乘法溢出检测 | ❌ |
-| 8 | OverflowRiskDetector | 移位溢出检测 | ❌ |
-| 9 | OverflowRiskDetector | 有边界加法检测 | ❌ |
-| 10 | ConditionRelationExtractor | 条件关系提取 | ❌ |
-| 11 | ConditionRelationExtractor | 嵌套/优先级条件 | ❌ |
-| 12 | SignalQuery | 信号查询 | ❌ |
+| 4 | OverflowRiskDetector | 乘法溢出检测 | ❌ |
+| 5 | OverflowRiskDetector | 移位溢出检测 | ❌ |
+| 6 | OverflowRiskDetector | 有边界加法检测 | ❌ |
+| 7 | ConditionRelationExtractor | 条件关系提取 | ❌ |
+| 8 | ConditionRelationExtractor | 嵌套/优先级条件 | ❌ |
+| 9 | SignalQuery | 信号查询 | ❌ |
+
+
+### 提交 9dbd53c (2026-04-25)
+- **DriverCollector**:
+  - 添加 IdentifierSelectName 支持: mem[idx] → 提取基础名称
+  - 修复 _get_signal_name: IdentifierSelectName 检查优先级
+  - 添加 IdentifierSelectName 到 _extract_sources
 
 ## 引用
 - `docs/EDGE_CASE_RESULTS_V2.md` - 详细测试结果
