@@ -139,6 +139,21 @@
   - 从 DataDeclaration.declarators 提取信号名
   - 正确返回 Signal dataclass 实例
 
+## 架构改进 (ADR-019)
+
+### 问题
+临时文件解析后无法获取原始代码，导致基于文本分析的模块失败。
+
+### 解决方案
+在 SVParser 中添加 `sources` 字典，解析时保存原始代码：
+```python
+self.sources[filepath] = source  # 保存源代码
+```
+
+### 实现
+- 添加 `get_source()` 方法
+- OverflowRiskDetector 等模块改为使用 `parser.get_source()`
+
 ## 引用
 - `docs/EDGE_CASE_RESULTS_V2.md` - 详细测试结果
 - `tests/edge_cases/` - 边界测试套件
