@@ -73,14 +73,20 @@ class OverflowRiskDetector:
             assignments = self._find_add_sub_assignments(code)
             
             for assign in assignments:
+                # assign 可以是 (target, expr) 或 (target, expr, ptype)
+                if len(assign) == 3:
+                    target, expr, ptype = assign
+                else:
+                    target, expr = assign
+                    ptype = 'add' if '+' in expr else 'sub'
                 # 检查是否有溢出风险
-                risk = self._check_overflow(assign)
+                risk = self._check_overflow(target, expr, ptype)
                 if risk:
                     result.risks.append(risk)
         
         return result
     
-    def _find_add_sub_assignments(self, code: str) -> List[str]:
+    def _find_add_sub_assignments(self, code: str) -> List:
         """查找加法和减法赋值"""
         
         assignments = []
@@ -105,10 +111,16 @@ class OverflowRiskDetector:
         
         return assignments
     
-    def _check_overflow(self, assign: tuple) -> OverflowRisk:
-        """检查溢出风险"""
+    def _check_overflow(self, signal: str, expr: str, ptype: str = 'add') -> OverflowRisk:
+        """检查溢出风险
         
-        signal, expr = assign
+        Args:
+            signal: 信号名
+            expr: 表达式
+            ptype: 类型 ('add', 'sub', 'mul', 'shl')
+        """
+        
+        signal = signal
         
         # 检查是否是溢出风险类型
         
@@ -145,15 +157,34 @@ class OverflowRiskDetector:
         return None
     
     def _get_code(self, fname: str) -> str:
-        if fname in self.parser.trees:
-            t = self.parser.trees[fname]
-            if hasattr(t, 'source'):
-                return t.source
+        # Try to read from file path
         try:
-            with open(fname) as f:
-                return f.read()
-        except:
-            return ""
+            # 尝试原始路径
+            if os.path.exists(fname):
+                with open(fname) as f:
+                    return f.read()
+            # 尝试 basename
+            basename = os.path.basename(fname)
+            if os.path.exists(basename):
+                with open(basename) as f:
+                    return f.read()
+            # 尝试 /tmp 目录
+            if fname.startswith('/tmp') or fname.startswith('/var'):
+                # 这是临时文件，需要在解析后立即读取
+                pass
+        except Exception as e:
+            print(f'Error reading {fname}: {e}')
+        
+        # 最后尝试: 从 tree 获取文本
+        if fname in self.parser.trees:
+            tree = self.parser.trees[fname]
+            # 尝试通过 str() 获取
+            try:
+                return str(tree)
+            except:
+                pass
+        
+        return ""
 
 
 def detect_overflow(parser) -> OverflowResult:
