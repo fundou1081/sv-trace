@@ -139,6 +139,15 @@
   - 从 DataDeclaration.declarators 提取信号名
   - 正确返回 Signal dataclass 实例
 
+## 关键pyslang API 发现
+
+1. **AST遍历**: 使用 `items[i]` 而非直接属性
+2. **IdentifierSelectName**: 必须在 Identifier 之前检查
+3. **ParenthesizedExpression**: 检查 inner 和 expression
+4. **算术表达式**: AddExpression, MultiplyExpression 等需特殊处理
+5. **InvocationExpression.arguments**: 是 ArgumentListSyntax
+6. **解析器**: 需要保存源代码供文本分析
+
 ## 架构改进 (ADR-019)
 
 ### 问题
