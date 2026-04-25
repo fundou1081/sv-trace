@@ -220,8 +220,18 @@ class DriverCollector:
         
         kind_str = str(node.kind)
         
+        # IdentifierSelectName - e.g., mem[idx] in assignments (check first!)
+        if 'IdentifierSelectName' in kind_str:
+            name = str(node).strip()
+            # Extract base name for array assignment: mem[idx] -> mem
+            base_name = name.split('[')[0] if '[' in name else name
+            return base_name
+        
         if 'Identifier' in kind_str:
-            return str(node).strip()
+            name = str(node).strip()
+            # Extract base name for array assignment: mem[idx] -> mem
+            base_name = name.split('[')[0] if '[' in name else name
+            return base_name
         
         if 'ElementSelect' in kind_str:
             return str(node).strip()
@@ -247,6 +257,21 @@ class DriverCollector:
             name = str(node).strip()
             if name and not self._is_literal(name):
                 sources.append(name)
+            return sources
+        
+        # IdentifierSelectName - array access like mem[idx]
+        if 'IdentifierSelectName' in kind_str:
+            name = str(node).strip()
+            # Extract base name
+            base_name = name.split('[')[0] if '[' in name else name
+            if base_name and not self._is_literal(base_name):
+                sources.append(base_name)
+            # Also check selector for nested cases
+            if hasattr(node, 'selector') and node.selector:
+                sources.extend(self._extract_sources(node.selector))
+            if hasattr(node, 'selectors') and node.selectors:
+                for sel in node.selectors:
+                    sources.extend(self._extract_sources(sel))
             return sources
         
         if 'Binary' in kind_str:
