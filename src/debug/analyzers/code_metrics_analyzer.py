@@ -1,4 +1,6 @@
-"""CodeMetricsAnalyzer - 代码度量分析器"""
+"""
+CodeMetricsAnalyzer - 代码度量分析器
+"""
 
 import sys, os, re
 from typing import Dict, List
@@ -8,13 +10,15 @@ from dataclasses import dataclass, field
 class ControlSignalStats:
     total_signals: int = 0
     driven_by_if: int = 0
-    driven_by_case: int = 0
-    driven_by_assign: int = 0
-    avg_fanout: float = 0.0
     max_fanout: int = 0
+    avg_fanout: float = 0.0
     high_fanout_signals: List[str] = field(default_factory=list)
+    io_widths: Dict[int, int] = field(default_factory=dict)
+    reg_widths: Dict[int, int] = field(default_factory=dict)
+    avg_io_width: float = 0.0
+    avg_reg_width: float = 0.0
 
-@dataclass  
+@dataclass
 class ComputationStats:
     and_count: int = 0
     or_count: int = 0
@@ -22,20 +26,17 @@ class ComputationStats:
     double_not_count: int = 0
     add_count: int = 0
     mul_count: int = 0
-    shift_count: int = 0
     clk_count: int = 0
 
 @dataclass
 class StructureStats:
     if_count: int = 0
     case_count: int = 0
-    case_default: int = 0
     always_ff_count: int = 0
 
 @dataclass
 class ReusabilityMetrics:
     parameter_count: int = 0
-    generate_blocks: int = 0
     configurability_score: float = 0.0
 
 @dataclass
@@ -82,21 +83,47 @@ class CodeMetricsAnalyzer:
 
     def _analyze_control(self) -> ControlSignalStats:
         stats = ControlSignalStats()
-        all_content = self._get_all_content()
+        c = self._get_all_content()
         
-        sigs = re.findall(r"logic\s+([a-zA-Z_]\w*)", all_content)
-        sigs += re.findall(r"logic\s*\[[^\]]+\]\s*([a-zA-Z_]\w*)", all_content)
+        # Signals
+        sigs = re.findall(r"logic\s+([a-zA-Z_]\w*)", c)
+        sigs += re.findall(r"logic\s*\[[^\]]+\]\s*([a-zA-Z_]\w*)", c)
         unique = set(sigs)
         stats.total_signals = len(unique)
         
-        stats.driven_by_if = len(re.findall(r"if\s*\(", all_content))
-        stats.driven_by_case = len(re.findall(r"case\s*\(", all_content))
-        
-        fanout = {s: all_content.count(s) for s in unique}
+        # Fanout
+        fanout = {s: c.count(s) for s in unique}
         if fanout:
             stats.max_fanout = max(fanout.values())
             stats.avg_fanout = sum(fanout.values()) / len(fanout)
             stats.high_fanout_signals = [f"{s}({c})" for s,c in fanout.items() if c > 5]
+        
+        # IO widths
+        io_widths = {}
+        for m in re.finditer(r"input\s+(?:logic\s*)?\[(\d+):0\]", c):
+            w = int(m.group(1)) + 1
+            io_widths[w] = io_widths.get(w, 0) + 1
+        for m in re.finditer(r"output\s+(?:logic\s*)?\[(\d+):0\]", c):
+            w = int(m.group(1)) + 1
+            io_widths[w] = io_widths.get(w, 0) + 1
+        # 1-bit IO
+        io_1bit = len(re.findall(r"(?:input|output)\s+(?:logic\s+)?[a-zA-Z_]", c))
+        if io_1bit:
+            io_widths[1] = io_widths.get(1, 0) + io_1bit
+        stats.io_widths = io_widths
+        
+        # Reg widths
+        reg_widths = {}
+        for m in re.finditer(r"logic\s*\[(\d+):0\]\s+(\w+)", c):
+            w = int(m.group(1)) + 1
+            reg_widths[w] = reg_widths.get(w, 0) + 1
+        stats.reg_widths = reg_widths
+        
+        # Averages
+        if io_widths:
+            stats.avg_io_width = sum(w*c for w,c in io_widths.items()) / sum(io_widths.values())
+        if reg_widths:
+            stats.avg_reg_width = sum(w*c for w,c in reg_widths.items()) / sum(reg_widths.values())
         
         return stats
 
@@ -109,16 +136,14 @@ class CodeMetricsAnalyzer:
         stats.double_not_count = len(re.findall(r"!!", c))
         stats.add_count = c.count("+")
         stats.mul_count = c.count("*")
-        stats.shift_count = c.count("<<") + c.count(">>")
         stats.clk_count = len(re.findall(r"clk", c, re.IGNORECASE))
         return stats
 
     def _analyze_structure(self) -> StructureStats:
         stats = StructureStats()
         c = self._get_all_content()
-        stats.if_count = len(re.findall(r"if\s*\(", c))
-        stats.case_count = len(re.findall(r"case\s*\(", c))
-        stats.case_default = len(re.findall(r"default\s*:", c))
+        stats.if_count = len(re.findall(r"if\s*\(", c))
+        stats.case_count = len(re.findall(r"case\s*\(", c))
         stats.always_ff_count = len(re.findall(r"always_ff\s+@", c, re.IGNORECASE))
         return stats
 
@@ -126,15 +151,14 @@ class CodeMetricsAnalyzer:
         m = ReusabilityMetrics()
         c = self._get_all_content()
         m.parameter_count = len(re.findall(r"parameter\s+", c))
-        m.generate_blocks = len(re.findall(r"generate", c))
-        m.configurability_score = min(100, m.parameter_count * 3 + m.generate_blocks * 3)
+        m.configurability_score = min(100, m.parameter_count * 3)
         return m
 
     def _analyze_maintainability(self) -> MaintainabilityMetrics:
         m = MaintainabilityMetrics()
         c = self._get_all_content()
         m.total_lines = len([l for l in c.split(chr(10)) if l.strip()])
-        m.cyclomatic_complexity = min(50, len(re.findall(r"if\s*\(", c)) + len(re.findall(r"case\s*\(", c)))
+        m.cyclomatic_complexity = min(50, len(re.findall(r"if\s*\(", c)) + len(re.findall(r"case\s*\(", c)))
         return m
 
     def _generate_suggestions(self, control, computation, reusability) -> List[str]:
@@ -143,6 +167,10 @@ class CodeMetricsAnalyzer:
             s.append(f"存在{computation.double_not_count}处双重否定!!")
         if control.max_fanout > 10:
             s.append(f"最大扇出{control.max_fanout}过高")
+        if control.avg_io_width > 32:
+            s.append(f"IO位宽{control.avg_io_width:.0f}bit偏大")
+        if control.avg_reg_width > 64:
+            s.append(f"寄存器位宽{control.avg_reg_width:.0f}bit偏大")
         if reusability.parameter_count == 0:
             s.append("未使用parameter")
         if not s:
@@ -155,10 +183,11 @@ class CodeMetricsAnalyzer:
         print("="*60)
         print(f"Signals: {report.control.total_signals}")
         print(f"Max Fanout: {report.control.max_fanout}")
-        print(f"High Fanout: {report.control.high_fanout_signals}")
+        print(f"I/O Widths: {report.control.io_widths}")
+        print(f"Avg I/O Width: {report.control.avg_io_width:.1f}")
+        print(f"Reg Widths: {report.control.reg_widths}")
+        print(f"Avg Reg Width: {report.control.avg_reg_width:.1f}")
         print(f"Clock: {report.computation.clk_count}")
-        print(f"Double NOT: {report.computation.double_not_count}")
-        print(f"Configurability: {report.reusability.configurability_score:.1f}")
         print("="*60)
         for suggestion in report.suggestions:
             print(f"  - {suggestion}")
