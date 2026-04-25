@@ -91,7 +91,7 @@
 
 #### 状态总结
 - ✅ DriverCollector: 8/8 (100%)
-- ✅ LoadTracer: 7/8 (87%)  
+- ✅ LoadTracer: 7/8 (87%) - multi_dim_array, nested_expr fixed  
 - ✅ DependencyAnalyzer: 8/8 (100%)
 - ✅ DebugAnalyzers: 8/8 (100%)
 - ⚠️ QueryModules: 2/8 (25%) - 架构问题
