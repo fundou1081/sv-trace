@@ -204,13 +204,13 @@ class LoadTracer:
             expr_str = str(expr)
             # 简单提取所有单词作为潜在标识符
             import re
-            identifiers = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', expr_str)
+            identifiers = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', expr_str)
             for ident in identifiers:
                 # 跳过关键字
-                if ident in {'module', 'endmodule', 'function', 'endfunction', 'input', 'output',
-                      'logic', 'reg', 'wire', 'always', 'begin', 'end', 'if', 'else',
-                      'case', 'endcase', 'for', 'while', 'return', 'posedge', 'negedge',
-                      'assign', 'parameter', 'localparam', 'genvar', 'signed', 'unsigned'}:
+                if ident in ('module', 'endmodule', 'function', 'endfunction', 'input', 'output', 
+                            'logic', 'reg', 'wire', 'always', 'begin', 'end', 'if', 'else', 
+                            'case', 'endcase', 'for', 'while', 'return', 'posedge', 'negedge',
+                            'assign', 'parameter', 'localparam', 'genvar', 'signed', 'unsigned'):
                     continue
                 # 检查是否是目标信号
                 if ident == self._target_signal:
