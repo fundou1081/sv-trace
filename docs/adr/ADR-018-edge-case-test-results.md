@@ -22,8 +22,8 @@
 
 ## 结果
 - 总计 40 个测试用例
-- 通过 29 个 (76%)
-- 已修复问题: 从 18 个减少到 9 个
+- 通过 30 个 (78%)
+- 已修复问题: 从 18 个减少到 8 个
 
 ### 测试结果汇总
 
@@ -80,26 +80,25 @@
 5. **generate 块**:
    - 内部的 always_comb 可以被正常遍历
 
-## 待修复问题 (9个)
+## 待修复问题 (8个)
 
 ### 高优先级
 
 | 序号 | 模块 | 问题 | 状态 |
 |------|------|------|------|
-| 1 | LoadTracer | 嵌套表达式加载 | ❌ |
-| 2 | LoadTracer | 函数参数加载 | ❌ |
-| 3 | UninitializedDetector | 数组未初始化检测 | ❌ |
+| 1 | LoadTracer | 函数参数加载 | ❌ |
+| 2 | UninitializedDetector | 数组未初始化检测 | ❌ |
 
 ### 中优先级
 
 | 序号 | 模块 | 问题 | 状态 |
 |------|------|------|------|
-| 4 | OverflowRiskDetector | 乘法溢出检测 | ❌ |
-| 5 | OverflowRiskDetector | 移位溢出检测 | ❌ |
-| 6 | OverflowRiskDetector | 有边界加法检测 | ❌ |
-| 7 | ConditionRelationExtractor | 条件关系提取 | ❌ |
-| 8 | ConditionRelationExtractor | 嵌套/优先级条件 | ❌ |
-| 9 | SignalQuery | 信号查询 | ❌ |
+| 3 | OverflowRiskDetector | 乘法溢出检测 | ❌ |
+| 4 | OverflowRiskDetector | 移位溢出检测 | ❌ |
+| 5 | OverflowRiskDetector | 有边界加法检测 | ❌ |
+| 6 | ConditionRelationExtractor | 条件关系提取 | ❌ |
+| 7 | ConditionRelationExtractor | 嵌套/优先级条件 | ❌ |
+| 8 | SignalQuery | 信号查询 | ❌ |
 
 
 ### 提交 9dbd53c (2026-04-25)
