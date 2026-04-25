@@ -24,7 +24,7 @@ def test_case(name, code, signal, expect_driver=True, expect_load=False):
         drivers = driver_tracer.find_driver(signal)
         print(f"Drivers found: {len(drivers)}")
         for d in drivers:
-            print(f"  - {d.driver_kind.name}: {d.source_expr[:30] if d.source_expr else '(none)'}")
+            print(f"  - {d.kind.name}: {d.source_expr[:30] if d.source_expr else '(none)'}")
     
     # Load 测试
     if expect_load:
