@@ -187,6 +187,12 @@ class LoadTracer:
             base_name = name.split('[')[0] if '[' in name else name
             if base_name == self._target_signal:
                 self._add_load(str(expr), expr)
+            # Don't return here - may need to handle parent expressions
+        
+        # ParenthesizedExpression - recurse into inner expression
+        if 'Parenthesized' in kind_str:
+            if hasattr(expr, 'inner') and expr.inner:
+                self._check_expr_for_load(expr.inner)
             return
         
         # ElementSelect (array[i]) - extract base name and check
