@@ -148,6 +148,18 @@
 5. **InvocationExpression.arguments**: 是 ArgumentListSyntax
 6. **解析器**: 需要保存源代码供文本分析
 
+
+## 最新修复 (2026-04-25 15:xx)
+
+### overflow_checked 修复
+- 问题：拼接赋值 `{overflow, sum} = a + b` 被跳过
+- 解决：检测 concat 模式并标记为 "PROTECTED"
+- 需要在 _check_overflow 中添加 concat 处理
+
+### Source Preservation
+- SVParser.get_source() 保存原始代码
+- 解决临时文件解析后的代码获取问题
+
 ## 架构改进 (ADR-019)
 
 ### 问题
