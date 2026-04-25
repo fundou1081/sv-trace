@@ -108,6 +108,37 @@ class OverflowRiskDetector:
                         target = match.group(1)
                         expr = match.group(2)
                         assignments.append((target, expr))
+                continue
+
+            # Multiplication
+            mul_match = re.search(r"(\w+)\s*=\s*(\w+)\s*\*\s*(\w+)", line)
+            if mul_match:
+                target = mul_match.group(1)
+                expr = mul_match.group(2) + " * " + mul_match.group(3)
+                assignments.append((target, expr, "mul"))
+                continue
+
+            # Left shift
+            shl_match = re.search(r"(\w+)\s*=\s*(\w+)\s*<<\s*(\w+)", line)
+            if shl_match:
+                target = shl_match.group(1)
+                expr = shl_match.group(2) + " << " + shl_match.group(3)
+                assignments.append((target, expr, "shl"))
+                continue
+
+        # Multiplication: result = a * b
+        mul_match = re.search(r"(w+)\s*=\s*(w+)\s*\*\s*(w+)", line)
+        if mul_match:
+            target = mul_match.group(1)
+            expr = mul_match.group(2) + " * " + mul_match.group(3)
+            assignments.append((target, expr, "mul"))
+
+        # Left shift: result = a << b
+        shl_match = re.search(r"(w+)\s*=\s*(w+)\s*<<\s*(w+)", line)
+        if shl_match:
+            target = shl_match.group(1)
+            expr = shl_match.group(2) + " << " + shl_match.group(3)
+            assignments.append((target, expr, "shl"))
         
         return assignments
     

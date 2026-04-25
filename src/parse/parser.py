@@ -20,10 +20,23 @@ class SVParser:
         if filepath in self.trees:
             return self.trees[filepath]
         
+        # Read and save source
+        with open(filepath) as f:
+            source = f.read()
+        
         tree = pyslang.SyntaxTree.fromFile(filepath)
         self.compilation.addSyntaxTree(tree)
         self.trees[filepath] = tree
+        self.sources[filepath] = source
         return tree
+    
+    def get_source(self, filepath: str) -> str:
+        """Get saved source code"""
+        if filepath in self.sources:
+            return self.sources[filepath]
+        if filepath in self.trees:
+            return str(self.trees[filepath])
+        return ""
     
     def parse_text(self, code: str, filename: str = "<text>") -> pyslang.SyntaxTree:
         """解析代码文本"""
