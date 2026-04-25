@@ -105,6 +105,27 @@ class MultiDriverDetector:
                                         except TypeError:
                                             pass
         
+        # 也从连续赋值中收集信号 (隐式 wire)
+        for tree in self.parser.trees.values():
+            if not tree or not hasattr(tree, 'root'):
+                continue
+            root = tree.root
+            if hasattr(root, 'members'):
+                for i in range(len(root.members)):
+                    member = root.members[i]
+                    if 'ModuleDeclaration' in str(type(member)):
+                        if hasattr(member, 'members'):
+                            for j in range(len(member.members)):
+                                mm = member.members[j]
+                                # ContinuousAssign
+                                if 'ContinuousAssign' in str(type(mm)):
+                                    if hasattr(mm, 'assignments') and mm.assignments:
+                                        for a in mm.assignments:
+                                            if hasattr(a, 'left') and a.left:
+                                                name = str(a.left).strip()
+                                                if name:
+                                                    all_signals.add(name)
+        
         for sig in all_signals:
             issues = self.detect(sig)
             if issues:

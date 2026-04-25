@@ -196,13 +196,13 @@ class LoadTracer:
             return
         
         # Conditional expression (?:)
-        if 'Conditional' in kind_str or 'Ternary' in kind_str:
-            if hasattr(expr, 'condition') and expr.condition:
-                self._check_expr_for_load(expr.condition)
-            if hasattr(expr, 'whenTrue') and expr.whenTrue:
-                self._check_expr_for_load(expr.whenTrue)
-            if hasattr(expr, 'whenFalse') and expr.whenFalse:
-                self._check_expr_for_load(expr.whenFalse)
+        if 'Conditional' in kind_str:
+            if hasattr(expr, 'predicate') and expr.predicate:
+                self._check_expr_for_load(expr.predicate)
+            if hasattr(expr, 'left') and expr.left:
+                self._check_expr_for_load(expr.left)
+            if hasattr(expr, 'right') and expr.right:
+                self._check_expr_for_load(expr.right)
             return
         
         # Function call - check arguments
