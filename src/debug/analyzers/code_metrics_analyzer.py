@@ -25,6 +25,7 @@ class ComputationStats:
     and_count: int = 0
     or_count: int = 0
     not_count: int = 0
+    double_not_count: int = 0  # 双重否定 !!
     add_count: int = 0
     sub_count: int = 0
     mul_count: int = 0
@@ -117,6 +118,8 @@ class CodeMetricsAnalyzer:
         stats.and_count = content.count('&')
         stats.or_count = content.count('|')
         stats.not_count = content.count('!')
+        # 双重否定 !! - 通常应该简化
+        stats.double_not_count = len(re.findall(r'!!', content))
         stats.add_count = content.count('+')
         stats.sub_count = content.count('-')
         stats.mul_count = content.count('*')
@@ -207,6 +210,9 @@ class CodeMetricsAnalyzer:
     
     def _generate_suggestions(self, control, computation, structure, reusability, maintainability) -> List[str]:
         suggestions = []
+        
+        if computation.double_not_count > 0:
+            suggestions.append(f"存在{computation.double_not_count}处双重否定!!, 可简化")
         
         if computation.mul_count > computation.add_count * 2:
             suggestions.append(f"乘法使用过多({computation.mul_count}次)")
