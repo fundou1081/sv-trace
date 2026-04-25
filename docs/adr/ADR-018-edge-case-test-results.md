@@ -33,7 +33,7 @@
 | LoadTracer | 6 | 2 | 75% |
 | DependencyAnalyzer | 8 | 0 | 100% |
 | Debug Analyzers | 7 | 1 | 87% |
-| Query Modules | 1 | 7 | 12% |
+| Query Modules | 2 | 6 | 25% |
 
 ## 已修复问题 (按提交)
 
@@ -132,6 +132,14 @@
   - 函数调用处理：使用正则表达式从函数调用表达式中提取标识符
   - 跳过 SystemVerilog 关键字
   - 简单有效的方法来追踪函数参数
+
+
+### 提交 fcfa6df (2026-04-25)
+- **SignalQuery.find_signal**:
+  - 重写以适配 pyslang AST
+  - 从 root.members 遍历找 ModuleDeclaration
+  - 从 DataDeclaration.declarators 提取信号名
+  - 正确返回 Signal dataclass 实例
 
 ## 引用
 - `docs/EDGE_CASE_RESULTS_V2.md` - 详细测试结果
