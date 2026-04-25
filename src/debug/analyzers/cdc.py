@@ -1,251 +1,200 @@
 """
-CDCAnalyzer - 基于信号关系的 CDC 分析器
+CDCAnalyzer - 增强版CDC分析器 v4
+核心: 使用DriverCollector.get_all_signals()获取信号列表
 """
+
 import sys
 import os
 import re
-from typing import Dict, List
+from typing import Dict, List, Set, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
+from trace.driver import DriverCollector
+
 
 class CDCIssueType(Enum):
-    UNPROTECTED_CROSSING = "unprotected_crossing"
-    MULTI_BIT_WITHOUT_HANDSHAKE = "multi_bit_without_handshake"
+    """CDC问题类型"""
+    MULTI_DRIVER_CONFLICT = "multi_driver_conflict"
+    MULTI_CLOCK_DOMAIN = "multi_clock_domain"
+    MULTI_BIT_CROSSING = "multi_bit_crossing"
+    METASTABILITY_RISK = "metastability_risk"
+    ASYNC_CROSSING = "async_crossing"
 
 
-class ProtectionType(Enum):
-    NONE = "none"
-    TWO_FF_SYNC = "two_ff_synchronizer"
-    HANDSHAKE = "handshake"
-    FIFO = "fifo"
-    GRAY_CODE = "gray_code"
+class Severity(Enum):
+    """严重性等级"""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    INFO = "info"
 
 
 @dataclass
 class CDCIssue:
+    """CDC问题"""
     signal: str
-    from_domain: str
-    to_domain: str
     issue_type: CDCIssueType
-    severity: str
+    severity: Severity
     description: str
-    mitigation: str
+    affected_signals: List[str] = field(default_factory=list)
+    mitigation: str = ""
+    line_numbers: List[int] = field(default_factory=list)
+    clock_domains: List[str] = field(default_factory=list)
+    driver_count: int = 0
 
 
-@dataclass  
-class CrossingResult:
-    signal: str
-    from_clock: str
-    to_clock: str
-    has_protection: bool
-    protection_type: ProtectionType
-
-
-class SignalCDCAnalyzer:
-    """基于信号的 CDC 分析"""
-    
-    def __init__(self, parser):
-        self.parser = parser
-        self._clock_map = {}  # always_ff block -> clock
-        self._signal_drivers = {}  # signal -> list of clocks
-        self._signal_loads = {}  # signal -> list of clocks
-        self._collect_clock_info()
-    
-    def _collect_clock_info(self):
-        """收集时钟信息"""
-        for tree in self.parser.trees.values():
-            if not tree or not hasattr(tree, 'root'):
-                continue
-            
-            root = tree.root
-            if not hasattr(root, 'members'):
-                continue
-            
-            for i in range(len(root.members)):
-                member = root.members[i]
-                if 'ModuleDeclaration' not in str(type(member)):
-                    continue
-                
-                if not hasattr(member, 'members'):
-                    continue
-                
-                for j in range(len(member.members)):
-                    mm = member.members[j]
-                    
-                    if 'ProceduralBlock' in str(type(mm)):
-                        if hasattr(mm, 'statement'):
-                            stmt_str = str(mm.statement)
-                            
-                            # 提取时钟
-                            match = re.search(r'@(posedge|negedge)\s+(\w+)', stmt_str)
-                            if match:
-                                clock = match.group(1)
-                                
-                                # 提取被驱动的信号
-                                signals = self._extract_signals_from_stmt(mm.statement)
-                                for sig in signals:
-                                    if sig not in self._signal_drivers:
-                                        self._signal_drivers[sig] = []
-                                    self._signal_drivers[sig].append(clock)
-    
-    def _extract_signals_from_stmt(self, stmt) -> List[str]:
-        signals = []
-        
-        if not stmt:
-            return signals
-        
-        stmt_str = str(stmt)
-        
-        # 简单的正则匹配赋值语句中的左侧
-        # 匹配: signal <= expression 或 signal = expression
-        for match in re.finditer(r'(\w+(?:\[\d+:\d+\])?)\s*(?:<=|=)', stmt_str):
-            signals.append(match.group(1))
-        
-        return signals
-    
-    def analyze(self) -> Dict:
-        """分析 CDC"""
-        # 简化：直接分析跨域信号
-        # 跨域 = 一个时钟域的信号被另一个时钟域使用
-        
-        crossings = []
-        issues = []
-        
-        for signal, clocks in self._signal_drivers.items():
-            if not clocks:
-                continue
-            
-            # 简化：假设信号在被驱动的时钟域内使用
-            # 实际的跨域需要更复杂的分析
-            
-            # 这里做一个简化假设：如果信号在不同 always_ff 中被驱动，
-            # 则认为是跨域
-        
-        # 基于实际 always_ff 块来检测跨域
-        all_always_ff = self._get_all_always_ff()
-        
-        for i, (clock1, signals1) in enumerate(all_always_ff):
-            for j, (clock2, signals2) in enumerate(all_always_ff):
-                if i >= j:
-                    continue
-                
-                # 检查是否有跨域
-                for sig in signals1:
-                    if sig in signals2:
-                        # signal 被两个不同时钟域驱动 -> 多驱动问题
-                        # 或者 signal 在 clock1 驱动，被 clock2 使用 -> 跨域
-                        
-                        # 这里简化：认为是从 clock1 到 clock2 的跨域
-                        protection = self._check_protection(sig)
-                        
-                        if protection == ProtectionType.NONE:
-                            is_multi = '[' in sig or len(sig) > 3
-                            issues.append(CDCIssue(
-                                signal=sig,
-                                from_domain=clock1,
-                                to_domain=clock2,
-                                issue_type=CDCIssueType.MULTI_BIT_WITHOUT_HANDSHAKE if is_multi else CDCIssueType.UNPROTECTED_CROSSING,
-                                severity="high",
-                                description=f"Signal {sig} crosses from {clock1} to {clock2} without synchronizer",
-                                mitigation="Add 2-FF synchronizer"
-                            ))
-                        
-                        crossings.append(CrossingResult(
-                            signal=sig,
-                            from_clock=clock1,
-                            to_clock=clock2,
-                            has_protection=protection != ProtectionType.NONE,
-                            protection_type=protection
-                        ))
-        
-        return {
-            "issues": issues,
-            "crossings": crossings,
-            "statistics": {
-                "total_crossings": len(crossings),
-                "protected": sum(1 for c in crossings if c.has_protection),
-                "unprotected": sum(1 for c in crossings if not c.has_protection),
-                "high_severity": len(issues)
-            }
-        }
-    
-    def _get_all_always_ff(self) -> List[tuple]:
-        """获取所有 always_ff 块"""
-        result = []
-        
-        for tree in self.parser.trees.values():
-            if not tree or not hasattr(tree, 'root'):
-                continue
-            
-            root = tree.root
-            if not hasattr(root, 'members'):
-                continue
-            
-            for i in range(len(root.members)):
-                member = root.members[i]
-                if 'ModuleDeclaration' not in str(type(member)):
-                    continue
-                
-                if not hasattr(member, 'members'):
-                    continue
-                
-                for j in range(len(member.members)):
-                    mm = member.members[j]
-                    
-                    if 'ProceduralBlock' in str(type(mm)):
-                        if hasattr(mm, 'statement'):
-                            stmt_str = str(mm.statement)
-                            
-                            if '@(posedge' in stmt_str or '@(negedge' in stmt_str:
-                                match = re.search(r'@(posedge|negedge)\s+(\w+)', stmt_str)
-                                if match:
-                                    clock = match.group(1)
-                                    signals = self._extract_signals_from_stmt(mm.statement)
-                                    if signals:
-                                        result.append((clock, signals))
-        
-        return result
-    
-    def _check_protection(self, signal) -> ProtectionType:
-        sig = signal.lower()
-        
-        if 'sync' in sig:
-            return ProtectionType.TWO_FF_SYNC
-        if 'handshake' in sig or ('req' in sig and 'ack' in sig):
-            return ProtectionType.HANDSHAKE
-        if 'fifo' in sig:
-            return ProtectionType.FIFO
-        if 'gray' in sig or 'grey' in sig:
-            return ProtectionType.GRAY_CODE
-        
-        return ProtectionType.NONE
+@dataclass
+class CDCAutoReport:
+    """CDC自动分析报告"""
+    issues: List[CDCIssue]
+    multi_drivers: Dict[str, List]
+    statistics: Dict
+    recommendations: List[str]
 
 
 class CDCAnalyzer:
+    """增强版CDC分析器"""
+    
     def __init__(self, parser):
         self.parser = parser
-        self._analyzer = SignalCDCAnalyzer(parser)
+        self._driver_collector = DriverCollector(parser)
+        self._issues = []
+        self._multi_drivers = {}
     
-    def analyze(self):
-        result = self._analyzer.analyze()
+    def analyze(self) -> CDCAutoReport:
+        """执行完整CDC分析"""
+        self._issues = []
+        self._multi_drivers = {}
         
-        @dataclass
-        class Report:
-            issues: List
-            crossings: List  
-            statistics: Dict
+        # 获取所有信号
+        all_signals = self._driver_collector.get_all_signals()
         
-        return Report(result["issues"], result["crossings"], result["statistics"])
+        # 分析每个信号的多驱动
+        for sig in all_signals:
+            drivers = self._driver_collector.find_driver(sig)
+            
+            if len(drivers) > 1:
+                self._multi_drivers[sig] = drivers
+                
+                # 统计驱动类型
+                always_ff_count = sum(1 for d in drivers if d.kind.name == 'AlwaysFF')
+                always_comb_count = sum(1 for d in drivers if d.kind.name == 'AlwaysComb')
+                assign_count = sum(1 for d in drivers if d.kind.name == 'Assign')
+                
+                lines = [d.lines[0] if d.lines else 0 for d in drivers]
+                
+                # 生成问题
+                if always_ff_count > 1:
+                    severity = Severity.CRITICAL
+                    issue_type = CDCIssueType.MULTI_DRIVER_CONFLICT
+                    desc = f"Signal '{sig}' driven by {always_ff_count} always_ff blocks"
+                    mitigation = "Use MUX or generate logic to combine drivers from different clock domains"
+                elif always_ff_count > 0 and always_comb_count > 0:
+                    severity = Severity.HIGH
+                    issue_type = CDCIssueType.MULTI_CLOCK_DOMAIN
+                    desc = f"Signal '{sig}' driven by always_ff and always_comb"
+                    mitigation = "Ensure proper clock domain isolation or use one style consistently"
+                elif always_comb_count > 1:
+                    severity = Severity.HIGH
+                    issue_type = CDCIssueType.MULTI_DRIVER_CONFLICT
+                    desc = f"Signal '{sig}' driven by multiple always_comb blocks"
+                    mitigation = "Use single always_comb or move to always_ff with enable"
+                else:
+                    severity = Severity.MEDIUM
+                    issue_type = CDCIssueType.MULTI_DRIVER_CONFLICT
+                    desc = f"Signal '{sig}' has {len(drivers)} drivers"
+                    mitigation = "Review driver compatibility"
+                
+                issue = CDCIssue(
+                    signal=sig,
+                    issue_type=issue_type,
+                    severity=severity,
+                    description=desc,
+                    affected_signals=[sig],
+                    mitigation=mitigation,
+                    line_numbers=lines,
+                    driver_count=len(drivers)
+                )
+                self._issues.append(issue)
+        
+        # 统计
+        stats = {
+            "total_signals_analyzed": len(all_signals),
+            "multi_driver_signals": len(self._multi_drivers),
+            "total_issues": len(self._issues),
+            "critical_issues": sum(1 for i in self._issues if i.severity == Severity.CRITICAL),
+            "high_issues": sum(1 for i in self._issues if i.severity == Severity.HIGH),
+            "medium_issues": sum(1 for i in self._issues if i.severity == Severity.MEDIUM),
+        }
+        
+        # 建议
+        recs = []
+        if stats["critical_issues"] > 0:
+            recs.append(f"CRITICAL: Fix {stats['critical_issues']} signals with multiple always_ff drivers")
+        if stats["high_issues"] > 0:
+            recs.append(f"HIGH: Review {stats['high_issues']} signals with clock domain issues")
+        
+        if not recs:
+            recs.append("No critical CDC issues found")
+        
+        return CDCAutoReport(
+            issues=self._issues,
+            multi_drivers=self._multi_drivers,
+            statistics=stats,
+            recommendations=recs
+        )
     
-    def detect_issues(self):
-        return self._analyzer.analyze()["issues"]
+    def detect_issues(self) -> List[CDCIssue]:
+        """检测CDC问题"""
+        return self.analyze().issues
     
-    def check_crossing(self, signal):
-        result = self._analyzer.analyze()
-        for c in result["crossings"]:
-            if c.signal == signal:
-                return c
-        return None
+    def check_multi_driver(self, signal: str) -> Optional[List]:
+        """检查信号是否多驱动"""
+        report = self.analyze()
+        return report.multi_drivers.get(signal)
+    
+    def print_report(self, report: CDCAutoReport):
+        """打印报告"""
+        print("\n" + "="*60)
+        print("CDC Analysis Report")
+        print("="*60)
+        
+        # 统计
+        print(f"\nStatistics:")
+        for k, v in report.statistics.items():
+            print(f"  {k}: {v}")
+        
+        # 问题
+        if report.issues:
+            print(f"\nIssues ({len(report.issues)}):")
+            for issue in report.issues:
+                print(f"  [{issue.severity.value.upper()}] {issue.signal}")
+                print(f"    {issue.description}")
+                print(f"    Type: {issue.issue_type.value}")
+                print(f"    Drivers: {issue.driver_count}")
+                if issue.mitigation:
+                    print(f"    Fix: {issue.mitigation}")
+                if issue.line_numbers:
+                    print(f"    Lines: {issue.line_numbers}")
+        
+        # 建议
+        if report.recommendations:
+            print(f"\nRecommendations:")
+            for rec in report.recommendations:
+                print(f"  • {rec}")
+        
+        print("\n" + "="*60)
+
+
+# 导出
+__all__ = [
+    'CDCAnalyzer', 
+    'CDCIssue', 
+    'CDCIssueType',
+    'CDCAutoReport',
+    'Severity',
+]
