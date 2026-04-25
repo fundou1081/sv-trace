@@ -193,6 +193,9 @@ class LoadTracer:
         if 'Parenthesized' in kind_str:
             if hasattr(expr, 'inner') and expr.inner:
                 self._check_expr_for_load(expr.inner)
+            # Also check for 'expression' attribute (some pyslang versions)
+            elif hasattr(expr, 'expression') and expr.expression:
+                self._check_expr_for_load(expr.expression)
             return
         
         # ElementSelect (array[i]) - extract base name and check
