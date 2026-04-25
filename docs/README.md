@@ -1,61 +1,82 @@
-# SV-Trace 工具文档
+# SV-TRACE 项目文档
 
-SystemVerilog 时序与CDC分析工具集
+## 文档索引
 
-## 目录
+### 核心文档
+| 文档 | 描述 |
+|------|------|
+| [README.md](./docs/README.md) | 项目总览 |
+| [PROJECT_STRUCTURE.md](./docs/PROJECT_STRUCTURE.md) | 项目结构 |
+| [api_reference.md](./docs/api_reference.md) | API参考 |
 
-### 核心模块
-1. [README](./README.md) - 总览
-2. [API 参考](./api_reference.md) - API 索引
+### 模块文档
+| 文档 | 模块 |
+|------|------|
+| [driver_collector.md](./docs/driver_collector.md) | trace.driver |
+| [load.md](./docs/load.md) | trace.load |
+| [datapath.md](./docs/datapath.md) | trace.datapath |
+| [dependency.md](./docs/dependency.md) | trace.dependency |
+| [connection.md](./docs/connection.md) | trace.connection |
+| [controlflow.md](./docs/controlflow.md) | trace.controlflow |
+| [dataflow.md](./docs/dataflow.md) | trace.dataflow |
+| [flow_analyzer.md](./docs/flow_analyzer.md) | trace.flow_analyzer |
+| [bitselect.md](./docs/bitselect.md) | trace.bitselect |
+| [pipeline_analyzer.md](./docs/pipeline_analyzer.md) | trace.pipeline_analyzer |
+| [timing_depth.md](./docs/timing_depth.md) | trace.timing_depth |
+| [timing_path.md](./docs/timing_path.md) | trace.timing_path |
+| [timing_report.md](./docs/timing_report.md) | trace.timing_report |
+| [visualize.md](./docs/visualize.md) | trace.visualize |
+| [cdc_analyzer.md](./docs/cdc_analyzer.md) | debug.CDCAnalyzer |
 
-### Trace 模块
-- [02_trace_modules](./02_trace_modules.md) - 模块总览
-- [driver_collector](./driver_collector.md) - 驱动收集器
-- [timing_depth](./timing_depth.md) - 时序深度分析
-- [timing_report](./timing_report.md) - 时序报告生成
-- [cdc_analyzer](./cdc_analyzer.md) - CDC分析
-- [bitselect](./bitselect.md) - 位选分析
-- [connection](./connection.md) - 连接追踪
-- [controlflow](./controlflow.md) - 控制流分析
-- [dataflow](./dataflow.md) - 数据流分析
-- [datapath](./datapath.md) - 数据路径分析
-- [dependency](./dependency.md) - 依赖分析
-- [flow_analyzer](./flow_analyzer.md) - 统一信号流
-- [load](./load.md) - 负载追踪
-- [pipeline_analyzer](./pipeline_analyzer.md) - 流水线分析
-- [timing_path](./timing_path.md) - 时序路径提取
-- [visualize](./visualize.md) - 可视化
+### 测试文档
+| 文档 | 描述 |
+|------|------|
+| [MODULE_SUMMARY.md](./docs/MODULE_SUMMARY.md) | 模块汇总 |
+| [MODULE_DETAILS.md](./docs/MODULE_DETAILS.md) | 详细API文档 |
+| [EDGE_CASE_RESULTS_V2.md](./docs/EDGE_CASE_RESULTS_V2.md) | 边界测试结果 |
+
+---
 
 ## 快速开始
 
 ```python
-from parse.parser import SVParser
-from trace.timing_depth import TimingDepthAnalyzer
-from trace.reports import generate_report
+from parse import SVParser
+from trace.driver import DriverCollector
+from trace.load import LoadTracer
+from query.signal import SignalQuery
 
-# 解析文件
+# 解析
 parser = SVParser()
 parser.parse_file('design.sv')
 
-# 时序分析
-analyzer = TimingDepthAnalyzer(parser)
-paths = analyzer.analyze()
-critical = analyzer.find_critical_path()
+# 追踪驱动
+dc = DriverCollector(parser)
+drivers = dc.find_driver('signal_name')
 
-# 生成报告
-generate_report(parser, 'report.html', format='html')
+# 追踪加载
+lt = LoadTracer(parser)
+loads = lt.find_load('signal_name')
+
+# 查询信号
+sq = SignalQuery(parser)
+signal = sq.find_signal('signal_name')
 ```
 
-## 架构
+---
 
-```
-parse.parser (pyslang)
-       ↓
-DriverCollector (driver.py)
-       ↓
-TimingDepthAnalyzer (timing_depth.py)
-       ↓
-┌──────┴──────┐
-↓              ↓
-TimingReport  CDCAnalyzer
-```
+## 测试覆盖
+
+| 测试类型 | 状态 |
+|----------|------|
+| 核心测试 | ✅ 6/6 |
+| 边界测试 | ✅ 38/38 |
+| P1-P3模块 | ✅ 17+ |
+
+---
+
+## 模块统计
+
+- **Trace**: 22 modules
+- **Query**: 13 modules  
+- **Debug**: 21 modules
+- **总计**: 65 source files
