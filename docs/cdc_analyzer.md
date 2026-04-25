@@ -1,132 +1,88 @@
 # CDCAnalyzer - 跨时钟域分析器
 
-## 概述
+## 功能
 
-检测并分析跨时钟域（Clock Domain Crossing）路径，识别潜在风险。
+检测设计中的跨时钟域(CDC)问题
 
-## 什么是 CDC？
+## 支持的问题类型
 
-CDC 是数据从一个时钟域传递到另一个时钟域的现象。
-
-```systemverilog
-// 时钟域 A
-always_ff @(posedge clk_a) begin
-    data_a <= input_data;
-    cdc_data <= data_a;  // CDC 起点
-end
-
-// 时钟域 B  
-always_ff @(posedge clk_b) begin
-    data_b <= cdc_data;  // CDC 终点
-end
-```
+| 类型 | 严重性 | 说明 |
+|------|--------|------|
+| MULTI_DRIVER_CONFLICT | CRITICAL/HIGH | 多驱动冲突 |
+| MULTI_CLOCK_DOMAIN | HIGH | 跨时钟域驱动 |
+| MULTI_BIT_CROSSING | MEDIUM |多位信号跨域 |
+| METASTABILITY_RISK | MEDIUM | 亚稳态风险 |
 
 ## 使用方法
 
 ```python
-from parse.parser import SVParser
-from trace.reports.cdc_analyzer import CDCAnalyzer, analyze_cdc
+from parse import SVParser
+from debug.analyzers.cdc import CDCAnalyzer
 
 parser = SVParser()
-parser.parse_file('multi_clock.sv')
+parser.parse_file('design.sv')
 
-# 方式1: 函数
-report = analyze_cdc(parser)
+cdc = CDCAnalyzer(parser)
+report = cdc.analyze()
 
-# 方式2: 类
-analyzer = CDCAnalyzer(parser)
-report = analyzer.analyze()
+# 打印报告
+cdc.print_report(report)
 
-# 生成文本报告
-print(analyzer.generate_cdc_report_text())
+# 获取问题列表
+issues = cdc.detect_issues()
+
+# 检查特定信号
+drivers = cdc.check_multi_driver('signal_name')
 ```
 
-## 报告结构
+## 检测逻辑
 
-```python
-@dataclass
-class CDCReport:
-    cdc_paths: List[CDCPath]       # CDC 路径列表
-    safe_paths: List[CDCPath]       # 安全路径
-    feedback_paths: List[CDCPath]   # 反馈路径
-    domain_count: int              # 时钟域数量
-    risky_paths: int               # 风险路径数量
-```
+1. **always_ff多驱动** → CRITICAL
+   - 同一信号被多个always_ff块驱动
+   - 建议: 使用MUX或generate逻辑合并驱动
 
-```python
-@dataclass
-class CDCPath:
-    source_domain: str      # 源时钟域
-    dest_domain: str        # 目的时钟域
-    start_reg: str           # 起始寄存器
-    end_reg: str             # 终止寄存器
-    signals: List[str]       # 路径信号
-    timing_depth: int        # 时序深度
-    path_type: str           # cdc / feedback / safe
-    issues: List[str]        # 问题列表
-```
+2. **always_comb多驱动** → HIGH
+   - 同一信号被多个always_comb块驱动
+   - 建议: 使用单个always_comb或移至always_ff
 
-## 路径类型
+3. **always_ff + always_comb混合** → HIGH
+   - 建议: 确保时钟域隔离或统一使用一种风格
 
-| 类型 | 说明 |
-|---|---|
-| `cdc` | 跨时钟域路径 |
-| `feedback` | 跨域反馈路径 |
-| `safe` | 安全路径 |
-
-## 风险检测
-
-CDCAnalyzer 自动检测以下风险：
-
-1. **多周期路径** - `timing_depth > 1`
-2. **组合逻辑** - CDC 路径中包含组合逻辑
-3. **反馈路径** - 跨越时钟域的反馈环路
-
-## 示例
-
-```python
-analyzer = CDCAnalyzer(parser)
-report = analyzer.analyze()
-
-print(f"时钟域数: {report.domain_count}")
-print(f"CDC 路径: {len(report.cdc_paths)}")
-print(f"风险路径: {report.risky_paths}")
-
-for path in report.cdc_paths:
-    print(f"\n{path.source_domain} → {path.dest_domain}")
-    print(f"  路径: {' → '.join(path.signals)}")
-    print(f"  时序深度: {path.timing_depth}")
-    if path.issues:
-        print("  ⚠️ 问题:")
-        for issue in path.issues:
-            print(f"    - {issue}")
-```
-
-## 文本报告格式
+## 输出示例
 
 ```
-================================================================
 CDC Analysis Report
-================================================================
+============================================================
 
-Clock Domains: 2
-CDC Paths: 1
-Risky Paths: 1
-Feedback Paths: 0
+Statistics:
+  total_signals_analyzed: 5
+  multi_driver_signals: 1
+  total_issues: 1
+  critical_issues: 1
+  high_issues: 0
 
-------------------------------------------------------------
-Cross-Clock Domain Paths:
-------------------------------------------------------------
+Issues (1):
+  [CRITICAL] data_out
+    Signal 'data_out' driven by 2 always_ff blocks
+    Type: multi_driver_conflict
+    Drivers: 2
+    Fix: Use MUX or generate logic to combine drivers from different clock domains
+    Lines: [92, 148]
 
-[1] clk_a → clk_b
-    Path: cdc_data → data_b → data_out
-    Timing Depth: 1
-    ⚠️  Issues:
-       - Combinational logic in CDC path
+Recommendations:
+  • CRITICAL: Fix 1 signals with multiple always_ff drivers
 ```
 
-## 注意事项
+## 测试用例
 
-- 需要正确提取时钟信号
-- 支持 `posedge` 和 `negedge`
-- 自动过滤 reset 信号
+| 用例 | 预期结果 |
+|------|----------|
+| 两个always_ff驱动同一信号 | CRITICAL |
+| 两个always_comb驱动同一信号 | HIGH |
+| 单个驱动 | 无问题 |
+
+## 限制
+
+- 暂不支持assign语句的多驱动检测
+- 暂不支持generate语句内的驱动
+- 需要实际运行解析器获取准确的时钟信息
