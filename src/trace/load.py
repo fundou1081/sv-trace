@@ -198,22 +198,23 @@ class LoadTracer:
                 self._check_expr_for_load(expr.expression)
             return
         
-        # InvocationExpression (function call) - recurse into arguments
-        if 'Invocation' in kind_str or 'Call' in kind_str:
-            if hasattr(expr, 'arguments') and expr.arguments:
-                args = expr.arguments
-                # arguments 可能是列表或 ArgumentListSyntax
-                try:
-                    # 尝试找到 SeparatedList
-                    for item in args:
-                        if hasattr(item, '__iter__') and not isinstance(item, str):
-                            for sub_item in item:
-                                if hasattr(sub_item, 'kind') and 'Expression' in str(sub_item.kind):
-                                    self._check_expr_for_load(sub_item)
-                        elif hasattr(item, 'kind') and 'Expression' in str(item.kind):
-                            self._check_expr_for_load(item)
-                except:
-                    pass
+        # InvocationExpression (function call) - extract all identifiers from the expression
+        if 'Invocation' in kind_str:
+            # 将整个表达式转为字符串，提取标识符
+            expr_str = str(expr)
+            # 简单提取所有单词作为潜在标识符
+            import re
+            identifiers = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', expr_str)
+            for ident in identifiers:
+                # 跳过关键字
+                if ident in ('module', 'endmodule', 'function', 'endfunction', 'input', 'output', 
+                            'logic', 'reg', 'wire', 'always', 'begin', 'end', 'if', 'else', 
+                            'case', 'endcase', 'for', 'while', 'return', 'posedge', 'negedge',
+                            'assign', 'parameter', 'localparam', 'genvar', 'signed', 'unsigned'):
+                    continue
+                # 检查是否是目标信号
+                if ident == self._target_signal:
+                    self._add_load(ident, expr)
             return
         
         # ElementSelect (array[i]) - extract base name and check
