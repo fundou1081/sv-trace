@@ -124,34 +124,41 @@ class OverflowRiskDetector:
         
         # 检查是否是溢出风险类型
         
-        # 1. data = data + 1 (无检查的累加)
-        if re.search(r'[\w]+\s*\+\s*1\b', expr) and 'if' not in expr:
-            return OverflowRisk(
-                signal=signal,
-                expression=expr,
-                risk_level='HIGH',
-                description='Unchecked increment (data+1), may overflow',
-                suggestion='Add overflow check or use saturating counter'
-            )
-        
-        # 2. data = data + addend (无边界检查)
-        if re.search(r'[\w]+\s*\+\s*\w+', expr) and 'if' not in expr and '{' not in expr:
+        # 只检查特定类型
+        if ptype == 'add':
             return OverflowRisk(
                 signal=signal,
                 expression=expr,
                 risk_level='MEDIUM',
                 description='Unchecked addition, may overflow at boundary',
-                suggestion='Add boundary check or condition for overflow'
+                suggestion='Add boundary check'
             )
         
-        # 3. data = data - 1 (无检查的递减)
-        if re.search(r'[\w]+\s*-\s*1\b', expr) and 'if' not in expr:
+        if ptype == 'sub':
             return OverflowRisk(
                 signal=signal,
                 expression=expr,
-                risk_level='HIGH',
+                risk_level='MEDIUM',
                 description='Unchecked decrement, may underflow',
                 suggestion='Add underflow check'
+            )
+        
+        if ptype == 'mul':
+            return OverflowRisk(
+                signal=signal,
+                expression=expr,
+                risk_level='MEDIUM',
+                description='Multiplication may overflow',
+                suggestion='Use result = {{a}} * {{b}} for full width'
+            )
+        
+        if ptype == 'shl':
+            return OverflowRisk(
+                signal=signal,
+                expression=expr,
+                risk_level='MEDIUM',
+                description='Left shift may overflow',
+                suggestion='Add bounds check on shift amount'
             )
         
         return None
