@@ -18,41 +18,58 @@ class SignalQuery:
         self.param_resolver = ParameterResolver(parser)
     
     def find_signal(self, name: str, module_name: str = None) -> Optional[Signal]:
+        """查找信号"""
+        from core.models import Signal
+        
+        # 遍历所有解析的树
         for key, tree in self.parser.trees.items():
             if not tree or not hasattr(tree, 'root') or not tree.root:
                 continue
             
             root = tree.root
             
-            if 'ModuleDeclaration' not in str(type(root)):
+            # root 是 CompilationUnit，需要从 members 找 ModuleDeclaration
+            if not hasattr(root, 'members'):
                 continue
             
-            header = getattr(root, 'header', None)
-            mod_name = ""
-            if header:
-                name_attr = getattr(header, 'name', None)
-                if name_attr:
-                    mod_name = name_attr.value
-            
-            if module_name and mod_name != module_name:
-                continue
-            
-            # 在 ports 中查找
-            if header and hasattr(header, 'ports') and header.ports:
-                for port in header.ports.ports:
-                    port_name = str(port)
-                    # 提取信号名
-                    match = re.search(r'(\w+)\s*$', port_name)
-                    if match and match.group(1) == name:
-                        return self._port_to_signal(port_name)
-            
-            # 在 body 中查找
-            if hasattr(root, 'body') and root.body:
-                for member in root.body:
-                    sig = self._find_in_member(member, name)
-                    if sig:
-                        return sig
+            for i in range(len(root.members)):
+                member = root.members[i]
+                if 'ModuleDeclaration' not in str(type(member)):
+                    continue
+                
+                # 获取模块名
+                header = getattr(member, 'header', None)
+                mod_name = ""
+                if header:
+                    name_attr = getattr(header, 'name', None)
+                    if name_attr:
+                        try:
+                            mod_name = name_attr.value
+                        except:
+                            mod_name = str(name_attr)
+                
+                if module_name and mod_name != module_name:
+                    continue
+                
+                # 在模块的 members 中查找信号声明
+                if hasattr(member, 'members'):
+                    for j in range(len(member.members)):
+                        body_member = member.members[j]
+                        
+                        # 检查是否是 DataDeclaration
+                        if 'DataDeclaration' in str(type(body_member)):
+                            declarators = getattr(body_member, 'declarators', None)
+                            if declarators:
+                                try:
+                                    for decl in declarators:
+                                        if hasattr(decl, 'name'):
+                                            decl_name = str(decl.name).strip()
+                                            if decl_name == name:
+                                                return Signal(name=name, module=mod_name, width=1)
+                                except:
+                                    pass
         
+        # 没找到
         return None
     
     def _port_to_signal(self, port_str: str) -> Signal:
