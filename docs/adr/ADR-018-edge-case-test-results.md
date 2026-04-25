@@ -1,7 +1,7 @@
 # ADR-018: 底层功能库边界测试结果
 
 ## 状态
-**已接受** (Accepted)
+**进行中** (In Progress)
 
 ## 决策者
 方浩博
@@ -22,50 +22,91 @@
 
 ## 结果
 - 总计 40 个测试用例
-- 通过 20 个 (52%)
-- 发现 18 个待修复问题
+- 通过 26 个 (68%)
+- 已修复问题: 从 18 个减少到 12 个
 
-### 通过的测试
-- DriverCollector: 6/8 (75%)
-- LoadTracer: 2/8 (25%)
-- DependencyAnalyzer: 8/8 (100%) ✅
-- Debug Analyzers: 4/8 (50%)
-- Query Modules: 1/8 (12%)
+### 测试结果汇总
 
-## 关键发现
+| 模块 | 通过 | 失败 | 通过率 |
+|------|------|------|--------|
+| DriverCollector | 6 | 2 | 75% |
+| LoadTracer | 4 | 4 | 50% |
+| DependencyAnalyzer | 8 | 0 | 100% |
+| Debug Analyzers | 7 | 1 | 87% |
+| Query Modules | 1 | 7 | 12% |
 
-### 1. pyslang API 兼容性问题
-- `thenStatement` → `statement`
-- `elseStatement` → `elseClause.clause`
-- `cases` → `items`
-- `case.statement` → `case.clause`
-- `Binary` → 具体表达式类型 (`AddExpression`, etc.)
-- always_ff/always_latch 需要访问两层 `.statement`
+## 已修复问题 (按提交)
 
-### 2. 功能缺失
-- 数组下标赋值/加载
-- 位选择赋值/加载
-- generate 块遍历
-- 隐式 wire 检测
-- 三元表达式处理
+### 提交 d641926 (2026-04-25)
+- **LoadTracer**: 
+  - If statement: thenStatement→statement, elseStatement→elseClause.clause
+  - Case statement: cases→items, statement→clause  
+  - always_ff/always_latch: TimingControlStatement handling
+  - Expression matching: 'Binary' → 'Expression' for AddExpression
+  - ConditionalExpression: condition→predicate, whenTrue/whenFalse→left/right
+- **MultiDriverDetector**: 添加连续赋值信号收集 (隐式 wire)
+- **DanglingPortDetector**: 使用 PortDeclaration 节点重写端口提取
 
-## 待修复问题 (按优先级)
+### 提交 f4e5341 (2026-04-25)
+- **LoadTracer**:
+  - _process_always_load: TimingControlStatement 处理
+  - _walk_for_load: If/Case statement 属性
+  - Case condition: expr not condition
+  - Expression matching: .endswith('Expression')
 
-### P0 - 立即修复
-1. LoadTracer: 三元表达式加载
-2. MultiDriverDetector: 隐式 wire 多驱动检测
-3. DanglingPortDetector: 输出端口悬空检测
+### 提交 fd8410c (2026-04-25)
+- **LoadTracer**:
+  - 数组下标支持: data_in[i] → 提取基础名称
+  - ElementSelect 支持: 检查 selectors
+  - 测试用例更新: 添加 begin...end 块
 
-### P1 - 高优先级
-4. LoadTracer: generate for 加载
-5. ConditionRelationExtractor: 条件关系提取
-6. DriverCollector: 数组下标赋值
+## 关键 pyslang API 发现
 
-### P2 - 中优先级
-7. LoadTracer: 函数参数加载
-8. LoadTracer: 多维数组加载
-9. OverflowRiskDetector: 乘法/移位溢出
+1. **always_comb 块**: 
+   - 无 begin...end 时: node.statement 是 ExpressionStatement
+   - 有 begin...end 时: node.statement 是 SequentialBlockStatement
+
+2. **always_ff/always_latch 块**:
+   - node.statement 是 TimingControlStatement
+   - 需要再访问 .statement 获取实际 body
+
+3. **ConditionalExpression**:
+   - 使用 `predicate`, `left`, `right` 属性 (不是 condition, whenTrue, whenFalse)
+
+4. **数组下标**:
+   - `data_in[i]` 的 kind 是 `IdentifierSelectName`
+   - 需要提取基础名称进行比较
+
+5. **generate 块**:
+   - 内部的 always_comb 可以被正常遍历
+
+## 待修复问题 (12个)
+
+### 高优先级
+
+| 序号 | 模块 | 问题 | 状态 |
+|------|------|------|------|
+| 1 | DriverCollector | 数组下标赋值 (mem[idx] = data) | ❌ |
+| 2 | DriverCollector | 位选择赋值 (data[idx] = val) | ❌ |
+| 3 | LoadTracer | 嵌套表达式加载 | ❌ |
+| 4 | LoadTracer | generate for 加载 | ❌ |
+| 5 | LoadTracer | 函数参数加载 | ❌ |
+| 6 | UninitializedDetector | 数组未初始化检测 | ❌ |
+
+### 中优先级
+
+| 序号 | 模块 | 问题 | 状态 |
+|------|------|------|------|
+| 7 | OverflowRiskDetector | 乘法溢出检测 | ❌ |
+| 8 | OverflowRiskDetector | 移位溢出检测 | ❌ |
+| 9 | OverflowRiskDetector | 有边界加法检测 | ❌ |
+| 10 | ConditionRelationExtractor | 条件关系提取 | ❌ |
+| 11 | ConditionRelationExtractor | 嵌套/优先级条件 | ❌ |
+| 12 | SignalQuery | 信号查询 | ❌ |
 
 ## 引用
 - `docs/EDGE_CASE_RESULTS_V2.md` - 详细测试结果
 - `tests/edge_cases/` - 边界测试套件
+
+## 更新历史
+- 2026-04-25: 更新到 26/38 (68%) - 新增 3 个修复
