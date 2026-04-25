@@ -23,7 +23,7 @@
 ## 结果
 - 总计 40 个测试用例
 - 通过 31 个 (82%)
-- 已修复问题: 从 18 个减少到 7 个
+- 已修复问题: 从 18 个减少到 6 个
 
 ### 测试结果汇总
 
@@ -125,6 +125,13 @@
   - func_param 现在可以追踪函数参数
 
 **pyslang 发现**: InvocationExpression.arguments 是 ArgumentListSyntax，需要遍历 SeparatedList 获取实际参数
+
+
+### 提交 6cfe478 (2026-04-25)
+- **LoadTracer**:
+  - 函数调用处理：使用正则表达式从函数调用表达式中提取标识符
+  - 跳过 SystemVerilog 关键字
+  - 简单有效的方法来追踪函数参数
 
 ## 引用
 - `docs/EDGE_CASE_RESULTS_V2.md` - 详细测试结果
