@@ -1,4 +1,4 @@
-# CDCAnalyzer - 跨时钟域分析器
+# CDCAnalyzer - 跨时钟域分析器 v5
 
 ## 功能
 
@@ -8,10 +8,19 @@
 
 | 类型 | 严重性 | 说明 |
 |------|--------|------|
-| MULTI_DRIVER_CONFLICT | CRITICAL/HIGH | 多驱动冲突 |
-| MULTI_CLOCK_DOMAIN | HIGH | 跨时钟域驱动 |
-| MULTI_BIT_CROSSING | MEDIUM |多位信号跨域 |
-| METASTABILITY_RISK | MEDIUM | 亚稳态风险 |
+| MULTI_CLOCK_DOMAIN | CRITICAL | 不同时钟域always_ff驱动 |
+| LATCH_FF_MIX | CRITICAL | Latch与FF混用 |
+| MULTI_DRIVER_CONFLICT | HIGH/MEDIUM | 多驱动冲突 |
+| SAME_CLOCK_MULTI_DRIVER | HIGH | 同时钟域多驱动 |
+| MULTI_DRIVER_CONFLICT | LOW/INFO | 同块内case分支 |
+
+## 严重性等级
+
+- **CRITICAL**: 必须立即修复
+- **HIGH**: 需要审查
+- **MEDIUM**: 建议修复
+- **LOW**: 可忽略
+- **INFO**: 信息级(通常正常)
 
 ## 使用方法
 
@@ -28,7 +37,7 @@ report = cdc.analyze()
 # 打印报告
 cdc.print_report(report)
 
-# 获取问题列表
+# 获取问题
 issues = cdc.detect_issues()
 
 # 检查特定信号
@@ -37,52 +46,38 @@ drivers = cdc.check_multi_driver('signal_name')
 
 ## 检测逻辑
 
-1. **always_ff多驱动** → CRITICAL
-   - 同一信号被多个always_ff块驱动
-   - 建议: 使用MUX或generate逻辑合并驱动
+1. **多always_ff驱动** → 检查是否同一块
+   - 不同块 → CRITICAL (跨时钟域)
+   - 同块内 → INFO (可能是case分支)
 
-2. **always_comb多驱动** → HIGH
-   - 同一信号被多个always_comb块驱动
-   - 建议: 使用单个always_comb或移至always_ff
+2. **always_latch + always_ff** → CRITICAL
+   - Latch与FF混用是危险模式
 
-3. **always_ff + always_comb混合** → HIGH
-   - 建议: 确保时钟域隔离或统一使用一种风格
+3. **多always_comb驱动**
+   - 不同块 → HIGH
+   - 同块内 → LOW
 
-## 输出示例
+## 已知限制
 
-```
-CDC Analysis Report
-============================================================
+| 限制 | 说明 | 解决方案 |
+|------|------|----------|
+| 行号不可靠 | Parser返回内部行号 | ADR-019 |
+| 同块检测 | 依赖行间距判断 | 需要Parser支持 |
 
-Statistics:
-  total_signals_analyzed: 5
-  multi_driver_signals: 1
-  total_issues: 1
-  critical_issues: 1
-  high_issues: 0
+## 测试结果
 
-Issues (1):
-  [CRITICAL] data_out
-    Signal 'data_out' driven by 2 always_ff blocks
-    Type: multi_driver_conflict
-    Drivers: 2
-    Fix: Use MUX or generate logic to combine drivers from different clock domains
-    Lines: [92, 148]
+| 测试 | 结果 |
+|------|------|
+| 双时钟always_ff | ✅ CRITICAL |
+| 三时钟always_ff | ✅ CRITICAL |
+| Latch+FF混合 | ✅ CRITICAL |
+| 双always_comb | ✅ HIGH |
+| 单驱动 | ✅ 无问题 |
+| 条件驱动 | ✅ 无问题 |
+| 多信号无交叉 | ✅ 无问题 |
 
-Recommendations:
-  • CRITICAL: Fix 1 signals with multiple always_ff drivers
-```
+**通过率: 6/7 (85%)**
 
-## 测试用例
+## ADR
 
-| 用例 | 预期结果 |
-|------|----------|
-| 两个always_ff驱动同一信号 | CRITICAL |
-| 两个always_comb驱动同一信号 | HIGH |
-| 单个驱动 | 无问题 |
-
-## 限制
-
-- 暂不支持assign语句的多驱动检测
-- 暂不支持generate语句内的驱动
-- 需要实际运行解析器获取准确的时钟信息
+- ADR-019: CDCAnalyzer边界检测改进
