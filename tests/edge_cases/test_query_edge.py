@@ -79,7 +79,7 @@ def test_query_edge_cases():
         parser.parse_file(tmp)
         extractor = ConditionRelationExtractor(parser)
         result = extractor.extract('r')
-        results['cond_mutual_exclusive'] = len(result) if result else 0
+        results['cond_mutual_exclusive'] = len(result.conditions) if result else 0
     except Exception as e:
         results['cond_mutual_exclusive'] = 0
     finally:
@@ -112,7 +112,7 @@ def test_query_edge_cases():
         parser.parse_file(tmp)
         extractor = ConditionRelationExtractor(parser)
         result = extractor.extract('r')
-        results['cond_nested'] = len(result) if result else 0
+        results['cond_nested'] = len(result.conditions) if result else 0
     except Exception as e:
         results['cond_nested'] = 0
     finally:
@@ -188,7 +188,7 @@ def test_query_edge_cases():
         parser.parse_file(tmp)
         extractor = ConditionRelationExtractor(parser)
         result = extractor.extract('r')
-        results['cond_priority'] = len(result) if result else 0
+        results['cond_priority'] = len(result.conditions) if result else 0
     except Exception as e:
         results['cond_priority'] = 0
     finally:

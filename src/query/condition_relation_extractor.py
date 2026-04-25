@@ -77,8 +77,8 @@ class ConditionRelationExtractor:
             # 查找信号的所有赋值语句
             assignments = self._find_assignments(code, signal)
             
-            # 提取条件
-            conditions = self._extract_conditions(assignments)
+            # 提取条件 (pass full code for case value extraction)
+            conditions = self._extract_conditions(assignments, code)
             result.conditions.extend(conditions)
         
         # 生成cross bins
@@ -103,13 +103,23 @@ class ConditionRelationExtractor:
         
         return assignments
     
-    def _extract_conditions(self, assignments: List[str]) -> List[Condition]:
+    def _extract_conditions(self, assignments: List[str], full_code: str = None) -> List[Condition]:
         """提取条件"""
         
         conditions = []
         
         for assign in assignments:
-            cond = Condition(type="assignment", condition=assign.strip())
+            assign = assign.strip()
+            
+            # Skip if assign looks like a literal (number)
+            if assign.isdigit() or assign.isnumeric():
+                # This is a simple assignment value
+                # Create condition from it
+                cond = Condition(type="literal", condition=assign)
+                conditions.append(cond)
+                continue
+            
+            cond = Condition(type="assignment", condition=assign)
             
             # 查找if条件
             if 'if' in assign:
@@ -126,14 +136,24 @@ class ConditionRelationExtractor:
                     cond = Condition(type="else if", condition=elif_match.group(1).strip())
                     conditions.append(cond)
             
-            # 查找case/else
-            if 'case' in assign:
-                cond.type = "case"
-                # 简化: 提取所有值
-                values = re.findall(r'\d+', assign)
-                if values:
-                    cond.value = ','.join(set(values))
-                conditions.append(cond)
+            # For case statements, extract the case expression
+            if full_code and 'case' in full_code:
+                # Extract case values
+                case_values = re.findall(r"2'b(\d+)", full_code)
+                if case_values:
+                    # Create condition for each case value
+                    for cv in set(case_values):
+                        cond = Condition(type="case", condition=f"2'b{cv}")
+                        cond.value = cv
+                        conditions.append(cond)
+            
+            # For nested ifs, extract conditions from full_code
+            if full_code and 'if' in full_code:
+                if_conditions = re.findall(r'if\s*\(\s*(\w+)\s*\)', full_code)
+                for ic in if_conditions:
+                    if ic and ic != 'else':
+                        cond = Condition(type="if", condition=ic)
+                        conditions.append(cond)
         
         return conditions
     
@@ -163,6 +183,12 @@ class ConditionRelationExtractor:
         return bins[:20]
     
     def _get_code(self, fname: str) -> str:
+        # Use parser's get_source method if available
+        if hasattr(self.parser, 'get_source'):
+            source = self.parser.get_source(fname)
+            if source:
+                return source
+        
         if fname in self.parser.trees:
             t = self.parser.trees[fname]
             if hasattr(t, 'source'):
