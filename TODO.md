@@ -212,3 +212,60 @@ days = hours / 24
 ---
 
 *最后更新: 2026-04-25*
+
+---
+
+## FSM状态机分析 (TODO)
+
+### 深度分析指标
+
+| 指标 | 检测方法 | 状态 |
+|------|--------|------|
+| 状态数量 | typedef enum解析 | ✅ 基础 |
+| 跳转条件 | case语句分析 | ✅ 基础 |
+| 节点度 | in/out degree | ✅ 基础 |
+| 环检测 | DFS环路检测 | ⚠️ 需增强 |
+| FSM复杂度 | 状态×跳转 | TODO |
+| 不可达状态 | 可达性分析 | TODO |
+| 死锁检测 | 无出口环 | TODO |
+
+### FSM复杂度模型
+
+```python
+# 复杂度 = 状态数 × 平均跳转数
+complexity = state_count * avg_transitions_per_state
+
+# 安全阈值
+SAFE_COMPLEXITY = 50   # < 50 安全
+WARN_COMPLEXITY = 100 # 100-150 警告
+HIGH_COMPLEXITY = 150 # > 150 需拆分
+```
+
+### 下一步实现
+
+- [ ] FSM复杂度评分
+- [ ] 不可达状态检测  
+- [ ] 死锁环检测
+- [ ] FSM优化建议
+
+---
+
+## 新增任务
+
+### 工具增强
+
+| 工具 | 增强项 | 状态 |
+|------|-------|------|
+| ProjectAnalyzer | FSM复杂度视图 | TODO |
+| StaticAnalyzer | FSM检测增强 | TODO |
+| CodeMetricsAnalyzer | fanin精确统计 | TODO |
+
+### CDC增强
+
+| 工具 | 功能 | 状态 |
+|------|-------|------|
+| ClockDomainAnalyzer | 多时钟域检测 | TODO |
+| ResetAnalyzer | 复位完整性 | TODO |
+| TimingPathAnalyzer | 跨时钟域路径 | TODO |
+
+

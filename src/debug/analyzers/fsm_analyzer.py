@@ -1,33 +1,33 @@
 """
-FSMAnalyzer - 状态机分析器
-分析状态机的: 状态数量、跳转条件、节点度、环检测、可达性
+FSMAnalyzer - 状态机深度分析器
+增强版: 复杂度评分、不可达检测、死锁检测
 """
 
-import sys
 import os
 import re
+import sys
 from typing import Dict, List, Set, Tuple, Optional
 from dataclasses import dataclass, field
-from collections import defaultdict
+from collections import defaultdict, deque
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+
+from parse import SVParser
 
 
 @dataclass
 class StateInfo:
-    """状态信息"""
     name: str
     line: int
-    transitions: List['Transition'] = field(default_factory=list)
-    in_degree: int = 0
-    out_degree: int = 0
     is_initial: bool = False
     is_final: bool = False
+    in_degree: int = 0
+    out_degree: int = 0
+    transitions: List['Transition'] = field(default_factory=list)
 
 
 @dataclass
 class Transition:
-    """状态跳转"""
     from_state: str
     to_state: str
     condition: str = ""
@@ -35,40 +35,67 @@ class Transition:
 
 
 @dataclass
-class FSMGraph:
-    """状态机图"""
-    states: Dict[str, StateInfo] = field(default_factory=dict)
-    transitions: List[Transition] = field(default_factory=list)
-    initial_state: str = ""
-    final_states: List[str] = field(default_factory=list)
+class FSMComplexity:
+    """FSM复杂度评分"""
+    state_count: int = 0
+    transition_count: int = 0
+    avg_transitions: float = 0.0
+    max_out_degree: int = 0
+    complexity_score: float = 0.0
+    
+    # 安全等级
+    SAFE = 50
+    WARN = 100
+    HIGH = 150
+    
+    def get_level(self) -> str:
+        if self.complexity_score < self.SAFE:
+            return "SAFE"
+        elif self.complexity_score < self.WARN:
+            return "WARN"
+        elif self.complexity_score < self.HIGH:
+            return "HIGH"
+        else:
+            return "CRITICAL"
 
 
 @dataclass
-class CycleInfo:
-    """环信息"""
+class UnreachableState:
+    """不可达状态"""
+    name: str
+    reason: str  # "no_input", "isolated"
+
+
+@dataclass
+class DeadlockCycle:
+    """死锁环"""
     states: List[str]
     length: int
-    is_deadlock: bool  # 死锁: 环中没有出口
-    is_orphan: bool     # 孤立: 不可达状态
+    has_exit: bool = False
+    is_reachable: bool = True
 
 
 @dataclass
 class FSMReport:
-    """状态机报告"""
+    """FSM分析报告"""
+    module_name: str = ""
     fsm_count: int = 0
-    graphs: List[FSMGraph] = field(default_factory=list)
     
-    total_states: int = 0
-    total_transitions: int = 0
-    total_cycles: int = 0
-    deadlocks: List[CycleInfo] = field(default_factory=list)
-    orphans: List[str] = field(default_factory=list)
+    # 状态
+    states: List[StateInfo] = field(default_factory=list)
+    state_names: List[str] = field(default_factory=list)
     
-    avg_states_per_fsm: float = 0.0
-    avg_transitions_per_fsm: float = 0.0
-    avg_degree: float = 0.0
+    # 跳转
+    transitions: List[Transition] = field(default_factory=list)
     
-    complexity_score: float = 0.0
+    # 复杂度
+    complexity: FSMComplexity = field(default_factory=FSMComplexity)
+    
+    # 问题
+    unreachable: List[UnreachableState] = field(default_factory=list)
+    deadlocks: List[DeadlockCycle] = field(default_factory=list)
+    
+    # 建议
     suggestions: List[str] = field(default_factory=list)
 
 
@@ -79,13 +106,12 @@ class FSMAnalyzer:
         self.parser = parser
     
     def analyze(self) -> FSMReport:
-        """执行状态机分析"""
-        graphs = []
-        all_cycles = []
-        all_orphans = []
+        """分析所有FSM"""
+        report = FSMReport()
         
-        for path, tree in self.parser.trees.items():
-            if not tree or not hasattr(tree, 'root'):
+        # 分析每个文件
+        for path in self.parser.trees:
+            if not path:
                 continue
             
             try:
@@ -94,218 +120,213 @@ class FSMAnalyzer:
             except:
                 continue
             
-            fsm_graphs = self._extract_fsms(content, path)
-            graphs.extend(fsm_graphs)
-        
-        # 分析每个状态机
-        for graph in graphs:
-            self._calculate_degrees(graph)
-            cycles = self._find_cycles(graph)
-            all_cycles.extend(cycles)
+            # 提取FSM
+            fsm_data = self._extract_fsm(content)
             
-            # 找孤立状态
-            for state_name, state in graph.states.items():
-                if state.in_degree == 0 and state.out_degree == 0:
-                    all_orphans.append(state_name)
-                elif state.in_degree == 0 and state_name != graph.initial_state:
-                    all_orphans.append(state_name)
+            if not fsm_data['states']:
+                continue
+            
+            # 更新报告
+            if not report.module_name:
+                report.module_name = os.path.basename(path).replace('.sv', '')
+            
+            # 添加状态
+            for s in fsm_data['states']:
+                report.state_names.append(s)
+                st = StateInfo(name=s, line=fsm_data['lines'].get(s, 0))
+                report.states.append(st)
+            
+            # 添加跳转
+            for t in fsm_data['transitions']:
+                report.transitions.append(t)
         
-        # 统计
-        total_states = sum(len(g.states) for g in graphs)
-        total_transitions = sum(len(g.transitions) for g in graphs)
+        report.fsm_count = len(set(report.state_names))
         
-        # 计算平均度
-        avg_degree = 0
-        if total_states > 0:
-            total_degree = sum(
-                s.in_degree + s.out_degree 
-                for g in graphs 
-                for s in g.states.values()
-            )
-            avg_degree = total_degree / total_states
+        if report.fsm_count == 0:
+            return report
         
-        # 复杂度评分 (基于状态数、跳转数、环数)
-        complexity = self._calculate_complexity(total_states, total_transitions, len(all_cycles))
+        # 计算复杂度
+        report.complexity = self._calculate_complexity(report)
+        
+        # 检测不可达状态
+        report.unreachable = self._find_unreachable(report)
+        
+        # 检测死锁
+        report.deadlocks = self._find_deadlocks(report)
         
         # 生成建议
-        suggestions = self._generate_suggestions(
-            total_states, total_transitions, all_cycles, all_orphans
-        )
+        report.suggestions = self._generate_suggestions(report)
         
-        return FSMReport(
-            fsm_count=len(graphs),
-            graphs=graphs,
-            total_states=total_states,
-            total_transitions=total_transitions,
-            total_cycles=len(all_cycles),
-            deadlocks=[c for c in all_cycles if c.is_deadlock],
-            orphans=all_orphans,
-            avg_states_per_fsm=total_states / len(graphs) if graphs else 0,
-            avg_transitions_per_fsm=total_transitions / len(graphs) if graphs else 0,
-            avg_degree=avg_degree,
-            complexity_score=complexity,
-            suggestions=suggestions
-        )
+        return report
     
-    def _extract_fsms(self, content: str, path: str) -> List[FSMGraph]:
-        """提取状态机"""
-        graphs = []
+    def _extract_fsm(self, content: str) -> Dict:
+        """提取FSM"""
+        data = {'states': [], 'transitions': [], 'lines': {}, 'initial': ''}
         
-        # 状态机模式: 通常是case(state)结构
-        # 查找case语句,分析其中的状态定义
-        
-        # 方法1: typedef enum识别状态
-        enums = re.findall(r'typedef\s+enum\s*\{([^}]+)\}\s*(\w+)', content)
-        
-        if enums:
-            for enum_body, enum_name in enums:
-                states = [s.strip().split()[-1] for s in enum_body.split(',')]
-                
-                graph = FSMGraph()
-                graph.initial_state = states[0] if states else ""
-                
-                for state in states:
-                    graph.states[state] = StateInfo(name=state, line=0)
-                
-                # 查找状态转换
-                # 简化: 查找 state : 模式
-                trans_pattern = rf'({states[0]}|{"|".join(states)})\s*:\s*(\w+)\s*<='
-                transitions = re.findall(trans_pattern, content)
-                
-                for from_state, to_state in transitions:
-                    trans = Transition(from_state=from_state, to_state=to_state)
-                    graph.transitions.append(trans)
-                    
-                    if from_state in graph.states:
-                        graph.states[from_state].transitions.append(trans)
-                
-                graphs.append(graph)
-        
-        # 方法2: 简单状态机检测 (无enum的情况)
-        # 查找包含state关键字的case语句
-        state_vars = re.findall(r'case\s*\(\s*(\w+_state|state|curr_state)\s*\)', content)
-        
-        if state_vars and not enums:
-            graph = FSMGraph()
+        # 方法1: typedef enum
+        # 只提取大写状态名
+        for match in re.finditer(r'typedef\s+enum[^{]*\{([^}]+)\}', content):
+            body = match.group(1)
+            states = re.findall(r'([A-Z_][A-Z0-9_]*)', body)
+            data['states'].extend(states)
             
-            # 查找可能的状态名
-            state_names = re.findall(r'(\w+)\s*:\s*(?:if|case|begin)', content)
-            for name in set(state_names):
-                if len(name) < 20 and not any(kw in name.lower() for kw in ['if', 'case', 'begin']):
-                    graph.states[name] = StateInfo(name=name, line=0)
-            
-            if graph.states:
-                graph.initial_state = list(graph.states.keys())[0]
-                graphs.append(graph)
+            # 假设第一个是初始状态
+            if states and not data['initial']:
+                data['initial'] = states[0]
         
-        return graphs
+        # 方法2: case语句中的状态
+        if not data['states']:
+            # 查找case (state)语句
+            case_stmts = re.findall(r'case\s*\(\s*(\w+_state|current_state|state)\s*\)', content)
+            for var in case_stmts[:1]:
+                # 查找对应的状态定义
+                patterns = [
+                    rf'{var}\s*==\s*(\w+)',
+                    rf'{var}:\s*//\s*(\w+)',
+                ]
+                for p in patterns:
+                    matches = re.findall(p, content)
+                    data['states'].extend(matches)
+        
+        # 去重
+        data['states'] = list(set(data['states']))
+        
+        # 查找跳转
+        # 从case语句提取跳转
+        for match in re.finditer(r'([A-Z_][A-Z0-9_]*)\s*:\s*(?:if|case)\s*\(?([^)]+)\)\s*([A-Z_][A-Z0-9_]*)', content):
+            from_st, cond, to_st = match.groups()
+            if from_st in data['states'] and to_st in data['states']:
+                data['transitions'].append(Transition(
+                    from_state=from_st,
+                    to_state=to_st,
+                    condition=cond[:50] if cond else ''
+                ))
+        
+        return data
     
-    def _calculate_degrees(self, graph: FSMGraph):
-        """计算节点度"""
-        for trans in graph.transitions:
-            if trans.from_state in graph.states:
-                graph.states[trans.from_state].out_degree += 1
-            
-            if trans.to_state in graph.states:
-                graph.states[trans.to_state].in_degree += 1
+    def _calculate_complexity(self, report: FSMReport) -> FSMComplexity:
+        """计算复杂度"""
+        c = FSMComplexity()
+        c.state_count = report.fsm_count
+        c.transition_count = len(report.transitions)
         
-        # 初始状态
-        if graph.initial_state in graph.states:
-            graph.states[graph.initial_state].is_initial = True
+        # 计算平均出度
+        out_degrees = defaultdict(int)
+        for t in report.transitions:
+            out_degrees[t.from_state] += 1
+        
+        if out_degrees:
+            c.max_out_degree = max(out_degrees.values())
+            c.avg_transitions = sum(out_degrees.values()) / len(out_degrees)
+        
+        # 复杂度 = 状态数 × 平均出度
+        c.complexity_score = c.state_count * c.avg_transitions
+        
+        return c
     
-    def _find_cycles(self, graph: FSMGraph) -> List[CycleInfo]:
-        """找环 (DFS)"""
-        cycles = []
-        visited = set()
-        rec_stack = set()
+    def _find_unreachable(self, report: FSMReport) -> List[UnreachableState]:
+        """找不可达状态"""
+        unreachable = []
         
-        def dfs(state: str, path: List[str]) -> List[str]:
-            visited.add(state)
-            rec_stack.add(state)
-            path.append(state)
+        if not report.state_names:
+            return unreachable
+        
+        # BFS找可达状态
+        reachable = set()
+        queue = deque([report.state_names[0] if report.state_names else None])
+        
+        while queue:
+            state = queue.popleft()
+            if state and state not in reachable:
+                reachable.add(state)
+                
+                # 找到所有可达的下一个状态
+                for t in report.transitions:
+                    if t.from_state == state:
+                        if t.to_state not in reachable:
+                            queue.append(t.to_state)
+        
+        # 检查不可达
+        for s in report.state_names:
+            if s not in reachable:
+                unreachable.append(UnreachableState(
+                    name=s,
+                    reason="no_input_path"
+                ))
+        
+        return unreachable
+    
+    def _find_deadlocks(self, report: FSMReport) -> List[DeadlockCycle]:
+        """找死锁环"""
+        deadlocks = []
+        
+        # 简化: 找所有强连通分量
+        state_set = set(report.state_names)
+        
+        for start in state_set:
+            # DFS找环
+            path = []
+            visited = set()
             
-            if state in graph.states:
-                for trans in graph.states[state].transitions:
-                    next_state = trans.to_state
-                    
-                    if next_state not in visited:
-                        result = dfs(next_state, path.copy())
-                        if result:
-                            return result
-                    elif next_state in rec_stack:
+            def dfs(current, path):
+                if current in visited:
+                    return None
+                visited.add(current)
+                path.append(current)
+                
+                # 找下一个状态
+                next_states = [t.to_state for t in report.transitions if t.from_state == current]
+                
+                for next_st in next_states:
+                    if next_st == start and len(path) > 1:
                         # 找到环
-                        cycle_start = path.index(next_state)
-                        cycle_states = path[cycle_start:]
-                        return cycle_states
+                        return path
+                    result = dfs(next_st, path[:])
+                    if result:
+                        return result
+                
+                return None
             
-            rec_stack.remove(state)
-            return None
-        
-        for state in graph.states:
-            if state not in visited:
-                cycle = dfs(state, [])
-                if cycle:
-                    # 检查是否为死锁环 (没有出口)
-                    has_exit = False
-                    for cs in cycle:
-                        if cs in graph.states:
-                            for trans in graph.states[cs].transitions:
-                                if trans.to_state not in cycle:
-                                    has_exit = True
-                                    break
-                    
-                    cycles.append(CycleInfo(
+            cycle = dfs(start, [])
+            if cycle:
+                # 检查是否有出口
+                has_exit = False
+                for st in cycle:
+                    for t in report.transitions:
+                        if t.from_state == st and t.to_state not in cycle:
+                            has_exit = True
+                            break
+                
+                if not has_exit:
+                    deadlocks.append(DeadlockCycle(
                         states=cycle,
                         length=len(cycle),
-                        is_deadlock=not has_exit,
-                        is_orphan=False
+                        has_exit=False
                     ))
         
-        return cycles
+        return deadlocks
     
-    def _calculate_complexity(self, states: int, transitions: int, cycles: int) -> float:
-        """计算复杂度分数"""
-        # 简单复杂度模型: 状态数 + 跳转数 + 环数惩罚
-        complexity = states * 1.0 + transitions * 0.5 + cycles * 5.0
-        
-        # 归一化到0-100
-        if states == 0:
-            return 0
-        
-        normalized = min(100, complexity / max(1, states) * 10)
-        return normalized
-    
-    def _generate_suggestions(
-        self, 
-        states: int, 
-        transitions: int, 
-        cycles: List[CycleInfo],
-        orphans: List[str]
-    ) -> List[str]:
+    def _generate_suggestions(self, report: FSMReport) -> List[str]:
         """生成建议"""
         suggestions = []
         
-        if states > 20:
+        # 复杂度建议
+        level = report.complexity.get_level()
+        if level != "SAFE":
             suggestions.append(
-                f"状态机较大({states}个状态), 考虑拆分为子状态机"
+                f"FSM复杂度{level}({report.complexity.complexity_score}), 考虑拆分"
             )
         
-        deadlocks = [c for c in cycles if c.is_deadlock]
-        if deadlocks:
+        # 不可达建议
+        if report.unreachable:
             suggestions.append(
-                f"发现{len(deadlocks)}个死锁环, 无法从这些状态退出"
-            )
-            for d in deadlocks:
-                suggestions.append(f"  死锁状态: {'->'.join(d.states)}")
-        
-        if orphans:
-            suggestions.append(
-                f"发现{len(orphans)}个孤立状态, 这些状态不可达"
+                f"发现{len(report.unreachable)}个不可达状态: {[u.name for u in report.unreachable]}"
             )
         
-        if cycles and not deadlocks:
+        # 死锁建议
+        if report.deadlocks:
             suggestions.append(
-                f"状态机包含{len(cycles)}个循环, 需验证所有状态可退出"
+                f"发现{len(report.deadlocks)}个死锁环"
             )
         
         if not suggestions:
@@ -316,38 +337,29 @@ class FSMAnalyzer:
     def print_report(self, report: FSMReport):
         """打印报告"""
         print("="*60)
-        print("FSM Analysis Report")
+        print(f"FSM Analysis: {report.module_name}")
         print("="*60)
         
-        print(f"\nStatistics:")
-        print(f"  FSM count: {report.fsm_count}")
-        print(f"  Total states: {report.total_states}")
-        print(f"  Total transitions: {report.total_transitions}")
-        print(f"  Total cycles: {report.total_cycles}")
+        print(f"\n[States]")
+        print(f"  Count: {report.fsm_count}")
+        print(f"  States: {report.state_names[:10]}...")
+        
+        print(f"\n[Complexity]")
+        c = report.complexity
+        print(f"  Transitions: {c.transition_count}")
+        print(f"  Avg/State: {c.avg_transitions:.1f}")
+        print(f"  Score: {c.complexity_score} ({c.get_level()})")
+        
+        print(f"\n[Issues]")
+        print(f"  Unreachable: {len(report.unreachable)}")
         print(f"  Deadlocks: {len(report.deadlocks)}")
-        print(f"  Orphan states: {len(report.orphans)}")
-        print(f"  Avg states/FSM: {report.avg_states_per_fsm:.1f}")
-        print(f"  Avg degree: {report.avg_degree:.2f}")
-        print(f"  Complexity score: {report.complexity_score:.1f}")
-        
-        if report.graphs:
-            for i, graph in enumerate(report.graphs):
-                print(f"\nFSM {i+1}:")
-                print(f"  Initial: {graph.initial_state}")
-                print(f"  States: {len(graph.states)}")
-                print(f"  Transitions: {len(graph.transitions)}")
-                
-                # 节点度分析
-                print(f"  Node degrees:")
-                for name, state in graph.states.items():
-                    print(f"    {name}: in={state.in_degree}, out={state.out_degree}")
-        
-        print("="*60)
         
         if report.suggestions:
-            print(f"\nSuggestions:")
+            print(f"\n[Suggestions]")
             for s in report.suggestions:
                 print(f"  - {s}")
+        
+        print("="*60)
 
 
-__all__ = ['FSMAnalyzer', 'FSMReport', 'FSMGraph', 'StateInfo', 'Transition', 'CycleInfo']
+__all__ = ['FSMAnalyzer', 'FSMReport']
