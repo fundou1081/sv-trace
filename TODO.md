@@ -343,3 +343,58 @@ ResetTreeNode          # 复位树节点
 | FSM验证计划生成 | P2 | TODO |
 | 多文件联合分析 | P2 | TODO |
 | 跨时钟域Timed Path | P2 | TODO |
+
+---
+
+## 2026-04-26 上午更新 (第三批)
+
+### 已完成功能
+
+| 功能 | 文件 | 说明 |
+|------|------|------|
+| **FSM SVA属性生成** | `fsm_analyzer.py` | SVAGenerator, 自动生成SVA assertions |
+| **FSM验证计划生成** | `fsm_analyzer.py` | VerificationPlanGenerator, 自动生成验证点 |
+| **多文件联合分析** | `multi_file_analyzer.py` | MultiFileAnalyzer, 模块接口/连接/依赖 |
+| **跨时钟域Timed Path** | `timed_path_analyzer.py` | TimedPathAnalyzer, 时序路径分析 |
+
+### 新增功能一览
+
+#### FSM SVA属性生成
+```python
+from debug.analyzers.fsm_analyzer import SVAGenerator, generate_fsm_sva
+
+generator = SVAGenerator(parser)
+report = generator.generate("fsm_module")
+generator.export_svafile("fsm_assertions.sv")
+generator.export_as_module("fsm_assertions.sv")
+```
+
+#### FSM验证计划生成
+```python
+from debug.analyzers.fsm_analyzer import VerificationPlanGenerator, generate_verification_plan
+
+generator = VerificationPlanGenerator(parser)
+plan = generator.generate("main_fsm")
+generator.export_to_markdown("verification_plan.md")
+generator.export_to_yaml("verification_plan.yaml")
+```
+
+#### 多文件联合分析
+```python
+from debug.analyzers.multi_file_analyzer import MultiFileAnalyzer, analyze_multiple_files
+
+analyzer = MultiFileAnalyzer(["file1.sv", "file2.sv", "file3.sv"])
+report = analyzer.analyze()
+# report.modules, report.connections, report.cross_file_signals
+cycles = analyzer.find_cycles()  # 检测循环依赖
+```
+
+#### 跨时钟域Timed Path分析
+```python
+from debug.analyzers.timed_path_analyzer import TimedPathAnalyzer, analyze_timed_paths
+
+analyzer = TimedPathAnalyzer(parser)
+report = analyzer.analyze()
+# report.paths, report.clock_relationships
+# report.setup_violations, report.hold_violations
+```

@@ -483,3 +483,628 @@ FSMAnalyzer.get_encoding_power_estimate = get_encoding_power_estimate
 
 
 __all__ = ['FSMAnalyzer', 'FSMReport', 'FSMComplexity', 'StateInfo', 'Transition']
+
+
+# =============================================================================
+# FSM SVA属性自动生成
+# =============================================================================
+
+@dataclass
+class SVAProperty:
+    """SVA属性"""
+    name: str
+    kind: str  # "assert", "assume", "cover", "sequence"
+    body: str
+    clock: str = "clk"
+    reset: str = "rst_n"
+    description: str = ""
+
+
+@dataclass
+class SVAGeneratorReport:
+    """SVA生成报告"""
+    properties: List[SVAProperty] = field(default_factory=list)
+    sequences: List[SVAProperty] = field(default_factory=list)
+    sequences_used: List[str] = field(default_factory=list)
+    module_name: str = ""
+
+
+class SVAGenerator:
+    """FSM SVA属性自动生成器"""
+    
+    # 状态编码
+    STATE_ENCODING = {
+        'binary': 2,
+        'gray': 2,
+        'one_hot': 4,
+    }
+    
+    def __init__(self, parser):
+        self.parser = parser
+        self.properties: List[SVAProperty] = []
+        self.sequences: List[SVAProperty] = []
+        self._state_vars: List[str] = []
+        self._state_values: Dict[str, int] = {}
+    
+    def generate(self, module_name: str = "dut") -> SVAGeneratorReport:
+        """生成SVA属性"""
+        self.properties = []
+        self.sequences = []
+        self._state_vars = []
+        self._state_values = {}
+        
+        # 1. 提取FSM信息
+        fsm_info = self._extract_fsm_info()
+        
+        if not fsm_info.get('states'):
+            return SVAGeneratorReport(module_name=module_name)
+        
+        # 2. 生成序列
+        self._generate_sequences(fsm_info)
+        
+        # 3. 生成属性
+        self._generate_state_coverage(fsm_info, module_name)
+        self._generate_transition_coverage(fsm_info, module_name)
+        self._generate_safety_properties(fsm_info, module_name)
+        self._generate_liveness_properties(fsm_info, module_name)
+        
+        return SVAGeneratorReport(
+            properties=self.properties,
+            sequences=self.sequences,
+            module_name=module_name
+        )
+    
+    def _extract_fsm_info(self) -> Dict:
+        """从FSMAnalyzer提取FSM信息"""
+        from .fsm_analyzer import FSMAnalyzer
+        
+        analyzer = FSMAnalyzer(self.parser)
+        report = analyzer.analyze()
+        
+        states = report.state_names if hasattr(report, 'state_names') else []
+        transitions = []
+        
+        # 提取跳转
+        for t in report.transitions if hasattr(report, 'transitions') else []:
+            transitions.append({
+                'from': t.from_state,
+                'to': t.to_state,
+                'condition': t.condition
+            })
+        
+        return {
+            'states': states,
+            'transitions': transitions,
+            'initial': report.complexity.state_count if hasattr(report, 'complexity') else 0
+        }
+    
+    def _generate_sequences(self, fsm_info: Dict):
+        """生成常用序列"""
+        states = fsm_info['states']
+        transitions = fsm_info['transitions']
+        
+        # 1. 单状态跳转序列
+        for state in states[:5]:  # 限制数量
+            self.sequences.append(SVAProperty(
+                name=f"seq_{state.lower()}",
+                kind="sequence",
+                body=f"state == {state} ##1 state == {state}",
+                description=f"停留在{state}状态"
+            ))
+        
+        # 2. 状态转换序列
+        for trans in transitions[:10]:
+            from_st = trans['from']
+            to_st = trans['to']
+            cond = trans.get('condition', '1')
+            
+            self.sequences.append(SVAProperty(
+                name=f"seq_{from_st.lower()}_to_{to_st.lower()}",
+                kind="sequence",
+                body=f"state == {from_st} ##1 {cond} |-> state == {to_st}",
+                description=f"从{from_st}到{to_st}"
+            ))
+    
+    def _generate_state_coverage(self, fsm_info: Dict, module_name: str):
+        """生成状态覆盖属性"""
+        states = fsm_info['states']
+        
+        for state in states:
+            self.properties.append(SVAProperty(
+                name=f"cover_{state.lower()}_reached",
+                kind="cover",
+                body=f"state == {state}",
+                description=f"覆盖状态{state}"
+            ))
+    
+    def _generate_transition_coverage(self, fsm_info: Dict, module_name: str):
+        """生成跳转覆盖属性"""
+        transitions = fsm_info['transitions']
+        
+        for i, trans in enumerate(transitions):
+            from_st = trans['from']
+            to_st = trans['to']
+            cond = trans.get('condition', '1')
+            
+            if len(cond) > 30:
+                cond = "1"  # 简化长条件
+            
+            self.properties.append(SVAProperty(
+                name=f"cover_trans_{i}",
+                kind="cover",
+                body=f"state == {from_st} ##1 {cond} |-> state == {to_st}",
+                description=f"覆盖跳转 {from_st} -> {to_st}"
+            ))
+    
+    def _generate_safety_properties(self, fsm_info: Dict, module_name: str):
+        """生成安全属性"""
+        states = fsm_info['states']
+        
+        # 1. 状态有效属性
+        self.properties.append(SVAProperty(
+            name="assert_state_valid",
+            kind="assert",
+            body=f"one_hot(state) or state inside {{{', '.join(states)}}}",
+            description="状态始终有效"
+        ))
+        
+        # 2. 互斥状态属性
+        if len(states) > 1:
+            # 简化: 检查没有两个状态同时为真
+            state_checks = [f"(state != {s})" for s in states]
+            self.properties.append(SVAProperty(
+                name="assert_mutual_exclusive",
+                kind="assert",
+                body=" or ".join(state_checks[:5]),  # 限制
+                description="状态互斥"
+            ))
+    
+    def _generate_liveness_properties(self, fsm_info: Dict, module_name: str):
+        """生成活性属性"""
+        states = fsm_info['states']
+        
+        # 1. 最终到达IDLE
+        if 'IDLE' in states:
+            self.properties.append(SVAProperty(
+                name="assume_reaches_idle",
+                kind="assume",
+                body=f"eventually! (state == IDLE)",
+                description="最终应到达IDLE"
+            ))
+        
+        # 2. 不死锁属性
+        self.properties.append(SVAProperty(
+            name="assert_no_deadlock",
+            kind="assert",
+            body=f"state == state",
+            description="状态机不死锁"
+        ))
+    
+    def export_svafile(self, filename: str, module_name: str = "fsm_assertions"):
+        """导出SVA文件"""
+        content = f"""// FSM Assertions - Auto-generated by SV-Trace
+// Module: {module_name}
+// Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+interface {module_name}_assertions;
+"""
+
+        # 时钟和复位参数
+        content += """
+    // Clock and Reset parameters
+    parameter CLK = \"clk\";
+    parameter RST = \"rst_n\";
+"""
+
+        # 序列
+        if self.sequences:
+            content += "\n    // ============================================================================\n"
+            content += "    // Sequences\n"
+            content += "    // ============================================================================\n\n"
+            
+            for seq in self.sequences:
+                content += f"    // {seq.description}\n"
+                content += f"    sequence {seq.name};\n"
+                content += f"        {seq.body};\n"
+                content += "    endsequence\n\n"
+
+        # 属性
+        if self.properties:
+            content += "    // ============================================================================\n"
+            content += "    // Properties\n"
+            content += "    // ============================================================================\n\n"
+            
+            for prop in self.properties:
+                content += f"    // {prop.description}\n"
+                if prop.kind == "assert":
+                    content += f"    property {prop.name};\n"
+                    content += f"        @(posedge clk) disable iff (!rst_n) {prop.body};\n"
+                    content += "    endproperty\n"
+                    content += f"    {prop.name}: assert property ({prop.name});\n\n"
+                elif prop.kind == "cover":
+                    content += f"    property {prop.name};\n"
+                    content += f"        @(posedge clk) {prop.body};\n"
+                    content += "    endproperty\n"
+                    content += f"    {prop.name}: cover property ({prop.name});\n\n"
+                elif prop.kind == "assume":
+                    content += f"    property {prop.name};\n"
+                    content += f"        @(posedge clk) {prop.body};\n"
+                    content += "    endproperty\n"
+                    content += f"    {prop.name}: assume property ({prop.name});\n\n"
+
+        content += "endinterface\n"
+        
+        with open(filename, 'w') as f:
+            f.write(content)
+        
+        return filename
+    
+    def export_as_module(self, filename: str, module_name: str = "fsm_assertions"):
+        """导出为独立module格式"""
+        content = f"""// FSM Assertions Module - Auto-generated by SV-Trace
+// Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+module {module_name} (
+    input clk,
+    input rst_n,
+    input [31:0] state
+);
+
+"""
+        
+        # 生成assertions
+        for prop in self.properties:
+            if prop.kind == "assert":
+                content += f"""    // {prop.description}
+    property {prop.name};
+        @(posedge clk) disable iff (!rst_n) {prop.body};
+    endproperty
+    assert property ({prop.name}) else $warning("{prop.name} failed");
+
+"""
+            elif prop.kind == "cover":
+                content += f"""    // {prop.description}
+    property {prop.name};
+        @(posedge clk) {prop.body};
+    endproperty
+    cover property ({prop.name}) $display("{prop.name} covered");
+
+"""
+
+        content += "endmodule\n"
+        
+        with open(filename, 'w') as f:
+            f.write(content)
+        
+        return filename
+
+
+# 添加便捷方法
+def generate_fsm_sva(parser, output_file: str = None, module_name: str = "fsm_sv") -> SVAGeneratorReport:
+    """生成FSM SVA属性的便捷函数"""
+    generator = SVAGenerator(parser)
+    report = generator.generate(module_name)
+    
+    if output_file:
+        if output_file.endswith('.sv'):
+            generator.export_as_module(output_file, module_name)
+        else:
+            generator.export_svafile(output_file, module_name)
+    
+    return report
+
+
+__all__ = [
+    'FSMAnalyzer', 
+    'FSMReport', 
+    'FSMComplexity',
+    'StateInfo', 
+    'Transition',
+    'SVAGenerator',
+    'SVAProperty',
+    'SVAGeneratorReport',
+    'generate_fsm_sva',
+]
+
+
+# =============================================================================
+# FSM 验证计划自动生成
+# =============================================================================
+
+@dataclass
+class VerificationPoint:
+    """验证点"""
+    id: str
+    category: str  # "state", "transition", "corner", "sequence"
+    description: str
+    stimulus: str  # 激励描述
+    expected: str  # 期望结果
+    priority: str = "P1"  # P1, P2, P3
+    status: str = "pending"  # pending, verified, failed
+
+
+@dataclass
+class VerificationPlan:
+    """验证计划"""
+    module_name: str
+    fsm_name: str
+    testpoints: List[VerificationPoint] = field(default_factory=list)
+    coverage_targets: List[str] = field(default_factory=list)
+    total_tests: int = 0
+    verified_tests: int = 0
+    
+    def add_point(self, point: VerificationPoint):
+        self.testpoints.append(point)
+        self.total_tests += 1
+
+
+class VerificationPlanGenerator:
+    """FSM验证计划自动生成器"""
+    
+    def __init__(self, parser):
+        self.parser = parser
+    
+    def generate(self, fsm_name: str = "fsm") -> VerificationPlan:
+        """生成验证计划"""
+        from .fsm_analyzer import FSMAnalyzer
+        
+        analyzer = FSMAnalyzer(self.parser)
+        report = analyzer.analyze()
+        
+        plan = VerificationPlan(
+            module_name=self._get_module_name(),
+            fsm_name=fsm_name
+        )
+        
+        # 1. 生成状态覆盖验证点
+        self._generate_state_testpoints(report, plan)
+        
+        # 2. 生成跳转覆盖验证点
+        self._generate_transition_testpoints(report, plan)
+        
+        # 3. 生成边界条件验证点
+        self._generate_corner_testpoints(report, plan)
+        
+        # 4. 生成序列验证点
+        self._generate_sequence_testpoints(report, plan)
+        
+        # 5. 生成覆盖率目标
+        self._generate_coverage_targets(plan)
+        
+        return plan
+    
+    def _get_module_name(self) -> str:
+        """获取模块名"""
+        for fname, tree in self.parser.trees.items():
+            if tree and tree.root:
+                if hasattr(tree.root, 'header') and tree.root.header:
+                    return str(tree.root.header.name)
+        return "unknown"
+    
+    def _generate_state_testpoints(self, report, plan: VerificationPlan):
+        """生成状态覆盖验证点"""
+        for state in report.state_names[:10]:  # 限制数量
+            plan.add_point(VerificationPoint(
+                id=f"TP_STATE_{state}",
+                category="state",
+                description=f"验证状态机能进入{state}状态",
+                stimulus=f"施加激励使状态机进入{state}",
+                expected=f"观测到state=={state}",
+                priority="P1" if state in ["IDLE", "RESET", "ERROR"] else "P2"
+            ))
+    
+    def _generate_transition_testpoints(self, report, plan: VerificationPlan):
+        """生成跳转覆盖验证点"""
+        for i, trans in enumerate(report.transitions[:15]):
+            from_st = trans.from_state
+            to_st = trans.to_state
+            cond = trans.condition if trans.condition else "无条件"
+            
+            plan.add_point(VerificationPoint(
+                id=f"TP_TRANS_{i}",
+                category="transition",
+                description=f"验证{from_st}到{to_st}的跳转",
+                stimulus=f"在{from_st}状态时满足条件: {cond[:50]}",
+                expected=f"下一周期状态变为{to_st}",
+                priority="P1"
+            ))
+    
+    def _generate_corner_testpoints(self, report, plan: VerificationPlan):
+        """生成边界条件验证点"""
+        # 1. 上电复位
+        plan.add_point(VerificationPoint(
+            id="TP_CORNER_PWR_ON",
+            category="corner",
+            description="上电复位后状态机应进入初始状态",
+            stimulus="上电后释放复位",
+            expected="状态机进入初始状态IDLE/RESET",
+            priority="P1"
+        ))
+        
+        # 2. 连续跳转
+        plan.add_point(VerificationPoint(
+            id="TP_CORNER_CONSEC",
+            category="corner",
+            description="验证连续跳转不丢失",
+            stimulus="快速连续施加激励",
+            expected="每个跳转都被正确采样",
+            priority="P2"
+        ))
+        
+        # 3. 长时间停留
+        plan.add_point(VerificationPoint(
+            id="TP_CORNER_LONG_STAY",
+            category="corner",
+            description="验证状态机在某个状态长时间停留",
+            stimulus="在状态X保持1000周期",
+            expected="状态保持不变",
+            priority="P3"
+        ))
+        
+        # 4. 非法跳转
+        if report.unreachable:
+            plan.add_point(VerificationPoint(
+                id="TP_CORNER_ILLEGAL",
+                category="corner",
+                description="验证非法跳转被正确阻止",
+                stimulus="尝试进入不可达状态",
+                expected="状态机不进入该状态",
+                priority="P2"
+            ))
+    
+    def _generate_sequence_testpoints(self, report, plan: VerificationPlan):
+        """生成序列验证点"""
+        # 1. 完整遍历
+        plan.add_point(VerificationPoint(
+            id="TP_SEQ_FULL",
+            category="sequence",
+            description="完整状态机遍历",
+            stimulus="按照设计的跳转路径遍历所有状态",
+            expected="每个状态和跳转都被覆盖",
+            priority="P1"
+        ))
+        
+        # 2. 环回序列
+        plan.add_point(VerificationPoint(
+            id="TP_SEQ_LOOP",
+            category="sequence",
+            description="状态机循环遍历",
+            stimulus="IDLE->RUN->IDLE循环10次",
+            expected="每次循环都正确",
+            priority="P2"
+        ))
+        
+        # 3. 死锁恢复
+        if report.deadlocks:
+            plan.add_point(VerificationPoint(
+                id="TP_SEQ_DEADLOCK",
+                category="sequence",
+                description="死锁检测和恢复",
+                stimulus="强制进入可能导致死锁的条件",
+                expected="状态机能够脱离死锁",
+                priority="P1"
+            ))
+    
+    def _generate_coverage_targets(self, plan: VerificationPlan):
+        """生成覆盖率目标"""
+        plan.coverage_targets = [
+            "state_coverage: 100%",
+            "transition_coverage: 100%",
+            "condition_coverage: 95%",
+            "toggle_coverage: 90%"
+        ]
+    
+    def export_to_markdown(self, filename: str, plan: VerificationPlan):
+        """导出为Markdown格式"""
+        md = f"""# FSM Verification Plan
+## Module: {plan.module_name}
+## FSM: {plan.fsm_name}
+
+---
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Total Testpoints | {plan.total_tests} |
+| P1 (Critical) | {sum(1 for tp in plan.testpoints if tp.priority == 'P1')} |
+| P2 (High) | {sum(1 for tp in plan.testpoints if tp.priority == 'P2')} |
+| P3 (Medium) | {sum(1 for tp in plan.testpoints if tp.priority == 'P3')} |
+
+---
+
+## Coverage Targets
+
+"""
+        for target in plan.coverage_targets:
+            md += f"- [ ] {target}\n"
+        
+        md += "\n---\n\n## Testpoints\n\n"
+        
+        # 按类别分组
+        categories = {}
+        for tp in plan.testpoints:
+            if tp.category not in categories:
+                categories[tp.category] = []
+            categories[tp.category].append(tp)
+        
+        for cat, points in categories.items():
+            md += f"### {cat.upper()}\n\n"
+            md += "| ID | Description | Stimulus | Expected | Priority |\n"
+            md += "|-----|-------------|----------|----------|----------|\n"
+            
+            for p in points:
+                md += f"| {p.id} | {p.description} | {p.stimulus[:40]} | {p.expected[:30]} | {p.priority} |\n"
+            
+            md += "\n"
+        
+        with open(filename, 'w') as f:
+            f.write(md)
+        
+        return filename
+    
+    def export_to_yaml(self, filename: str, plan: VerificationPlan):
+        """导出为YAML格式"""
+        import yaml
+        
+        data = {
+            'module': plan.module_name,
+            'fsm': plan.fsm_name,
+            'summary': {
+                'total': plan.total_tests,
+                'p1': sum(1 for tp in plan.testpoints if tp.priority == 'P1'),
+                'p2': sum(1 for tp in plan.testpoints if tp.priority == 'P2'),
+                'p3': sum(1 for tp in plan.testpoints if tp.priority == 'P3'),
+            },
+            'coverage_targets': plan.coverage_targets,
+            'testpoints': [
+                {
+                    'id': tp.id,
+                    'category': tp.category,
+                    'description': tp.description,
+                    'stimulus': tp.stimulus,
+                    'expected': tp.expected,
+                    'priority': tp.priority,
+                    'status': tp.status
+                }
+                for tp in plan.testpoints
+            ]
+        }
+        
+        with open(filename, 'w') as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        
+        return filename
+
+
+# 添加便捷方法
+def generate_verification_plan(parser, fsm_name: str = "fsm", 
+                               output_file: str = None) -> VerificationPlan:
+    """生成验证计划的便捷函数"""
+    generator = VerificationPlanGenerator(parser)
+    plan = generator.generate(fsm_name)
+    
+    if output_file:
+        if output_file.endswith('.yaml') or output_file.endswith('.yml'):
+            generator.export_to_yaml(output_file, plan)
+        else:
+            generator.export_to_markdown(output_file, plan)
+    
+    return plan
+
+
+__all__ = [
+    'FSMAnalyzer', 
+    'FSMReport', 
+    'FSMComplexity',
+    'StateInfo', 
+    'Transition',
+    'SVAGenerator',
+    'SVAProperty',
+    'SVAGeneratorReport',
+    'generate_fsm_sva',
+    'VerificationPlanGenerator',
+    'VerificationPlan',
+    'VerificationPoint',
+    'generate_verification_plan',
+]
