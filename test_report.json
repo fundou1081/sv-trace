@@ -1,0 +1,45 @@
+{
+  "results": {
+    "FSMAnalyzer": {
+      "passed": 32,
+      "failed": 0,
+      "errors": []
+    },
+    "CDCExtended": {
+      "passed": 32,
+      "failed": 0,
+      "errors": []
+    },
+    "ResetIntegrity": {
+      "passed": 32,
+      "failed": 0,
+      "errors": []
+    },
+    "FanoutAnalyzer": {
+      "passed": 0,
+      "failed": 0,
+      "errors": []
+    },
+    "ConditionCoverage": {
+      "passed": 32,
+      "failed": 0,
+      "errors": []
+    },
+    "TimedPath": {
+      "passed": 32,
+      "failed": 0,
+      "errors": []
+    },
+    "SVAGenerator": {
+      "passed": 32,
+      "failed": 0,
+      "errors": []
+    },
+    "VerificationPlan": {
+      "passed": 32,
+      "failed": 0,
+      "errors": []
+    }
+  },
+  "errors": []
+}
