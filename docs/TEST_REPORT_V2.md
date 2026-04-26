@@ -136,3 +136,62 @@
 ---
 
 *报告生成时间: 2026-04-26*
+
+---
+
+## 扩展测试 (2026-04-26 第二轮)
+
+### 测试项目
+
+| 项目 | 路径 | 文件数 | 状态 |
+|------|------|--------|------|
+| OpenTitan-prim | opentitan/hw/ip/prim/rtl | 30 | ✅ |
+| tiny-gpu | tiny-gpu/src | 12 | ✅ |
+| basic-verilog | basic_verilog | 30 | ✅ |
+
+### 详细结果
+
+#### OpenTitan (30个文件)
+| 功能 | 结果 |
+|------|------|
+| FSMAnalyzer | 64 states |
+| CDCExtended | 3 domains, 0 paths |
+| ResetIntegrity | 4 resets |
+| FanoutAnalyzer | 6 high-fanout signals |
+| ConditionCoverage | 106 ifs, 115 conds |
+| TimedPath | 1 paths |
+| SVAGenerator | 67 properties |
+| VerificationPlan | 16 testpoints |
+
+#### tiny-gpu (12个文件)
+| 功能 | 结果 |
+|------|------|
+| FSMAnalyzer | 0 states |
+| CDCExtended | 2 domains, 0 paths |
+| ResetIntegrity | 1 resets |
+| FanoutAnalyzer | 0 high-fanout signals |
+| ConditionCoverage | 48 ifs, 52 conds |
+| TimedPath | 2 paths |
+| SVAGenerator | 0 properties |
+| VerificationPlan | 5 testpoints |
+
+#### basic-verilog (30个文件)
+| 功能 | 结果 |
+|------|------|
+| FSMAnalyzer | 1 states |
+| CDCExtended | 4 domains, 0 paths |
+| ResetIntegrity | 3 resets |
+| FanoutAnalyzer | 9 high-fanout signals |
+| ConditionCoverage | 85 ifs, 108 conds |
+| TimedPath | 3 paths |
+| SVAGenerator | 3 properties |
+| VerificationPlan | 6 testpoints |
+
+### 扩展测试结论
+
+1. **测试通过率**: 24/24 (100%)
+2. **大型项目**: OpenTitan (30文件) 全部通过
+3. **中型项目**: tiny-gpu (12文件) 全部通过
+4. **小型项目**: basic-verilog (30文件) 全部通过
+
+**所有测试项目全部通过，无错误发现。**
