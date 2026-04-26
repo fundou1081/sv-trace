@@ -1108,3 +1108,388 @@ __all__ = [
     'VerificationPoint',
     'generate_verification_plan',
 ]
+
+
+# =============================================================================
+# FSM 覆盖率追踪
+# =============================================================================
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Set, Optional
+from datetime import datetime
+import json
+
+
+@dataclass
+class StateCoverage:
+    """状态覆盖"""
+    state_name: str
+    state_encoding: int = 0
+    covered: bool = False
+    hit_count: int = 0
+    last_hit: str = ""  # 时间戳
+
+
+@dataclass
+class TransitionCoverage:
+    """跳转覆盖"""
+    from_state: str
+    to_state: str
+    condition: str = ""
+    covered: bool = False
+    hit_count: int = 0
+    last_hit: str = ""
+
+
+@dataclass
+class FSMStateInfo:
+    """FSM状态信息"""
+    name: str
+    state_var: str  # 状态变量名
+    encoding_type: str = "binary"  # binary, gray, one_hot, manual
+    state_count: int = 0
+    states: List[str] = field(default_factory=list)
+
+
+@dataclass
+class FSMCoverageReport:
+    """FSM覆盖率报告"""
+    fsm_name: str
+    module: str
+    
+    # 状态覆盖
+    state_info: FSMStateInfo = None
+    state_coverage: List[StateCoverage] = field(default_factory=list)
+    state_coverage_rate: float = 0.0
+    
+    # 跳转覆盖
+    transition_coverage: List[TransitionCoverage] = field(default_factory=list)
+    transition_coverage_rate: float = 0.0
+    
+    # 序列覆盖
+    sequence_coverage: Dict[str, bool] = field(default_factory=dict)
+    sequence_coverage_rate: float = 0.0
+    
+    # 总体
+    overall_coverage: float = 0.0
+    
+    # 未覆盖项
+    uncovered_states: List[str] = field(default_factory=list)
+    uncovered_transitions: List[str] = field(default_factory=list)
+
+
+class FSMCoverageTracker:
+    """FSM覆盖率追踪器"""
+    
+    # 状态编码推荐
+    ENCODING_THRESHOLDS = {
+        'binary': 4,
+        'gray': 8,
+        'one_hot': 16,
+    }
+    
+    def __init__(self, parser):
+        self.parser = parser
+        self.fsm_reports: List[FSMCoverageReport] = []
+    
+    def analyze(self) -> List[FSMCoverageReport]:
+        """分析FSM覆盖率"""
+        from .fsm_analyzer import FSMAnalyzer
+        
+        analyzer = FSMAnalyzer(self.parser)
+        fsm_report = analyzer.analyze()
+        
+        # 创建覆盖率报告
+        report = FSMCoverageReport(
+            fsm_name="main_fsm",
+            module=self._get_module_name(),
+            state_info=FSMStateInfo(
+                name="main_fsm",
+                state_var="state",
+                state_count=len(fsm_report.state_names)
+            )
+        )
+        
+        # 设置状态信息
+        if report.state_info:
+            report.state_info.states = fsm_report.state_names
+            report.state_info.state_count = len(fsm_report.state_names)
+            report.state_info.encoding_type = self._recommend_encoding(len(fsm_report.state_names))
+        
+        # 状态覆盖
+        for state in fsm_report.state_names:
+            sc = StateCoverage(state_name=state)
+            report.state_coverage.append(sc)
+        
+        # 跳转覆盖
+        for trans in fsm_report.transitions:
+            tc = TransitionCoverage(
+                from_state=trans.from_state,
+                to_state=trans.to_state,
+                condition=trans.condition
+            )
+            report.transition_coverage.append(tc)
+        
+        # 计算覆盖率
+        self._calculate_coverage(report)
+        
+        # 生成未覆盖列表
+        report.uncovered_states = [s.state_name for s in report.state_coverage if not s.covered]
+        report.uncovered_transitions = [
+            f"{t.from_state}->{t.to_state}" 
+            for t in report.transition_coverage if not t.covered
+        ]
+        
+        self.fsm_reports.append(report)
+        return self.fsm_reports
+    
+    def _recommend_encoding(self, state_count: int) -> str:
+        """推荐状态编码"""
+        if state_count <= self.ENCODING_THRESHOLDS['binary']:
+            return "binary"
+        elif state_count <= self.ENCODING_THRESHOLDS['gray']:
+            return "gray"
+        else:
+            return "one_hot"
+    
+    def _get_module_name(self) -> str:
+        """获取模块名"""
+        for fname, tree in self.parser.trees.items():
+            if tree and tree.root:
+                if hasattr(tree.root, 'header') and tree.root.header:
+                    return str(tree.root.header.name)
+        return "unknown"
+    
+    def _calculate_coverage(self, report: FSMCoverageReport):
+        """计算覆盖率"""
+        # 状态覆盖率
+        if report.state_coverage:
+            covered = sum(1 for s in report.state_coverage if s.covered)
+            report.state_coverage_rate = covered / len(report.state_coverage)
+        
+        # 跳转覆盖率
+        if report.transition_coverage:
+            covered = sum(1 for t in report.transition_coverage if t.covered)
+            report.transition_coverage_rate = covered / len(report.transition_coverage)
+        
+        # 序列覆盖率
+        if report.sequence_coverage:
+            covered = sum(1 for v in report.sequence_coverage.values() if v)
+            report.sequence_coverage_rate = covered / len(report.sequence_coverage) if report.sequence_coverage else 0
+        
+        # 总体覆盖率
+        report.overall_coverage = (
+            report.state_coverage_rate * 0.4 +
+            report.transition_coverage_rate * 0.4 +
+            report.sequence_coverage_rate * 0.2
+        )
+    
+    def merge_with_simulation(self, sim_coverage_data: Dict):
+        """合并仿真覆盖率数据"""
+        # sim_coverage_data 格式:
+        # {
+        #     "states": {"IDLE": 10, "RUN": 5},
+        #     "transitions": {"IDLE->RUN": 3}
+        # }
+        
+        for report in self.fsm_reports:
+            # 更新状态覆盖
+            if "states" in sim_coverage_data:
+                for sc in report.state_coverage:
+                    if sc.state_name in sim_coverage_data["states"]:
+                        sc.covered = True
+                        sc.hit_count = sim_coverage_data["states"][sc.state_name]
+                        sc.last_hit = datetime.now().isoformat()
+            
+            # 更新跳转覆盖
+            if "transitions" in sim_coverage_data:
+                for tc in report.transition_coverage:
+                    key = f"{tc.from_state}->{tc.to_state}"
+                    if key in sim_coverage_data["transitions"]:
+                        tc.covered = True
+                        tc.hit_count = sim_coverage_data["transitions"][key]
+                        tc.last_hit = datetime.now().isoformat()
+            
+            # 重新计算覆盖率
+            self._calculate_coverage(report)
+    
+    def export_to_ucis(self, filename: str):
+        """导出为UCIS格式（覆盖率数据库）"""
+        import xml.etree.ElementTree as ET
+        
+        root = ET.Element('ucis')
+        
+        for report in self.fsm_reports:
+            # FSM覆盖组
+            fsm_cg = ET.SubElement(root, 'covergroup', name=f"fsm_{report.fsm_name}")
+            
+            # 状态覆盖点
+            state_cp = ET.SubElement(fsm_cg, 'coverpoint', name='state')
+            for sc in report.state_coverage:
+                bin_elem = ET.SubElement(state_cp, 'item', name=sc.state_name)
+                if sc.covered:
+                    bin_elem.set('covered', '1')
+                    bin_elem.set('hitcount', str(sc.hit_count))
+            
+            # 跳转覆盖点
+            trans_cp = ET.SubElement(fsm_cg, 'coverpoint', name='transition')
+            for tc in report.transition_coverage:
+                name = f"{tc.from_state}_to_{tc.to_state}"
+                bin_elem = ET.SubElement(trans_cp, 'item', name=name)
+                if tc.covered:
+                    bin_elem.set('covered', '1')
+                    bin_elem.set('hitcount', str(tc.hit_count))
+        
+        tree = ET.ElementTree(root)
+        tree.write(filename, encoding='utf-8', xml_declaration=True)
+        
+        return filename
+    
+    def export_to_json(self, filename: str) -> str:
+        """导出为JSON格式"""
+        data = {
+            "metadata": {
+                "tool": "SV-Trace FSM Coverage Tracker",
+                "generated": datetime.now().isoformat()
+            },
+            "fsm_reports": []
+        }
+        
+        for report in self.fsm_reports:
+            fsm_data = {
+                "fsm_name": report.fsm_name,
+                "module": report.module,
+                "state_info": {
+                    "name": report.state_info.name if report.state_info else "",
+                    "state_var": report.state_info.state_var if report.state_info else "",
+                    "encoding": report.state_info.encoding_type if report.state_info else "",
+                    "state_count": report.state_info.state_count if report.state_info else 0,
+                    "states": report.state_info.states if report.state_info else []
+                },
+                "coverage": {
+                    "state_coverage_rate": report.state_coverage_rate,
+                    "transition_coverage_rate": report.transition_coverage_rate,
+                    "sequence_coverage_rate": report.sequence_coverage_rate,
+                    "overall_coverage": report.overall_coverage
+                },
+                "states": [
+                    {
+                        "name": s.state_name,
+                        "covered": s.covered,
+                        "hit_count": s.hit_count
+                    }
+                    for s in report.state_coverage
+                ],
+                "transitions": [
+                    {
+                        "from": t.from_state,
+                        "to": t.to_state,
+                        "covered": t.covered,
+                        "hit_count": t.hit_count
+                    }
+                    for t in report.transition_coverage
+                ],
+                "uncovered": {
+                    "states": report.uncovered_states,
+                    "transitions": report.uncovered_transitions
+                }
+            }
+            data["fsm_reports"].append(fsm_data)
+        
+        json_str = json.dumps(data, indent=2)
+        
+        with open(filename, 'w') as f:
+            f.write(json_str)
+        
+        return filename
+    
+    def generate_coverage_report_html(self, filename: str):
+        """生成HTML覆盖率报告"""
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>FSM Coverage Report</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        h1 {{ color: #333; }}
+        .summary {{ background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }}
+        .coverage-bar {{ background: #eee; height: 30px; border-radius: 15px; overflow: hidden; }}
+        .coverage-fill {{ height: 100%; background: linear-gradient(90deg, #4CAF50, #8BC34A); }}
+        .state-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; margin: 20px 0; }}
+        .state-box {{ padding: 10px; border-radius: 5px; text-align: center; }}
+        .covered {{ background: #e8f5e9; color: #2e7d32; border: 1px solid #4CAF50; }}
+        .uncovered {{ background: #ffebee; color: #c62828; border: 1px solid #f44336; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+        th, td {{ padding: 10px; border: 1px solid #ddd; text-align: left; }}
+        th {{ background: #f5f5f5; }}
+    </style>
+</head>
+<body>
+    <h1>FSM Coverage Report</h1>
+    <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+"""
+        
+        for report in self.fsm_reports:
+            html += f"""
+    <div class="summary">
+        <h2>FSM: {report.fsm_name}</h2>
+        <p>Module: {report.module}</p>
+        <p>Overall Coverage: {report.overall_coverage*100:.1f}%</p>
+        <div class="coverage-bar">
+            <div class="coverage-fill" style="width: {report.overall_coverage*100}%"></div>
+        </div>
+    </div>
+    
+    <h3>State Coverage: {report.state_coverage_rate*100:.1f}%</h3>
+    <div class="state-grid">
+"""
+            
+            for sc in report.state_coverage:
+                cls = "covered" if sc.covered else "uncovered"
+                html += f'        <div class="state-box {cls}">{sc.state_name}</div>\n'
+            
+            html += """    </div>
+    
+    <h3>Transition Coverage</h3>
+    <table>
+        <tr><th>From</th><th>To</th><th>Condition</th><th>Status</th></tr>
+"""
+            
+            for tc in report.transition_coverage:
+                status = "✓" if tc.covered else "✗"
+                html += f"""        <tr>
+            <td>{tc.from_state}</td>
+            <td>{tc.to_state}</td>
+            <td>{tc.condition[:30] if tc.condition else '-'}</td>
+            <td>{status}</td>
+        </tr>
+"""
+            
+            html += """    </table>
+"""
+        
+        html += """
+</body>
+</html>
+"""
+        
+        with open(filename, 'w') as f:
+            f.write(html)
+        
+        return filename
+
+
+def track_fsm_coverage(parser) -> List[FSMCoverageReport]:
+    """便捷函数"""
+    tracker = FSMCoverageTracker(parser)
+    return tracker.analyze()
+
+
+__all__ = [
+    'FSMCoverageTracker',
+    'FSMCoverageReport',
+    'FSMStateInfo',
+    'StateCoverage',
+    'TransitionCoverage',
+    'track_fsm_coverage',
+]

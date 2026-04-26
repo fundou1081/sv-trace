@@ -398,3 +398,87 @@ report = analyzer.analyze()
 # report.paths, report.clock_relationships
 # report.setup_violations, report.hold_violations
 ```
+
+---
+
+## 2026-04-26 更新 (第四批)
+
+### P3功能 + 新增功能
+
+| 功能 | 文件 | 说明 |
+|------|------|------|
+| **条件覆盖分析** | `condition_coverage.py` | if嵌套条件coverage, cross覆盖, 中间变量展开 |
+| **FSM覆盖率追踪** | `fsm_analyzer.py` | 状态/跳转/序列覆盖, UCIS格式导出 |
+| **形式验证接口** | `formal_verification.py` | SVA/PSL属性生成, SymbiYosys脚本 |
+
+### 新增功能详解
+
+#### 条件覆盖分析 (ConditionCoverageAnalyzer)
+```python
+from debug.analyzers.condition_coverage import ConditionCoverageAnalyzer
+
+analyzer = ConditionCoverageAnalyzer(parser)
+report = analyzer.analyze()
+
+# 导出coverage model
+analyzer.export_to_coverage_model("coverage_model.sv", report)
+
+# 导出约束
+analyzer.export_to_constraint("coverage_constraints.sv", report)
+```
+
+**核心功能**:
+- 解析if嵌套条件到原始信号
+- 展开中间变量到底层信号
+- 生成条件cross覆盖对
+- 导出SystemVerilog covergroup
+
+#### FSM覆盖率追踪 (FSMCoverageTracker)
+```python
+from debug.analyzers.fsm_analyzer import FSMCoverageTracker
+
+tracker = FSMCoverageTracker(parser)
+reports = tracker.analyze()
+
+# 合并仿真数据
+tracker.merge_with_simulation({"states": {"IDLE": 10}, "transitions": {"IDLE->RUN": 5}})
+
+# 导出各种格式
+tracker.export_to_json("coverage.json")
+tracker.export_to_ucis("coverage.ucis")
+tracker.generate_coverage_report_html("coverage.html")
+```
+
+#### 形式验证接口 (FormalVerificationGenerator)
+```python
+from debug.analyzers.formal_verification import FormalVerificationGenerator
+
+gen = FormalVerificationGenerator(parser)
+report = gen.analyze()
+
+# 导出各种格式
+gen.export_to_sby("design.sby")           # SymbiYosys
+gen.export_to_sv_property("props.sv")     # SystemVerilog
+gen.export_to_psl("props.psl")             # PSL
+gen.export_to_property_list("props.csv")   # CSV清单
+gen.generate_formal_testplan("testplan.md") # 测试计划
+```
+
+### 完成状态
+
+| 优先级 | 功能 | 状态 |
+|--------|------|------|
+| P1 | CDC多时钟域检测增强 | ✅ |
+| P1 | FSM复杂度评分+死锁检测 | ✅ |
+| P1 | 复位完整性检查增强 | ✅ |
+| P1 | fanin/fanout精确统计 | ✅ |
+| P1 | HTML报告输出 | ✅ |
+| P2 | FSM SVA属性生成 | ✅ |
+| P2 | FSM验证计划生成 | ✅ |
+| P2 | 多文件联合分析 | ✅ |
+| P2 | 跨时钟域Timed Path | ✅ |
+| **P3** | **FSM覆盖率追踪** | ✅ |
+| **P3** | **形式验证接口** | ✅ |
+| **新增** | **条件覆盖分析** | ✅ |
+
+**🎉 所有计划功能已完成！**
