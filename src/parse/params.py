@@ -61,8 +61,8 @@ class ParameterResolver:
                     self.params[name] = Parameter(
                         name=name,
                         value=value,
-                        resolved_value=resolved,
-                        is_localparam='parameter' not in str(type(decl)).lower(),
+                        module="",
+                        
                     )
     
     def _extract_from_member(self, member):
