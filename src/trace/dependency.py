@@ -285,9 +285,9 @@ class FanoutAnalyzer:
     
     def _calculate_fanout(self, signal_name: str) -> FanoutInfo:
         """计算扇出"""
-        from .load import LoadTracer
+        from .load import LoadTracerRegex
         
-        tracer = LoadTracer(self.parser)
+        tracer = LoadTracerRegex(self.parser)
         loads = tracer.find_load(signal_name)
         
         # 直接扇出
@@ -346,10 +346,10 @@ class FanoutAnalyzer:
     
     def find_high_fanout_signals(self, threshold: int = 10) -> List[FanoutInfo]:
         """找出高扇出信号"""
-        from .driver import DriverCollector
+        from .load import LoadTracerRegex
         
-        collector = DriverCollector(self.parser)
-        signals = collector.get_all_signals()
+        tracer = LoadTracerRegex(self.parser)
+        signals = tracer.get_all_signals()
         
         results = []
         for sig in signals:
@@ -517,8 +517,8 @@ class FanoutAnalyzerWithImprovedLoad(FanoutAnalyzer):
     def __init__(self, parser):
         super().__init__(parser)
         # 使用改进版的LoadTracer
-        from .load_improved import LoadTracerImproved
-        self._load_tracer = LoadTracerImproved(parser)
+        from .load import LoadTracerRegex
+        self._load_tracer = LoadTracerRegex(parser)
     
     def analyze_signal(self, signal_name: str):
         """分析单个信号的扇出"""
@@ -539,10 +539,10 @@ class FanoutAnalyzerWithImprovedLoad(FanoutAnalyzer):
     def find_high_fanout_signals(self, threshold: int = 10):
         """查找高扇出信号"""
         from .driver import DriverCollector
-        from .load_improved import LoadTracerImproved
+        from .load import LoadTracerRegex
         
         # 使用改进版LoadTracer
-        improved_tracer = LoadTracerImproved(self.parser)
+        improved_tracer = LoadTracerRegex(self.parser)
         
         # 获取所有信号
         signals = set()

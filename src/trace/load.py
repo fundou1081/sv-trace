@@ -283,3 +283,165 @@ class LoadTracer:
         )
         
         self._loads.append(load)
+
+
+# =============================================================================
+# Enhanced Load Analysis - 使用正则表达式的备用分析器
+# =============================================================================
+
+import re
+from typing import Set, Dict
+
+
+class LoadTracerRegex:
+    """
+    基于正则表达式的信号负载追踪器
+    作为LoadTracer的备用/增强方案
+    """
+    
+    def __init__(self, parser):
+        self.parser = parser
+        self._code_cache: Dict[str, str] = {}
+    
+    def _get_code(self, filepath: str) -> str:
+        """获取源码"""
+        if filepath in self._code_cache:
+            return self._code_cache[filepath]
+        
+        # 尝试从parser.sources获取
+        if hasattr(self.parser, 'sources') and filepath in self.parser.sources:
+            code = self.parser.sources[filepath]
+            self._code_cache[filepath] = code
+            return code
+        
+        # 直接读取文件
+        try:
+            with open(filepath, 'r') as f:
+                code = f.read()
+            self._code_cache[filepath] = code
+            return code
+        except:
+            return ""
+    
+    def _find_in_file(self, filepath: str, signal: str) -> List[Load]:
+        """在单个文件中查找信号使用"""
+        loads = []
+        code = self._get_code(filepath)
+        if not code:
+            return loads
+        
+        lines = code.split('\n')
+        for line_num, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            # 跳过注释
+            if not stripped or stripped.startswith('//') or stripped.startswith('/*'):
+                continue
+            
+            # 1. 时钟/复位事件 @(posedge signal) 或 @(negedge signal)
+            if re.search(rf'@\s*\([^)]*\b{signal}\b', stripped):
+                loads.append(Load(
+                    signal_name=signal,
+                    context=stripped[:100],
+                    line=line_num,
+                    condition="clock_event"
+                ))
+            
+            # 2. 条件判断 if/else if
+            if re.search(rf'\b(?:if|else\s+if)\s*\([^)]*\b{signal}\b[^)]*\)', stripped):
+                loads.append(Load(
+                    signal_name=signal,
+                    context=stripped[:100],
+                    line=line_num,
+                    condition=signal
+                ))
+            
+            # 3. case语句
+            if re.search(rf'\bcase\s*\([^)]*\b{signal}\b[^)]*\)', stripped):
+                loads.append(Load(
+                    signal_name=signal,
+                    context=stripped[:100],
+                    line=line_num,
+                    condition=signal
+                ))
+            
+            # 4. 赋值右侧 (排除声明)
+            if re.search(rf'\b{signal}\b\s*=', stripped):
+                if not re.search(r'\b(?:logic|wire|reg|bit)\s+[^{]*\b(?:=|\Z)', stripped):
+                    loads.append(Load(
+                        signal_name=signal,
+                        context=stripped[:100],
+                        line=line_num
+                    ))
+            
+            # 5. 三元表达式
+            if re.search(rf'\b{signal}\s*\?', stripped):
+                loads.append(Load(
+                    signal_name=signal,
+                    context=stripped[:100],
+                    line=line_num
+                ))
+        
+        return loads
+    
+    def find_load(self, signal_name: str, module_name: str = None) -> List[Load]:
+        """查找信号被使用的所有位置"""
+        all_loads = []
+        
+        for filepath in self.parser.trees.keys():
+            loads = self._find_in_file(filepath, signal_name)
+            all_loads.extend(loads)
+        
+        return all_loads
+    
+    def get_fanout(self, signal_name: str) -> int:
+        """获取信号的直接扇出"""
+        return len(self.find_load(signal_name))
+    
+    def get_all_signals(self) -> Set[str]:
+        """提取所有信号名"""
+        signals = set()
+        keywords = {'if', 'else', 'case', 'for', 'while', 'do', 'begin', 'end',
+                   'always', 'assign', 'logic', 'wire', 'reg', 'input', 'output',
+                   'inout', 'module', 'parameter', 'localparam', 'typedef', 'enum',
+                   'posedge', 'negedge', 'or', 'and', 'not', 'xor', 'force',
+                   'generate', 'endgenerate', 'function', 'endfunction', 'task',
+                   'endtask', 'class', 'endclass', 'package', 'endpackage'}
+        
+        for filepath in self.parser.trees.keys():
+            code = self._get_code(filepath)
+            if not code:
+                continue
+            
+            # 提取信号声明
+            for pattern in [
+                r'\blogic\s*(?:\[[^\]]+\])?\s+([a-zA-Z_]\w*)',
+                r'\bwire\s*(?:\[[^\]]+\])?\s+([a-zA-Z_]\w*)',
+                r'\breg\s*(?:\[[^\]]+\])?\s+([a-zA-Z_]\w*)',
+                r'\binput\s+(?:\[[^\]]+\])?\s+([a-zA-Z_]\w*)',
+                r'\boutput\s+(?:\[[^\]]+\])?\s+([a-zA-Z_]\w*)',
+            ]:
+                for match in re.finditer(pattern, code):
+                    sig = match.group(1)
+                    if sig not in keywords:
+                        signals.add(sig)
+        
+        return signals
+
+
+# 添加便捷方法到LoadTracer类
+def find_load_regex(self, signal_name: str, module_name: str = None) -> List[Load]:
+    """使用正则表达式方式查找信号负载"""
+    regex_tracer = LoadTracerRegex(self.parser)
+    return regex_tracer.find_load(signal_name, module_name)
+
+def get_fanout_regex(self, signal_name: str) -> int:
+    """使用正则表达式方式获取扇出"""
+    regex_tracer = LoadTracerRegex(self.parser)
+    return regex_tracer.get_fanout(signal_name)
+
+# 扩展LoadTracer类
+LoadTracer.find_load_regex = find_load_regex
+LoadTracer.get_fanout_regex = get_fanout_regex
+
+__all__ = ['LoadTracer', 'LoadTracerRegex']
