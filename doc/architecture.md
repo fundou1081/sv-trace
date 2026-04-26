@@ -167,3 +167,47 @@ analyzers (诊断工具) ← dependency: trace, parse
 |------|------|
 | TODO_V2.md | 多视角需求分析 |
 | ADR-020.md | FSM深度分析架构 |
+
+---
+
+## 更新记录 (2026-04-26)
+
+### 新增分析器
+
+| 模块 | 文件 | 功能 |
+|------|------|------|
+| FSMAnalyzer增强 | fsm_analyzer.py | 状态编码建议、SVA生成、验证计划 |
+| CDCExtendedAnalyzer | cdc.py | 多时钟域检测、MTBF估算 |
+| ResetIntegrityChecker | reset_domain_analyzer.py | 复位完整性、复位树分析 |
+| TimedPathAnalyzer | timed_path_analyzer.py | 时序路径、setup/hold违规 |
+| ConditionCoverageAnalyzer | condition_coverage.py | 条件覆盖、中间变量展开 |
+| FormalVerificationGenerator | formal_verification.py | SVA/PSL属性生成 |
+| MultiFileAnalyzer | multi_file_analyzer.py | 多文件联合分析 |
+| HTMLReportGenerator | html_report.py | 通用HTML报告 |
+| FanoutAnalyzer | dependency.py | 精确扇出统计 |
+| FaninAnalyzer | dependency.py | 精确扇入统计 |
+
+### 测试框架
+
+| 文件 | 说明 |
+|------|------|
+| tests/targeted/test_fsm_targeted.sv | FSM专项测试 |
+| tests/targeted/test_cdc_targeted.sv | CDC专项测试 |
+| tests/targeted/test_condition_targeted.sv | 条件覆盖专项测试 |
+| tests/targeted/test_fanout_targeted.sv | Fanout专项测试 |
+| tests/targeted/test_reset_targeted.sv | 复位专项测试 |
+| tests/test_targeted.py | 专项测试运行器 |
+
+### Bug修复
+
+| 日期 | 文件 | 问题 | 修复 |
+|------|------|------|------|
+| 2026-04-26 | cdc.py | ClockDomain("")缺少参数 | ClockDomain(name="", clock_signal="") |
+| 2026-04-26 | condition_coverage.py | f-string双引号语法错误 | 改用%格式化 |
+
+### 架构决策记录
+
+| ADR | 标题 | 状态 |
+|-----|------|------|
+| ADR-020 | FSM深度分析与状态编码建议 | 已接受 |
+
