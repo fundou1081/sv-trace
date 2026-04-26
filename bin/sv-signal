@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""
+sv-signal - 信号分类CLI
+用法:
+    sv-signal classify <file.sv> [--module <name>]
+    sv-signal list <file.sv> [--category clock|reset|data|control|status]
+    sv-signal report <file.sv> [--output <file>]
+"""
+import sys
+import os
+import argparse
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from parse import SVParser
+from trace.signal_classifier import SignalClassifier
+
+def main():
+    parser = argparse.ArgumentParser(description='信号分类工具')
+    subparsers = parser.add_subparsers(dest='cmd', help='子命令')
+    
+    # classify
+    classify_parser = subparsers.add_parser('classify', help='分类信号')
+    classify_parser.add_argument('file', help='RTL文件')
+    classify_parser.add_argument('--module', help='模块名')
+    
+    # list
+    list_parser = subparsers.add_parser('list', help='按类别列出信号')
+    list_parser.add_argument('file', help='RTL文件')
+    list_parser.add_argument('--category', choices=['clock','reset','data','control','status','input','output'],
+                            help='信号类别')
+    list_parser.add_argument('--module', help='模块名')
+    
+    # report
+    report_parser = subparsers.add_parser('report', help='生成分类报告')
+    report_parser.add_argument('file', help='RTL文件')
+    report_parser.add_argument('--output', help='输出文件')
+    report_parser.add_argument('--module', help='模块名')
+    
+    args = parser.parse_args()
+    
+    if not args.cmd:
+        parser.print_help()
+        return
+    
+    if args.cmd == 'classify' or args.cmd == 'list' or args.cmd == 'report':
+        if not os.path.exists(args.file):
+            print(f"File not found: {args.file}")
+            return
+        
+        # 解析RTL
+        sv_parser = SVParser()
+        sv_parser.parse_file(args.file)
+        
+        # 分类
+        classifier = SignalClassifier()
+        result = classifier.classify_from_parser(sv_parser)
+        
+        if args.cmd == 'classify':
+            summary = result.summary()
+            print(f"\n信号分类结果:")
+            print(f"  时钟: {summary['clocks']}")
+            print(f"  复位: {summary['resets']}")
+            print(f"  数据: {summary['data']}")
+            print(f"  控制: {summary['control']}")
+            print(f"  状态: {summary['status']}")
+            print(f"  输入: {summary['inputs']}")
+            print(f"  输出: {summary['outputs']}")
+            print(f"  未分类: {summary['unclassified']}")
+            print()
+        
+        elif args.cmd == 'list':
+            category = args.category or 'all'
+            
+            if category == 'clock':
+                signals = result.clocks
+            elif category == 'reset':
+                signals = result.resets
+            elif category == 'data':
+                signals = result.data_signals
+            elif category == 'control':
+                signals = result.control_signals
+            elif category == 'status':
+                signals = result.status_signals
+            elif category == 'input':
+                signals = result.port_inputs
+            elif category == 'output':
+                signals = result.port_outputs
+            else:
+                signals = result.all_signals
+            
+            print(f"\n{category.upper()} 信号 ({len(signals)}):")
+            for s in signals:
+                print(f"  {s.name} [{s.width-1}:0] ({s.direction})")
+            print()
+        
+        elif args.cmd == 'report':
+            report = classifier.generate_report(result, args.module or os.path.basename(args.file))
+            
+            if args.output:
+                with open(args.output, 'w') as f:
+                    f.write(report)
+                print(f"Report saved to: {args.output}")
+            else:
+                print(report)
+
+if __name__ == '__main__':
+    main()

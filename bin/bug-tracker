@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""
+bug-tracker - Bug追踪CLI
+用法:
+    bug-tracker create --title <title> --module <module> [--severity <level>]
+    bug-tracker list [--module <module>] [--severity <level>] [--status <status>]
+    bug-tracker get <bug_id>
+    bug-tracker update <bug_id> [--status <status>] [--assignee <assignee>]
+    bug-tracker close <bug_id>
+    bug-tracker delete <bug_id>
+    bug-tracker comment <bug_id> --author <author> --content <content>
+    bug-tracker reproduce <bug_id> --seed <seed> --attempts <n> --success <n>
+    bug-tracker stats
+"""
+import sys
+import os
+import argparse
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from bugs.bug_tracker import BugTracker
+from bugs.bug_case import BugSeverity, BugStatus
+
+def main():
+    parser = argparse.ArgumentParser(description='Bug追踪工具')
+    subparsers = parser.add_subparsers(dest='cmd', help='子命令')
+    
+    # create
+    create_parser = subparsers.add_parser('create', help='创建Bug')
+    create_parser.add_argument('--title', required=True, help='Bug标题')
+    create_parser.add_argument('--module', required=True, help='所属模块')
+    create_parser.add_argument('--severity', default='medium', 
+                              choices=['critical','high','medium','low'], help='严重性')
+    create_parser.add_argument('--desc', '--description', dest='description', default='', help='描述')
+    create_parser.add_argument('--reporter', default='', help='报告人')
+    create_parser.add_argument('--test-case', dest='test_case', help='关联测试用例')
+    create_parser.add_argument('--tags', nargs='*', default=[], help='标签')
+    
+    # list
+    list_parser = subparsers.add_parser('list', help='列出Bug')
+    list_parser.add_argument('--module', help='模块过滤')
+    list_parser.add_argument('--severity', choices=['critical','high','medium','low'], help='严重性过滤')
+    list_parser.add_argument('--status', choices=['new','confirmed','in_progress','fixed','closed','wontfix'], help='状态过滤')
+    list_parser.add_argument('--assignee', help='负责人过滤')
+    
+    # get
+    get_parser = subparsers.add_parser('get', help='获取Bug详情')
+    get_parser.add_argument('bug_id', help='Bug ID')
+    
+    # update
+    update_parser = subparsers.add_parser('update', help='更新Bug')
+    update_parser.add_argument('bug_id', help='Bug ID')
+    update_parser.add_argument('--status', choices=['new','confirmed','in_progress','fixed','closed','wontfix'], help='状态')
+    update_parser.add_argument('--assignee', help='负责人')
+    update_parser.add_argument('--owner', help='owner')
+    
+    # close
+    close_parser = subparsers.add_parser('close', help='关闭Bug')
+    close_parser.add_argument('bug_id', help='Bug ID')
+    close_parser.add_argument('--reason', default='wontfix', help='关闭原因')
+    
+    # delete
+    delete_parser = subparsers.add_parser('delete', help='删除Bug')
+    delete_parser.add_argument('bug_id', help='Bug ID')
+    
+    # comment
+    comment_parser = subparsers.add_parser('comment', help='添加评论')
+    comment_parser.add_argument('bug_id', help='Bug ID')
+    comment_parser.add_argument('--author', required=True, help='作者')
+    comment_parser.add_argument('--content', required=True, help='内容')
+    
+    # reproduce
+    reproduce_parser = subparsers.add_parser('reproduce', help='记录复现')
+    reproduce_parser.add_argument('bug_id', help='Bug ID')
+    reproduce_parser.add_argument('--seed', required=True, help='随机种子')
+    reproduce_parser.add_argument('--attempts', type=int, required=True, help='尝试次数')
+    reproduce_parser.add_argument('--success', type=int, required=True, help='成功次数')
+    reproduce_parser.add_argument('--duration', type=int, default=0, help='耗时(ms)')
+    reproduce_parser.add_argument('--notes', default='', help='备注')
+    
+    # stats
+    subparsers.add_parser('stats', help='统计信息')
+    
+    args = parser.parse_args()
+    
+    if not args.cmd:
+        parser.print_help()
+        return
+    
+    # 初始化
+    db_path = os.environ.get('BUG_DB_PATH', './bug_db')
+    bt = BugTracker(db_path)
+    
+    if args.cmd == 'create':
+        bug = bt.create_bug(
+            title=args.title,
+            module=args.module,
+            severity=args.severity,
+            description=args.description,
+            reporter=args.reporter,
+            test_case_id=args.test_case,
+            tags=args.tags
+        )
+        print(f"[{bug.id}] {bug.title}")
+        print(f"  模块: {bug.module}, 严重性: {bug.severity.value}")
+        print(f"  状态: {bug.status.value}")
+    
+    elif args.cmd == 'list':
+        bugs = bt.list_bugs(
+            module=args.module,
+            severity=args.severity,
+            status=args.status,
+            assignee=args.assignee
+        )
+        print(f"\nBug列表 ({len(bugs)} 个)")
+        print("-" * 80)
+        if not bugs:
+            print("  无Bug")
+        else:
+            header = f"{'ID':>5} {'标题':<30} {'模块':<10} {'严重性':<10} {'状态':<12}"
+            print(header)
+            print("-" * 80)
+            for b in bugs:
+                sev_icon = {'critical':'🔴','high':'🟠','medium':'🟡','low':'🟢'}.get(b.severity.value,'⚪')
+                print(f"{b.id:>5} {b.title[:30]:<30} {b.module:<10} {sev_icon} {b.status.value:<12}")
+        print()
+    
+    elif args.cmd == 'get':
+        bug = bt.get_bug(args.bug_id)
+        if not bug:
+            print(f"Bug {args.bug_id} not found")
+            return
+        
+        print(f"\n[{bug.id}] {bug.title}")
+        print("=" * 60)
+        print(f"模块: {bug.module}")
+        print(f"严重性: {bug.severity.value}")
+        print(f"状态: {bug.status.value}")
+        print(f"报告人: {bug.reporter or 'N/A'}")
+        print(f"负责人: {bug.assignee or 'N/A'}")
+        print(f"owner: {bug.owner or 'N/A'}")
+        print(f"标签: {', '.join(bug.tags) or 'none'}")
+        print(f"\n描述:\n{bug.description or 'N/A'}")
+        if bug.reproduce_steps:
+            print(f"\n复现步骤:\n{bug.reproduce_steps}")
+        print(f"\n复现率: {bug.reproduce_rate:.1f}% ({bug.reproduce_count}次)")
+        print(f"创建时间: {bug.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+        if bug.resolved_at:
+            print(f"解决时间: {bug.resolved_at.strftime('%Y-%m-%d %H:%M:%S')}")
+        print()
+        
+        # 显示评论
+        comments = bt.get_comments(args.bug_id)
+        if comments:
+            print(f"评论 ({len(comments)}):")
+            for c in comments:
+                print(f"  [{c.author}] {c.content}")
+            print()
+    
+    elif args.cmd == 'update':
+        kwargs = {}
+        if args.status:
+            kwargs['status'] = args.status
+        if args.assignee:
+            kwargs['assignee'] = args.assignee
+        if args.owner:
+            kwargs['owner'] = args.owner
+        
+        if not kwargs:
+            print("Please specify fields to update")
+            return
+        
+        bug = bt.update_bug(args.bug_id, **kwargs)
+        if bug:
+            print(f"Updated {args.bug_id}")
+            print(f"  状态: {bug.status.value}")
+            print(f"  负责人: {bug.assignee}")
+        else:
+            print(f"Bug {args.bug_id} not found")
+    
+    elif args.cmd == 'close':
+        bug = bt.close_bug(args.bug_id, args.reason)
+        if bug:
+            print(f"Closed {args.bug_id} ({args.reason})")
+        else:
+            print(f"Bug {args.bug_id} not found")
+    
+    elif args.cmd == 'delete':
+        if bt.delete_bug(args.bug_id):
+            print(f"Deleted {args.bug_id}")
+        else:
+            print(f"Bug {args.bug_id} not found")
+    
+    elif args.cmd == 'comment':
+        comment = bt.add_comment(args.bug_id, args.author, args.content)
+        print(f"Comment added to {args.bug_id}")
+    
+    elif args.cmd == 'reproduce':
+        attempt = bt.record_reproduce(
+            bug_id=args.bug_id,
+            seed=args.seed,
+            attempt_count=args.attempts,
+            success_count=args.success,
+            duration_ms=args.duration,
+            notes=args.notes
+        )
+        print(f"Reproduce recorded for {args.bug_id}")
+        print(f"  Seed: {attempt.seed}")
+        print(f"  Attempts: {attempt.attempt_count}, Success: {attempt.success_count}")
+        print(f"  Rate: {attempt.success_rate:.1f}%")
+    
+    elif args.cmd == 'stats':
+        stats = bt.get_stats()
+        print(f"\nBug统计")
+        print("=" * 60)
+        print(f"总Bug数: {stats['total_bugs']}")
+        print(f"开放Bug: {stats['open_bugs']}")
+        print(f"平均解决时间: {stats['avg_resolve_days']}天")
+        
+        print(f"\n按严重性:")
+        for sev, count in stats['severity_counts'].items():
+            icon = {'critical':'🔴','high':'🟠','medium':'🟡','low':'🟢'}.get(sev,'⚪')
+            print(f"  {icon} {sev}: {count}")
+        
+        print(f"\n按状态:")
+        for status, count in stats['status_counts'].items():
+            print(f"  {status}: {count}")
+        
+        print(f"\n按模块:")
+        for module, count in stats['module_counts'].items():
+            print(f"  {module}: {count}")
+        print()
+
+if __name__ == '__main__':
+    main()

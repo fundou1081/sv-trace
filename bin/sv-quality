@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""
+sv-quality - 代码质量检查CLI
+用法:
+    sv-quality check <file.sv> [--output <file>]
+    sv-quality multi-driver <file.sv>
+    sv-quality unused <file.sv>
+"""
+import sys
+import os
+import argparse
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from parse import SVParser
+from lint.code_quality import CodeQualityChecker
+
+def main():
+    parser = argparse.ArgumentParser(description='代码质量检查工具')
+    subparsers = parser.add_subparsers(dest='cmd', help='子命令')
+    
+    # check
+    check_parser = subparsers.add_parser('check', help='综合质量检查')
+    check_parser.add_argument('file', help='RTL文件')
+    check_parser.add_argument('--output', help='输出文件')
+    
+    # multi-driver
+    md_parser = subparsers.add_parser('multi-driver', help='多驱动检测')
+    md_parser.add_argument('file', help='RTL文件')
+    
+    # unused
+    unused_parser = subparsers.add_parser('unused', help='未使用信号检测')
+    unused_parser.add_argument('file', help='RTL文件')
+    
+    args = parser.parse_args()
+    
+    if not args.cmd:
+        parser.print_help()
+        return
+    
+    if args.cmd == 'check' or args.cmd == 'multi-driver' or args.cmd == 'unused':
+        if not os.path.exists(args.file):
+            print(f"File not found: {args.file}")
+            return
+        
+        # 解析
+        sv_parser = SVParser()
+        sv_parser.parse_file(args.file)
+        
+        # 检查
+        checker = CodeQualityChecker(sv_parser)
+        
+        if args.cmd == 'check':
+            report = checker.analyze()
+            output = checker.generate_report(report, os.path.basename(args.file))
+            
+            if args.output:
+                with open(args.output, 'w') as f:
+                    f.write(output)
+                print(f"Report saved to: {args.output}")
+            else:
+                print(output)
+        
+        elif args.cmd == 'multi-driver':
+            issues = checker.check_multi_driver()
+            print(f"\n多驱动检测: {len(issues)} 个问题")
+            for issue in issues:
+                icon = {'critical':'🔴','high':'🟠','medium':'🟡','low':'🟢'}.get(issue.severity.value,'⚪')
+                print(f"  {icon} {issue.description}")
+                print(f"      信号: {issue.signal}")
+        
+        elif args.cmd == 'unused':
+            issues = checker.check_unused_signals()
+            print(f"\n未使用信号: {len(issues)} 个")
+            for issue in issues[:20]:
+                print(f"  - {issue.signal}")
+            if len(issues) > 20:
+                print(f"  ... 还有 {len(issues) - 20} 个")
+
+if __name__ == '__main__':
+    main()
