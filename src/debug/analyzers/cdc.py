@@ -472,8 +472,8 @@ class CDCExtendedAnalyzer:
                     
                     if src_domain != dst_domain:
                         # 确定CDC类型
-                        src_freq = self._domains.get(src_domain, ClockDomain("")).frequency
-                        dst_freq = self._domains.get(dst_domain, ClockDomain("")).frequency
+                        src_freq = self._domains.get(src_domain, ClockDomain(name="", clock_signal="")).frequency
+                        dst_freq = self._domains.get(dst_domain, ClockDomain(name="", clock_signal="")).frequency
                         
                         if src_freq == "slow" and dst_freq == "fast":
                             path_type = "slow_to_fast"
