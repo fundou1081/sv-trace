@@ -87,3 +87,29 @@
 
 ---
 
+
+---
+
+## 本轮新增 (2026-04-27 00:38)
+
+| 需求 | 模块 | 状态 |
+|------|------|------|
+| 复位域分析 | dft/reset_domain.py | ✅ |
+| MBIST设计指导 | dft/mbist_design.py | ✅ |
+| 功耗域分析 | power/power_domain.py | ✅ |
+| 模式切换测试 | verify/mode_switch_test.py | ✅ |
+| Spec转验证点 | skills/spec-to-verification/ | ✅方法论 |
+| RTL转SVA断言 | skills/rtl-2-assertion/ | ✅方法论 |
+| 时序等效性检查 | skills/timing-equivalence/ | ✅方法论 |
+
+---
+
+## 最终状态
+
+**总计实现率**: ~90%
+
+剩余主要是:
+- 高难度算法 (Reference Model框架已有)
+- 外部工具集成 (仿真器/VCD框架已有)
+- 少量细节完善
+
