@@ -1,18 +1,24 @@
 """
 CoverageStimulusSuggester - Coverage激励建议器
+使用sv-trace已有的解析器进行路径分析
 
-功能：从指定的Coverage点逆向分析，生成能够覆盖该代码的激励建议
-
-⚠️ 当前状态: 框架完成 (30%)
+⚠️ 当前状态: 框架完成 (40%)
 TODO:
-- [ ] 路径约束提取 (需要 pyslang AST)
-- [ ] 符号执行引擎
+- [x] 使用SVParser解析 ✅
+- [x] 使用DriverCollector获取驱动 ✅
+- [ ] 路径约束提取 (需要更深的AST分析)
 - [ ] Z3约束求解集成
 """
 import re
-from typing import List, Dict, Optional, Tuple
+import sys
+import os
+from typing import List, Dict, Optional, Set
 from dataclasses import dataclass
 from enum import Enum
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from parse import SVParser
+from trace.driver import DriverCollector
 
 class CoverageType(Enum):
     LINE = "line"
@@ -27,8 +33,8 @@ class CoverageTarget:
     coverage_type: CoverageType
     file: str
     line: int
+    module: str = ""
     condition: Optional[str] = None
-    block_id: Optional[str] = None
 
 @dataclass
 class StimulusSuggestion:
@@ -41,26 +47,37 @@ class StimulusSuggestion:
     reasoning: str = ""
 
 class CoverageStimulusSuggester:
-    """Coverage激励建议器"""
+    """Coverage激励建议器
+    
+    使用sv-trace的解析器进行路径分析
+    """
     
     def __init__(self):
-        self.signals = {}
-        self.known_patterns = {
-            'if': self._handle_if,
-            'case': self._handle_case,
-            'while': self._handle_while,
-            'for': self._handle_for,
-        }
+        self.parser = None
+        self.driver_collector = None
+        self.signal_info = {}
+    
+    def load_design(self, filepaths: List[str]) -> bool:
+        """加载设计文件"""
+        try:
+            self.parser = SVParser()
+            for fp in filepaths:
+                self.parser.parse_file(fp)
+            
+            # 使用DriverCollector获取驱动信息
+            self.driver_collector = DriverCollector(self.parser)
+            
+            return True
+        except Exception as e:
+            print(f"加载失败: {e}")
+            return False
     
     def analyze_target(self, target: CoverageTarget) -> List[StimulusSuggestion]:
-        """
-        分析Coverage目标，生成激励建议
-        
-        ⚠️ 当前状态: 基础框架
-        TODO: 实现完整的路径约束提取和求解
-        
-        """
+        """分析Coverage目标，生成激励建议"""
         suggestions = []
+        
+        if not self.parser:
+            return suggestions
         
         # 根据coverage类型生成建议
         if target.coverage_type == CoverageType.LINE:
@@ -72,137 +89,129 @@ class CoverageStimulusSuggester:
         
         return suggestions
     
+    def _get_signal_drivers(self, signal: str) -> List[Dict]:
+        """获取信号的驱动信息"""
+        if not self.driver_collector:
+            return []
+        
+        drivers = self.driver_collector.drivers.get(signal, [])
+        return [{'kind': str(d.kind), 'sources': d.sources} for d in drivers]
+    
+    def _extract_condition_from_ast(self, file: str, line: int) -> Optional[str]:
+        """从AST中提取指定行的条件表达式
+        
+        使用sv-trace的parser
+        """
+        if not self.parser:
+            return None
+        
+        # TODO: 使用pyslang AST深度遍历
+        # 这个需要完整的AST分析
+        
+        return None
+    
     def _analyze_line_coverage(self, target: CoverageTarget) -> List[StimulusSuggestion]:
         """分析行覆盖"""
-        # TODO: 读取RTL，分析该行的条件
-        # 1. 提取该行的条件表达式
-        # 2. 求解需要的输入值
-        # 3. 生成激励建议
+        suggestions = []
         
-        suggestions = [
-            StimulusSuggestion(
-                description=f"覆盖第{target.line}行",
+        # 1. 尝试从源码提取条件
+        source = self.parser.get_source(target.file) if self.parser else ""
+        lines = source.split('\n') if source else []
+        
+        if target.line <= len(lines):
+            line_content = lines[target.line - 1]
+            
+            # 分析该行的内容
+            suggestions = self._generate_suggestions_from_code(line_content)
+        
+        return suggestions
+    
+    def _analyze_branch_coverage(self, target: CoverageTarget) -> List[StimulusSuggestion]:
+        """分析分支覆盖"""
+        suggestions = []
+        
+        # 分支: if/case/三元运算符
+        suggestions.append(StimulusSuggestion(
+            description="触发True分支",
+            input_signals=[],
+            expected_values={"condition": "1"},
+            priority="high",
+            confidence=0.5,
+            reasoning="需要满足分支条件"
+        ))
+        
+        suggestions.append(StimulusSuggestion(
+            description="触发False分支",
+            input_signals=[],
+            expected_values={"condition": "0"},
+            priority="high",
+            confidence=0.5,
+            reasoning="需要不满足分支条件"
+        ))
+        
+        return suggestions
+    
+    def _analyze_condition_coverage(self, target: CoverageTarget) -> List[StimulusSuggestion]:
+        """分析条件覆盖"""
+        return self._analyze_branch_coverage(target)
+    
+    def _generate_suggestions_from_code(self, code: str) -> List[StimulusSuggestion]:
+        """根据代码内容生成建议"""
+        suggestions = []
+        
+        # 1. if语句
+        if 'if' in code:
+            match = re.search(r'if\s*\((.+?)\)', code)
+            if match:
+                condition = match.group(1)
+                signals = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', condition)
+                
+                suggestions.append(StimulusSuggestion(
+                    description=f"让条件为真: {condition}",
+                    input_signals=signals,
+                    expected_values={s: "1" for s in signals},
+                    priority="high",
+                    confidence=0.6,
+                    reasoning="执行if内部代码"
+                ))
+        
+        # 2. case语句
+        if 'case' in code:
+            match = re.search(r'(\w+)\s*==', code)
+            if match:
+                signal = match.group(1)
+                suggestions.append(StimulusSuggestion(
+                    description=f"设置 {signal} 的值",
+                    input_signals=[signal],
+                    expected_values={signal: "<value>"},
+                    priority="high",
+                    confidence=0.5,
+                    reasoning="触发对应case分支"
+                ))
+        
+        # 3. 比较运算符
+        for op in ['==', '!=', '>', '<', '>= '<=']:
+            if op in code:
+                suggestions.append(StimulusSuggestion(
+                    description=f"满足比较: {op}",
+                    input_signals=[],
+                    expected_values={},
+                    priority="medium",
+                    confidence=0.4,
+                    reasoning="满足比较条件"
+                ))
+        
+        if not suggestions:
+            suggestions.append(StimulusSuggestion(
+                description="覆盖该行",
                 input_signals=[],
                 expected_values={},
                 priority="medium",
                 confidence=0.3,
-                reasoning="⚠️ 需要完整的路径分析引擎"
-            )
-        ]
-        return suggestions
-    
-    _analyze_branch_coverage = _analyze_line_coverage
-    
-    _analyze_condition_coverage = _analyze_line_coverage
-    
-    def _handle_if(self, condition: str) -> List[StimulusSuggestion]:
-        """处理if分支"""
-        suggestions = []
-        
-        # 提取条件
-        if cond := re.search(r'\((.+?)\)', condition):
-            expr = cond.group(1)
-            
-            # 建议True分支
-            suggestions.append(StimulusSuggestion(
-                description=f"让条件 '{expr}' 为真",
-                input_signals=self._extract_signals(expr),
-                expected_values={expr: "1"},
-                priority="high",
-                confidence=0.6,
-                reasoning="设置条件为真，触发True分支"
-            ))
-            
-            # 建议False分支
-            suggestions.append(StimulusSuggestion(
-                description=f"让条件 '{expr}' 为假",
-                input_signals=self._extract_signals(expr),
-                expected_values={expr: "0"},
-                priority="high",
-                confidence=0.6,
-                reasoning="设置条件为假，触发False分支"
+                reasoning="直接覆盖该代码行"
             ))
         
         return suggestions
-    
-    def _handle_case(self, condition: str) -> List[StimulusSuggestion]:
-        """处理case分支"""
-        suggestions = []
-        
-        # 提取case条件
-        if match := re.search(r'(\w+)\s*==?\s*(\w+)', condition):
-            signal = match.group(1)
-            value = match.group(2)
-            
-            suggestions.append(StimulusSuggestion(
-                description=f"设置 {signal} = {value}",
-                input_signals=[signal],
-                expected_values={signal: value},
-                priority="high",
-                confidence=0.7,
-                reasoning=f"触发case的{value}分支"
-            ))
-        
-        return suggestions
-    
-    _analyze_line_coverage = _analyze_branch_coverage = _analyze_condition_coverage
-    
-    def _handle_while(self, condition: str) -> List[StimulusSuggestion]:
-        """处理while循环 - 进入循环体的激励"""
-        return self._handle_if(condition)
-    
-    def _handle_for(self, condition: str) -> List[StimulusSuggestion]:
-        """处理for循环"""
-        suggestions = []
-        
-        # 提取循环变量
-        if match := re.search(r'(\w+)\s*<\s*(\d+)', condition):
-            var = match.group(1)
-            limit = match.group(2)
-            
-            suggestions.append(StimulusSuggestion(
-                description=f"让循环变量 {var} 从0到{limit}",
-                input_signals=[var],
-                expected_values={var: f"0 to {limit}"},
-                priority="medium",
-                confidence=0.5,
-                reasoning="触发for循环执行"
-            ))
-        
-        return suggestions
-    
-    def _extract_signals(self, expr: str) -> List[str]:
-        """提取表达式中的信号"""
-        signals = []
-        
-        # 简单提取：获取所有标识符
-        matches = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', expr)
-        signals.extend(matches)
-        
-        # 过滤关键字
-        keywords = {'if', 'else', 'for', 'while', 'case', 'switch', 
-                   'and', 'or', 'not', 'true', 'false'}
-        signals = [s for s in signals if s not in keywords]
-        
-        return list(set(signals))
-    
-    def extract_path_constraints(self, file: str, line: int) -> Dict:
-        """
-        提取到达指定行的路径约束
-        
-        ⚠️ 当前状态: 框架
-        TODO: 使用pyslang AST实现完整的约束提取
-        
-        Returns:
-            路径约束信息
-        """
-        return {
-            'file': file,
-            'line': line,
-            'constraints': [],
-            'note': '⚠️ 需要完整的AST分析引擎',
-            'suggested_approach': 'Z3符号执行'
-        }
     
     def suggest_stimulus(self, target: CoverageTarget) -> str:
         """生成激励建议文本"""
@@ -212,6 +221,14 @@ class CoverageStimulusSuggester:
         lines.append(f"# Coverage激励建议")
         lines.append(f"## 目标: {target.coverage_type.value} - {target.file}:{target.line}")
         lines.append("")
+        
+        # 信号驱动信息
+        if self.driver_collector:
+            lines.append("### 相关驱动信号")
+            for sig, drivers in self.driver_collector.drivers.items()[:10]:
+                if drivers:
+                    lines.append(f"- {sig}: {[str(d.kind) for d in drivers]}")
+            lines.append("")
         
         for i, s in enumerate(suggestions, 1):
             lines.append(f"### 建议 {i}: {s.description}")
@@ -233,14 +250,20 @@ class CoverageStimulusSuggester:
 
 # 使用示例
 if __name__ == "__main__":
-    suggester = CoverageStimulusSuggester()
+    import glob
     
-    # 示例: 分析行覆盖
-    target = CoverageTarget(
-        coverage_type=CoverageType.LINE,
-        file="design.sv",
-        line=100,
-    )
+    # 查找SV文件
+    sv_files = glob.glob("../../../test/**/*.sv", recursive=True)
     
-    result = suggester.suggest_stimulus(target)
-    print(result)
+    if sv_files:
+        suggester = CoverageStimulusSuggester()
+        suggester.load_design(sv_files[:3])
+        
+        target = CoverageTarget(
+            coverage_type=CoverageType.LINE,
+            file=sv_files[0],
+            line=50,
+        )
+        
+        result = suggester.suggest_stimulus(target)
+        print(result)
