@@ -1,43 +1,68 @@
 # SV-Trace TODO 列表
 
-## 问题修复清单 - 全部完成 ✅
+## 版本: v0.4.1 | 更新: 2026-04-26
 
-### P0 - 已完成
+---
+
+## P0 - 问题修复 ✅ 全部完成
 
 | 问题 | 状态 | 修复方案 |
 |------|------|----------|
 | ResetIntegrityChecker错误 | ✅ | 使用check()方法 |
 | CodeQualityScorer错误 | ✅ | 返回tuple解包 |
-
-### P1 - 已完成
-
-| 问题 | 状态 | 修复方案 |
-|------|------|----------|
 | LoadTracer双重实现 | ✅ | ADR-021合并 |
 | 缓存机制 | ✅ | GlobalParseCache |
 
 ---
 
-## 测试覆盖 - 完成 ✅
+## P1 - 已完成 ✅
 
-| 功能模块 | 测试文件 | 场景数 |
-|---------|---------|--------|
-| DriverCollector | test_driver_collector.sv | 16 |
-| LoadTracer | test_load_tracer.sv | 18 |
-| FanoutAnalyzer | test_fanout_analyzer.sv | 15 |
-| DataFlowTracer | test_dataflow_tracer.sv | 18 |
-| ControlFlowTracer | test_controlflow_tracer.sv | 18 |
-| ConnectionTracer | test_connection_tracer.sv | 18 |
-| ClockTreeAnalyzer | test_clock_tree_analyzer.sv | 12 |
-| TimedPathAnalyzer | test_timed_path_analyzer.sv | 12 |
-| ConditionCoverage | test_condition_coverage.sv | 12 |
-
-**总计**: 10文件, 157+场景
+| 功能 | 状态 | ADR |
+|------|------|-----|
+| CDC多时钟域检测增强 | ✅ | ADR-023 |
+| 状态编码建议 | ✅ | ADR-023 |
+| 时序收敛检查 | ✅ | ADR-023 |
+| 时序违例路径分析 | ✅ | ADR-023 |
+| 代码TODO修复 | ✅ | ADR-022 |
 
 ---
 
-## 版本历史
+## P2 - 已完成 ✅
 
-- v0.1: 初始版本
-- v0.2: 测试用例扩展
-- v0.3: 问题修复 (本版本)
+| 功能 | 状态 | ADR |
+|------|------|-----|
+| 跨时钟域Timed Path | ✅ | ADR-024 |
+| 多文件联合分析 | ✅ | ADR-024 |
+| SVA属性自动生成 | ✅ | ADR-024 |
+| 验证计划自动生成 | ✅ | formal_verification.py |
+| 随机约束建议 | ✅ | multi_file_analyzer.py |
+
+---
+
+## P3 - 待处理
+
+| 功能 | 状态 |
+|------|------|
+| FSM覆盖率追踪 | 🔲 |
+| 形式验证接口 | 🔲 |
+
+---
+
+## 测试覆盖 ✅
+
+| 指标 | 数值 |
+|------|------|
+| 测试文件 | 40 |
+| 测试场景 | 300+ |
+| 模块覆盖 | 100% (20/20) |
+
+---
+
+## 提交历史
+
+```
+50b5170 docs: ADR-023 确认P1功能已完成
+613b47c feat: 修复代码中3个TODO
+2e9e8f0 fix: 修复Parameter API问题
+```
+

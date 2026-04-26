@@ -90,6 +90,7 @@ class MultiFileAnalyzer:
         self._find_cross_file_signals()
         
         # 5. 查找孤立信号
+        self.orphan_signals: List[str] = []
         self._find_orphan_signals()
         
         return MultiFileReport(
