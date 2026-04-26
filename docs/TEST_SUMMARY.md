@@ -178,3 +178,123 @@
 ---
 
 *最后更新: 2026-04-26*
+
+---
+
+## 4. Corner Case测试 (2026-04-26 新增)
+
+### 新增测试文件
+
+| 文件 | 测试内容 |
+|------|----------|
+| test_fsm_corners.sv | One-hot编码、三段式、多状态机、复杂条件 |
+| test_cdc_corners.sv | 握手协议、Mux同步器、复位CDC、门控时钟 |
+| test_condition_corners.sv | 位选择、拼接、比较符、casez |
+| test_fanout_reset_corners.sv | 高扇出、多复位源、复位链 |
+
+### Corner Case测试结果
+
+| 测试 | 状态 | 检测结果 |
+|------|------|----------|
+| FSM Corners | ✅ | 21 states detected |
+| CDC Corners | ✅ | 8 clock domains, 1 CDC path |
+| Condition Corners | ✅ | 17 ifs, 23 conditions, 45 cross |
+| Fanout/Reset Corners | ⚠️ | LoadTracer局限性 |
+
+### 发现的问题
+
+#### 1. FSM跳转检测问题
+- **问题**: Transitions检测为0
+- **原因**: FSM分析器的跳转提取依赖正则匹配，可能遗漏某些case格式
+
+#### 2. LoadTracer扇出统计局限性
+- **问题**: clk等信号的fanout显示为1，实际驱动100+寄存器
+- **原因**: LoadTracer未追踪到所有always块中的使用
+
+#### 3. 复位树fanout为0
+- **问题**: rst_n的fanout显示为0
+- **原因**: LoadTracer未追踪always块的复位条件
+
+---
+
+## 5. 测试评价与改进建议
+
+### FSMAnalyzer评价
+
+**覆盖度**: ★★★☆☆ (3/5)
+- ✅ 标准状态机(typedef enum, parameter)
+- ✅ 多种编码方式(binary, one-hot)
+- ✅ 复杂跳转条件
+- ⚠️ 跳转检测依赖正则，不够健壮
+- ❌ 一段式/二段式/三段式写法未区分
+
+**改进建议**:
+1. 增强跳转检测，使用AST而非正则
+2. 添加状态机编码类型识别
+3. 支持多状态机检测
+
+### CDCAnalyzer评价
+
+**覆盖度**: ★★★★☆ (4/5)
+- ✅ 2级同步器、多时钟域、Gray码
+- ✅ 握手协议、异步FIFO
+- ✅ 识别未保护CDC
+- ⚠️ 未区分1级/2级/3级同步器
+- ❌ 未检测亚稳态风险评分
+
+**改进建议**:
+1. 区分同步器级数
+2. 添加亚稳态MTBF计算
+3. 检测异步复位释放竞态
+
+### ConditionCoverageAnalyzer评价
+
+**覆盖度**: ★★★★☆ (4/5)
+- ✅ 简单/嵌套/复杂条件
+- ✅ 中间变量展开
+- ✅ 三元表达式、case
+- ⚠️ 位选择、拼接条件检测不完整
+- ❌ 未覆盖for/while循环条件
+
+**改进建议**:
+1. 增强位选择/拼接条件检测
+2. 添加循环条件覆盖
+3. 支持function内的条件展开
+
+### FanoutAnalyzer评价
+
+**覆盖度**: ★★☆☆☆ (2/5)
+- ⚠️ 依赖LoadTracer，但LoadTracer能力有限
+- ❌ 无法检测时钟/复位的高扇出
+- ❌ 无法追踪跨always块的信号使用
+
+**改进建议**:
+1. 重构LoadTracer，增强信号使用追踪
+2. 添加直接分析always块的能力
+3. 支持跨模块扇出统计
+
+### ResetIntegrityChecker评价
+
+**覆盖度**: ★★★☆☆ (3/5)
+- ✅ 多种复位类型(同步/异步)
+- ✅ 多复位源
+- ⚠️ 依赖LoadTracer，fanout统计不准确
+- ❌ 未检测复位时序问题
+- ❌ 未检测上电序列
+
+**改进建议**:
+1. 直接分析always块获取复位信息
+2. 添加复位时序检查
+3. 添加上电序列生成
+
+---
+
+## 6. 后续优化优先级
+
+| 优先级 | 改进项 | 影响 |
+|--------|--------|------|
+| P0 | 重构LoadTracer | 高扇出、复位完整性 |
+| P1 | FSM跳转检测增强 | FSM分析准确性 |
+| P2 | CDC同步器级数区分 | CDC分析精度 |
+| P3 | 条件类型细化 | 覆盖率准确性 |
+
