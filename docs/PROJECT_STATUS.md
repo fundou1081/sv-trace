@@ -113,3 +113,14 @@
 - 外部工具集成 (仿真器/VCD框架已有)
 - 少量细节完善
 
+
+---
+
+## 新增 (2026-04-27 01:13)
+
+| 工具 | 模块 | 说明 |
+|------|------|------|
+| Coverage激励 | coverage_guide/ | 使用SVParser + DriverCollector |
+| Constraint检测 | constraint_check/ | 使用ConstraintExtractor + Z3 |
+| 依赖 | parse.constraint | ConstraintExtractor |
+| 依赖 | trace.driver | DriverCollector |
