@@ -505,3 +505,100 @@ __all__ = [
     'FaninInfo',
     'ConnectivityMatrix',
 ]
+
+
+# =============================================================================
+# 使用改进版LoadTracer的FanoutAnalyzer
+# =============================================================================
+
+class FanoutAnalyzerWithImprovedLoad(FanoutAnalyzer):
+    """使用改进版LoadTracer的FanoutAnalyzer"""
+    
+    def __init__(self, parser):
+        super().__init__(parser)
+        # 使用改进版的LoadTracer
+        from .load_improved import LoadTracerImproved
+        self._load_tracer = LoadTracerImproved(parser)
+    
+    def analyze_signal(self, signal_name: str):
+        """分析单个信号的扇出"""
+        loads = self._load_tracer.find_load(signal_name)
+        
+        direct = len(loads)
+        
+        return FanoutInfo(
+            signal=signal_name,
+            direct_fanout=direct,
+            total_fanout=direct,
+            max_depth=1,
+            driven_signals=[],
+            high_fanout=direct > 10,
+            critical=direct > 20
+        )
+    
+    def find_high_fanout_signals(self, threshold: int = 10):
+        """查找高扇出信号"""
+        from .driver import DriverCollector
+        from .load_improved import LoadTracerImproved
+        
+        # 使用改进版LoadTracer
+        improved_tracer = LoadTracerImproved(self.parser)
+        
+        # 获取所有信号
+        signals = set()
+        keywords = {'if', 'else', 'case', 'for', 'while', 'do', 'begin', 'end', 'always', 
+                   'assign', 'logic', 'wire', 'reg', 'input', 'output', 'inout', 'module',
+                   'parameter', 'localparam', 'typedef', 'enum', 'struct', 'interface',
+                   'posedge', 'negedge', 'or', 'and', 'not', 'xor', 'assign', 'force'}
+        for fname, tree in self.parser.trees.items():
+            code = ""
+            # 尝试从parser.sources获取
+            if hasattr(self.parser, 'sources') and fname in self.parser.sources:
+                code = self.parser.sources[fname]
+            elif hasattr(tree, 'source') and tree.source:
+                code = tree.source
+            if code:
+                import re
+                sigs = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', code)
+                for s in sigs:
+                    if s not in keywords and not s.startswith('_'):
+                        signals.add(s)
+        
+        results = []
+        for sig in signals:
+            if sig.startswith('_'):
+                continue
+            fo = improved_tracer.get_fanout(sig)
+            if fo >= threshold:
+                results.append(FanoutInfo(
+                    signal=sig,
+                    direct_fanout=fo,
+                    total_fanout=fo,
+                    max_depth=1,
+                    driven_signals=[],
+                    high_fanout=fo > 10,
+                    critical=fo > 20
+                ))
+        
+        return sorted(results, key=lambda x: -x.direct_fanout)
+
+
+# 添加便捷方法
+def get_fanout_improved(self, signal_name: str, module_name: str = None) -> FanoutInfo:
+    """获取信号的扇出信息 - 使用改进版"""
+    analyzer = FanoutAnalyzerWithImprovedLoad(self.parser)
+    return analyzer.analyze_signal(signal_name)
+
+DependencyAnalyzer.get_fanout_improved = get_fanout_improved
+
+
+__all__ = [
+    'DependencyAnalyzer', 
+    'SignalDependency',
+    'FanoutAnalyzer',
+    'FaninAnalyzer',
+    'FanoutInfo',
+    'FaninInfo',
+    'ConnectivityMatrix',
+    'FanoutAnalyzerWithImprovedLoad',
+]
