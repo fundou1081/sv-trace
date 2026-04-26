@@ -441,8 +441,33 @@ class ConnectivityMatrix:
     
     def _find_signal_module(self, signal: str) -> Optional[str]:
         """确定信号所属模块"""
-        # TODO: 实现模块确定
-        return "top"
+        # 检查缓存
+        if signal in self._signal_modules:
+            return self._signal_modules[signal]
+        
+        # 遍历所有模块
+        for fname, tree in self.parser.trees.items():
+            if not tree or not tree.root:
+                continue
+            
+            # 通过AST查找模块
+            def visit_node(node):
+                kind = str(node.kind)
+                if "ModuleDeclaration" in kind:
+                    if hasattr(node, "header") and hasattr(node.header, "name"):
+                        module_name = str(node.header.name)
+                        body = str(node)
+                        if signal in body:
+                            self._signal_modules[signal] = module_name
+                            return module_name
+                return None
+            
+            if hasattr(tree.root, "visit"):
+                result = tree.root.visit(visit_node)
+                if result:
+                    return result
+        
+        return None
     
     def get_module_inputs(self, module: str) -> Set[str]:
         """获取模块的输入信号"""
@@ -739,8 +764,56 @@ class CycleDetector:
     
     def detect_cross_module(self) -> List[CircularDependency]:
         """检测跨模块循环依赖"""
-        # TODO: 实现跨模块循环检测
-        return []
+        results = []
+        
+        # 构建模块间依赖图
+        module_deps = {}  # module -> set of depends_on_modules
+        
+        for sig, drivers in self.drivers.items():
+            sig_module = self._find_signal_module(sig)
+            if not sig_module:
+                continue
+            
+            for driver in drivers:
+                for src in driver.sources:
+                    src_module = self._find_signal_module(src)
+                    if src_module and src_module != sig_module:
+                        if sig_module not in module_deps:
+                            module_deps[sig_module] = set()
+                        module_deps[sig_module].add(src_module)
+        
+        # 检测模块级循环
+        visited = set()
+        stack = []
+        
+        def dfs(module, path):
+            if module in stack:
+                # 发现循环
+                cycle_start = path.index(module)
+                cycle_modules = path[cycle_start:] + [module]
+                results.append(CircularDependency(
+                    signals=cycle_modules,
+                    is_cross_module=True,
+                    module_chain=cycle_modules
+                ))
+                return
+            
+            if module in visited:
+                return
+            
+            stack.append(module)
+            visited.add(module)
+            
+            if module in module_deps:
+                for dep in module_deps[module]:
+                    dfs(dep, path + [module])
+            
+            stack.pop()
+        
+        for module in module_deps:
+            dfs(module, [])
+        
+        return results
 
 
 def check_circular_dependencies(parser) -> List[CircularDependency]:
