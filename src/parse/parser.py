@@ -12,8 +12,8 @@ class SVParser:
         self.compilation = pyslang.Compilation()
         self.trees: Dict[str, pyslang.SyntaxTree] = {}
         self.sources: Dict[str, str] = {}  # 保存源代码
-        self.sources: Dict[str, str] = {}  # 保存源代码
         self._parse_cache: Dict[str, Any] = {}
+        self._module_cache: Dict[str, Any] = {}  # 模块缓存
     
     def parse_file(self, filepath: str) -> pyslang.SyntaxTree:
         """解析单个文件"""
@@ -116,3 +116,131 @@ class SVParser:
         self.trees.clear()
         self._parse_cache.clear()
         self.compilation = pyslang.Compilation()
+
+
+# =============================================================================
+# 统一源码访问工具
+# =============================================================================
+
+def get_source_safe(parser, filepath: str) -> str:
+    """
+    安全获取源码的统一方法
+    
+    尝试多种方式获取源码:
+    1. parser.get_source(filepath)
+    2. parser.sources.get(filepath)
+    3. 直接读取文件
+    """
+    # 方式1: 使用get_source方法
+    if hasattr(parser, 'get_source'):
+        source = parser.get_source(filepath)
+        if source:
+            return source
+    
+    # 方式2: 直接访问sources字典
+    if hasattr(parser, 'sources') and filepath in parser.sources:
+        return parser.sources[filepath]
+    
+    # 方式3: 尝试读取文件
+    try:
+        if os.path.exists(filepath):
+            with open(filepath, 'r') as f:
+                return f.read()
+    except:
+        pass
+    
+    return ""
+
+
+# 添加为SVParser的方法
+SVParser.get_source_safe = lambda self, fp: get_source_safe(self, fp)
+
+__all__ = ['SVParser', 'get_source_safe']
+
+
+# =============================================================================
+# 全局解析缓存 - 提升性能
+# =============================================================================
+
+class GlobalParseCache:
+    """全局解析缓存"""
+    _instance = None
+    _cache: Dict[str, pyslang.SyntaxTree] = {}
+    _sources: Dict[str, str] = {}
+    
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = GlobalParseCache()
+        return cls._instance
+    
+    def get_tree(self, filepath: str) -> Optional[pyslang.SyntaxTree]:
+        return self._cache.get(filepath)
+    
+    def get_source(self, filepath: str) -> Optional[str]:
+        return self._sources.get(filepath)
+    
+    def set(self, filepath: str, tree: pyslang.SyntaxTree, source: str):
+        self._cache[filepath] = tree
+        self._sources[filepath] = source
+    
+    def clear(self):
+        self._cache.clear()
+        self._sources.clear()
+    
+    def size(self) -> int:
+        return len(self._cache)
+
+
+# 添加便捷方法
+def parse_file_cached(parser, filepath: str) -> pyslang.SyntaxTree:
+    """带缓存的文件解析"""
+    cache = GlobalParseCache.get_instance()
+    
+    # 检查缓存
+    cached_tree = cache.get_tree(filepath)
+    if cached_tree:
+        parser.trees[filepath] = cached_tree
+        return cached_tree
+    
+    # 解析并缓存
+    tree = parser.parse_file(filepath)
+    if tree:
+        try:
+            with open(filepath, 'r') as f:
+                source = f.read()
+            cache.set(filepath, tree, source)
+        except:
+            pass
+    
+    return tree
+
+
+# 更新SVParser方法使用缓存
+def _parse_file_with_cache(self, filepath: str) -> pyslang.SyntaxTree:
+    """解析文件(带缓存)"""
+    cache = GlobalParseCache.get_instance()
+    
+    # 检查缓存
+    cached_tree = cache.get_tree(filepath)
+    if cached_tree:
+        self.trees[filepath] = cached_tree
+        if filepath not in self.sources:
+            source = cache.get_source(filepath)
+            if source:
+                self.sources[filepath] = source
+        return cached_tree
+    
+    # 正常解析
+    return self.parse_file(filepath)
+
+
+# 替换方法
+SVParser.parse_file_cached = _parse_file_with_cache
+
+__all__ = [
+    'SVParser', 
+    'get_source_safe', 
+    'GlobalParseCache',
+    'parse_file_cached'
+]

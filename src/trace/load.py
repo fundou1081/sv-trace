@@ -308,20 +308,14 @@ class LoadTracerRegex:
         if filepath in self._code_cache:
             return self._code_cache[filepath]
         
-        # 尝试从parser.sources获取
-        if hasattr(self.parser, 'sources') and filepath in self.parser.sources:
-            code = self.parser.sources[filepath]
+        # 使用统一的get_source_safe方法
+        from parse import get_source_safe
+        code = get_source_safe(self.parser, filepath)
+        if code:
             self._code_cache[filepath] = code
             return code
         
-        # 直接读取文件
-        try:
-            with open(filepath, 'r') as f:
-                code = f.read()
-            self._code_cache[filepath] = code
-            return code
-        except:
-            return ""
+        return ""
     
     def _find_in_file(self, filepath: str, signal: str) -> List[Load]:
         """在单个文件中查找信号使用"""

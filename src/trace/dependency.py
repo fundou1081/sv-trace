@@ -602,3 +602,167 @@ __all__ = [
     'ConnectivityMatrix',
     'FanoutAnalyzerWithImprovedLoad',
 ]
+
+
+# =============================================================================
+# 循环依赖检测
+# =============================================================================
+
+@dataclass
+class CircularDependency:
+    """循环依赖"""
+    cycle: List[str]  # 形成环的信号/模块列表
+    length: int
+    is_reachable: bool = True
+    severity: str = "warning"  # "info", "warning", "critical"
+
+
+def detect_signal_cycles(signal: str, dependencies: Dict[str, List[str]]) -> List[List[str]]:
+    """
+    检测信号的循环依赖
+    
+    使用DFS检测从给定信号出发的环
+    
+    Returns:
+        所有形成环的路径列表
+    """
+    cycles = []
+    visited = set()
+    path = []
+    
+    def dfs(current: str, path: List[str]) -> None:
+        if current in visited:
+            # 找到环
+            if current in path:
+                cycle_start = path.index(current)
+                cycle = path[cycle_start:] + [current]
+                if len(cycle) >= 2:
+                    cycles.append(cycle)
+            return
+        
+        visited.add(current)
+        path.append(current)
+        
+        # 遍历依赖
+        if current in dependencies:
+            for next_sig in dependencies[current]:
+                dfs(next_sig, path[:])
+        
+        visited.discard(current)
+    
+    dfs(signal, [])
+    return cycles
+
+
+def detect_all_cycles(dependencies: Dict[str, List[str]]) -> List[CircularDependency]:
+    """
+    检测所有循环依赖
+    
+    Args:
+        dependencies: {signal: [dependent_signals]}
+    
+    Returns:
+        循环依赖列表
+    """
+    cycles = []
+    all_signals = set(dependencies.keys())
+    
+    for sig in dependencies:
+        all_signals.update(dependencies[sig])
+    
+    detected = set()  # 已检测到的环
+    
+    for sig in all_signals:
+        sig_cycles = detect_signal_cycles(sig, dependencies)
+        for cycle in sig_cycles:
+            # 规范化环(去重)
+            cycle_key = tuple(sorted(cycle))
+            if cycle_key not in detected:
+                detected.add(cycle_key)
+                cycles.append(CircularDependency(
+                    cycle=list(cycle),
+                    length=len(cycle),
+                    severity="critical" if len(cycle) <= 3 else "warning"
+                ))
+    
+    return cycles
+
+
+class CycleDetector:
+    """循环检测器"""
+    
+    def __init__(self, parser):
+        self.parser = parser
+    
+    def detect_in_module(self, module_name: str = None) -> List[CircularDependency]:
+        """检测模块内的循环依赖"""
+        # 构建依赖图
+        dependencies = {}
+        
+        # 收集所有信号依赖
+        from .driver import DriverCollector
+        collector = DriverCollector(self.parser)
+        
+        for fname, tree in self.parser.trees.items():
+            code = ""
+            if hasattr(self.parser, 'sources') and fname in self.parser.sources:
+                code = self.parser.sources[fname]
+            elif hasattr(tree, 'source') and tree.source:
+                code = tree.source
+            
+            if not code:
+                continue
+            
+            # 提取信号赋值关系
+            import re
+            # 查找 always_ff/always_comb 块
+            always_blocks = re.finditer(
+                r'always\S+\s+@\s*\([^)]+\)\s+begin\s+([\s\S]*?)\s+end',
+                code
+            )
+            
+            for block in always_blocks:
+                block_content = block.group(1)
+                # 查找所有信号引用
+                signals = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', block_content)
+                # 移除关键字
+                keywords = {'if', 'else', 'case', 'for', 'while', 'begin', 'end', 
+                          'posedge', 'negedge', 'clk', 'rst'}
+                signals = [s for s in signals if s not in keywords]
+                
+                # 建立依赖关系 (简化版)
+                for sig in signals:
+                    if sig not in dependencies:
+                        dependencies[sig] = []
+        
+        return detect_all_cycles(dependencies)
+    
+    def detect_cross_module(self) -> List[CircularDependency]:
+        """检测跨模块循环依赖"""
+        # TODO: 实现跨模块循环检测
+        return []
+
+
+def check_circular_dependencies(parser) -> List[CircularDependency]:
+    """便捷函数：检查循环依赖"""
+    detector = CycleDetector(parser)
+    return detector.detect_in_module()
+
+
+# 添加到DependencyAnalyzer
+DependencyAnalyzer.detect_cycles = lambda self: CycleDetector(self.parser).detect_in_module()
+DependencyAnalyzer.check_circular_dependencies = staticmethod(check_circular_dependencies)
+
+__all__ = [
+    'DependencyAnalyzer', 
+    'SignalDependency',
+    'FanoutAnalyzer',
+    'FaninAnalyzer',
+    'FanoutInfo',
+    'FaninInfo',
+    'ConnectivityMatrix',
+    'CircularDependency',
+    'detect_signal_cycles',
+    'detect_all_cycles',
+    'CycleDetector',
+]

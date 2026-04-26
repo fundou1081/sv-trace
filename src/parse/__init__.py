@@ -1,7 +1,7 @@
 """
 Parse 模块 - 解析 SystemVerilog 代码
 """
-from .parser import SVParser
+from .parser import SVParser, get_source_safe, GlobalParseCache, parse_file_cached
 from .extractors import (
     ModuleExtractor,
     SignalExtractor,
@@ -23,4 +23,8 @@ __all__ = [
     "ConstraintExtractor",
     "CovergroupExtractor",
     "AssertionExtractor",
+    # 新增
+    "get_source_safe",
+    "GlobalParseCache",
+    "parse_file_cached",
 ]
