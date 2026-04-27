@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""TB Complexity Analysis CLI"""
+
+import sys
+sys.path.insert(0, 'src')
+
+from verify.tb_analyzer import TBComplexityAnalyzer
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: sv-tb-complexity <tb_file.sv>")
+        sys.exit(1)
+    
+    filepath = sys.argv[1]
+    analyzer = TBComplexityAnalyzer(filepath=filepath)
+    print(analyzer.get_report())
+
+if __name__ == '__main__':
+    main()
