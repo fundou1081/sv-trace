@@ -88,6 +88,9 @@ sv quality design.sv
 ### Python API
 
 ```python
+import sys
+sys.path.insert(0, 'src')
+
 from parse import SVParser
 from debug.constraint_parser_v2 import parse_constraints
 from trace.data_path import analyze_data_path
