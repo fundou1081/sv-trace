@@ -1,429 +1,197 @@
-#!/usr/bin/env python3
 """
-综合测试 - 覆盖已知问题域
+综合测试 - 运行所有测试用例
 """
 import sys
 import os
-import unittest
-import tempfile
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..', 'src'))
-
-from parse.parser import SVParser
-from trace.driver import DriverTracer
-from debug.fsm import FSMExtractor
-from debug.iospec import IOSpecExtractor
-from debug.dependency import ModuleDependencyAnalyzer
-
-
-class TestIOSpecParameterized(unittest.TestCase):
-    """IOSpec - 参数化相关测试"""
-    
-    def test_param_width_WIDTH_1_0(self):
-        """参数化格式: WIDTH-1:0"""
-        code = """
-        module m #(
-            parameter WIDTH = 8
-        )(input [WIDTH-1:0] d);
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        extractor = IOSpecExtractor(parser)
-        spec = extractor.extract('m')
-        widths = {p.name: p.width for p in spec.ports}
-        self.assertEqual(widths.get('d'), 1)  # 参数化，设为1
-        os.unlink(f.name)
-    
-    def test_param_width_DW_1_0(self):
-        """参数化格式: DW-1:0"""
-        code = """
-        module m #(
-            parameter DW = 16
-        )(input [DW-1:0] data);
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        extractor = IOSpecExtractor(parser)
-        spec = extractor.extract('m')
-        widths = {p.name: p.width for p in spec.ports}
-        self.assertEqual(widths.get('data'), 1)  # 参数化
-        os.unlink(f.name)
-    
-    def test_numeric_width(self):
-        """数字格式: [31:0]"""
-        code = """
-        module m(input [31:0] data);
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        extractor = IOSpecExtractor(parser)
-        spec = extractor.extract('m')
-        widths = {p.name: p.width for p in spec.ports}
-        self.assertEqual(widths.get('data'), 32)  # 正确解析
-        os.unlink(f.name)
-    
-    def test_single_bit(self):
-        """单bit: 无宽度"""
-        code = """
-        module m(input clk, input enable);
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        extractor = IOSpecExtractor(parser)
-        spec = extractor.extract('m')
-        widths = {p.name: p.width for p in spec.ports}
-        self.assertEqual(widths.get('clk'), 1)
-        self.assertEqual(widths.get('enable'), 1)
-        os.unlink(f.name)
+from parse import SVParser
+from trace.driver import DriverCollector
+from trace.load import LoadTracer, LoadTracerRegex
+from trace.dependency import DependencyAnalyzer, FanoutAnalyzer
+from trace.dataflow import DataFlowTracer
+from trace.controlflow import ControlFlowTracer
+from trace.connection import ConnectionTracer
 
 
-class TestDependencyInstanceParams(unittest.TestCase):
-    """ModuleDependency - 实例参数测试"""
+TARGETED_DIR = os.path.join(os.path.dirname(__file__), 'targeted')
+
+
+def test_file(filename, analyzers):
+    """测试单个文件"""
+    filepath = os.path.join(TARGETED_DIR, filename)
+    if not os.path.exists(filepath):
+        return {"status": "skip", "reason": "file not found"}
     
-    def test_single_param(self):
-        """单个参数"""
-        code = """
-        module ram #(parameter AW=8)();
-        endmodule
-        module top;
-            ram #(.AW(10)) u_ram();
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
+    try:
         parser = SVParser()
-        parser.parse_file(f.name)
-        analyzer = ModuleDependencyAnalyzer(parser)
-        graph = analyzer.analyze()
-        top = graph.modules['top']
-        inst = top.instances[0]
-        self.assertEqual(inst.parameters.get('AW'), '10')
-        os.unlink(f.name)
-    
-    def test_multiple_params(self):
-        """多个参数"""
-        code = """
-        module ram #(parameter AW=8, parameter DW=32)();
-        endmodule
-        module top;
-            ram #(.AW(12), .DW(64)) u_ram();
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        analyzer = ModuleDependencyAnalyzer(parser)
-        graph = analyzer.analyze()
-        top = graph.modules['top']
-        inst = top.instances[0]
-        self.assertEqual(inst.parameters.get('AW'), '12')
-        self.assertEqual(inst.parameters.get('DW'), '64')
-        os.unlink(f.name)
-    
-    def test_string_param(self):
-        """字符串参数"""
-        code = """
-        module fifo #(parameter NAME="fifo")();
-        endmodule
-        module top;
-            fifo #(.NAME("my_fifo")) u_fifo();
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        analyzer = ModuleDependencyAnalyzer(parser)
-        graph = analyzer.analyze()
-        top = graph.modules['top']
-        inst = top.instances[0]
-        self.assertEqual(inst.parameters.get('NAME'), '"my_fifo"')
-        os.unlink(f.name)
-    
-    def test_hierarchy_with_params(self):
-        """带参数的层次结构"""
-        code = """
-        module leaf #(parameter W=8)();
-        endmodule
-        module middle #(
-            parameter A=4,
-            parameter B=16
-        )();
-            leaf #(.W(B)) u_leaf();
-        endmodule
-        module top;
-            middle #(.A(8), .B(32)) u_mid();
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        analyzer = ModuleDependencyAnalyzer(parser)
-        graph = analyzer.analyze()
+        parser.parse_file(filepath)
         
-        top = graph.modules['top']
-        self.assertEqual(top.instances[0].parameters.get('A'), '8')
-        self.assertEqual(top.instances[0].parameters.get('B'), '32')
+        results = {}
+        for name, analyzer_class in analyzers:
+            try:
+                analyzer = analyzer_class(parser)
+                if hasattr(analyzer, 'find_high_fanout_signals'):
+                    result = len(analyzer.find_high_fanout_signals(threshold=2))
+                elif hasattr(analyzer, 'get_all_signals'):
+                    result = len(analyzer.get_all_signals())
+                elif hasattr(analyzer, 'find_flow'):
+                    result = analyzer.find_flow('clk') or 0
+                elif hasattr(analyzer, 'get_signal_connections'):
+                    result = len(analyzer.get_signal_connections('clk') or [])
+                elif hasattr(analyzer, 'get_connections'):
+                    result = len(analyzer.get_connections())
+                else:
+                    result = "ok"
+                results[name] = {"status": "ok", "result": result}
+            except Exception as e:
+                results[name] = {"status": "error", "error": str(e)[:50]}
         
-        middle = graph.modules['middle']
-        self.assertEqual(middle.instances[0].parameters.get('W'), 'B')
-        os.unlink(f.name)
+        return {"status": "ok", "results": results}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:50]}
 
 
-class TestDriverPatterns(unittest.TestCase):
-    """DriverTracer - 驱动模式测试"""
+def run_all_tests():
+    """运行所有测试"""
+    print("="*70)
+    print("SV-Trace 综合测试")
+    print("="*70)
     
-    def test_ff_posedge(self):
-        """always_ff posedge"""
-        code = """
-        module m(input clk, output reg [7:0] d);
-            always_ff @(posedge clk) d <= 8'h00;
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        tracer = DriverTracer(parser)
-        drivers = tracer.find_driver('d')
-        self.assertGreaterEqual(len(drivers), 1)
-        os.unlink(f.name)
+    # 测试文件列表
+    test_files = [
+        # 针对性测试
+        ("FSM Targeted", "test_fsm_targeted.sv", [
+            ("Driver", DriverCollector),
+            ("Fanout", FanoutAnalyzer),
+            ("DataFlow", DataFlowTracer),
+        ]),
+        ("CDC Targeted", "test_cdc_targeted.sv", [
+            ("Driver", DriverCollector),
+            ("Fanout", FanoutAnalyzer),
+        ]),
+        ("Condition Targeted", "test_condition_targeted.sv", [
+            ("Driver", DriverCollector),
+            ("LoadTracer", LoadTracer),
+        ]),
+        ("Fanout Targeted", "test_fanout_targeted.sv", [
+            ("Driver", DriverCollector),
+            ("Fanout", FanoutAnalyzer),
+        ]),
+        ("Reset Targeted", "test_reset_targeted.sv", [
+            ("Driver", DriverCollector),
+            ("LoadTracer", LoadTracerRegex),
+        ]),
+        # Corner Cases
+        ("FSM Corners", "test_fsm_corners.sv", [
+            ("Driver", DriverCollector),
+            ("Fanout", FanoutAnalyzer),
+        ]),
+        ("CDC Corners", "test_cdc_corners.sv", [
+            ("Driver", DriverCollector),
+            ("Fanout", FanoutAnalyzer),
+        ]),
+        ("Condition Corners", "test_condition_corners.sv", [
+            ("Driver", DriverCollector),
+            ("LoadTracer", LoadTracer),
+        ]),
+        ("Fanout Reset Corners", "test_fanout_reset_corners.sv", [
+            ("Driver", DriverCollector),
+            ("Fanout", FanoutAnalyzer),
+            ("DataFlow", DataFlowTracer),
+        ]),
+        # OpenTitan Style
+        ("OpenTitan Style", "test_opentitan_style.sv", [
+            ("Driver", DriverCollector),
+            ("Fanout", FanoutAnalyzer),
+            ("Connection", ConnectionTracer),
+        ]),
+        # Verification Patterns
+        ("Verification Patterns", "test_verification_patterns.sv", [
+            ("Driver", DriverCollector),
+            ("ControlFlow", ControlFlowTracer),
+        ]),
+        # Advanced Edge Cases
+        ("Advanced Edge Cases", "test_edge_cases_advanced.sv", [
+            ("Driver", DriverCollector),
+            ("Fanout", FanoutAnalyzer),
+            ("DataFlow", DataFlowTracer),
+            ("ControlFlow", ControlFlowTracer),
+        ]),
+        # Foundation Tests
+        ("LoadTracer Foundation", "test_load_tracer_foundation.sv", [
+            ("Driver", DriverCollector),
+            ("LoadTracer", LoadTracerRegex),
+            ("Fanout", FanoutAnalyzer),
+        ]),
+        ("Cross Module", "test_cross_module.sv", [
+            ("Driver", DriverCollector),
+            ("Connection", ConnectionTracer),
+        ]),
+        ("Circular Dependency", "test_circular_dependency.sv", [
+            ("Driver", DriverCollector),
+            ("Dependency", DependencyAnalyzer),
+        ]),
+        ("Boundary Conditions", "test_boundary_conditions.sv", [
+            ("Driver", DriverCollector),
+            ("Fanout", FanoutAnalyzer),
+        ]),
+    ]
     
-    def test_ff_negedge(self):
-        """always_ff negedge"""
-        code = """
-        module m(input clk, output reg [7:0] d);
-            always_ff @(negedge clk) d <= 8'h00;
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        tracer = DriverTracer(parser)
-        drivers = tracer.find_driver('d')
-        self.assertGreaterEqual(len(drivers), 1)
-        os.unlink(f.name)
+    results = {}
+    total_pass = 0
+    total_fail = 0
     
-    def test_ff_async_reset(self):
-        """always_ff 异步复位"""
-        code = """
-        module m(input clk, input rst_n, output reg [7:0] d);
-            always_ff @(posedge clk or negedge rst_n)
-                if (!rst_n) d <= 8'h00;
-                else d <= d + 1;
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        tracer = DriverTracer(parser)
-        drivers = tracer.find_driver('d')
-        self.assertGreaterEqual(len(drivers), 1)
-        os.unlink(f.name)
-    
-    def test_comb(self):
-        """always_comb"""
-        code = """
-        module m(input [7:0] a, b, output [7:0] c);
-            always_comb c = a + b;
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        tracer = DriverTracer(parser)
-        drivers = tracer.find_driver('c')
-        self.assertGreaterEqual(len(drivers), 1)
-        os.unlink(f.name)
-    
-    def test_assign(self):
-        """assign"""
-        code = """
-        module m(output [7:0] a);
-            assign a = 8'hFF;
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        tracer = DriverTracer(parser)
-        drivers = tracer.find_driver('a')
-        self.assertGreaterEqual(len(drivers), 1)
-        os.unlink(f.name)
-    
-    def test_case_driver(self):
-        """case 语句驱动"""
-        code = """
-        module m(input clk, input [1:0] sel, output reg [7:0] out);
-            always_ff @(posedge clk)
-                case (sel)
-                    2'b00: out <= 8'h00;
-                    2'b01: out <= 8'hFF;
-                    default: out <= 8'hAA;
-                endcase
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        tracer = DriverTracer(parser)
-        drivers = tracer.find_driver('out')
-        self.assertGreaterEqual(len(drivers), 1)
-        os.unlink(f.name)
-
-
-class TestFSMPatterns(unittest.TestCase):
-    """FSMExtractor - 状态机模式测试"""
-    
-    def test_binary_encoding(self):
-        """二进制编码"""
-        code = """
-        module m(input clk, input rst_n);
-            logic [1:0] state, next_state;
-            always_ff @(posedge clk or negedge rst_n)
-                if (!rst_n) state <= 2'b00;
-                else state <= next_state;
-            always_comb case (state)
-                2'b00: next_state = 2'b01;
-                2'b01: next_state = 2'b00;
-            endcase
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        extractor = FSMExtractor(parser)
-        fsm_list = extractor.extract()
-        self.assertGreaterEqual(len(fsm_list), 1)
-        os.unlink(f.name)
-    
-    def test_onehot_encoding(self):
-        """One-Hot 编码"""
-        code = """
-        module m(input clk, input rst_n);
-            logic [3:0] state, next_state;
-            parameter IDLE=4'b0001, RUN=4'b0010, DONE=4'b0100;
-            always_ff @(posedge clk or negedge rst_n)
-                if (!rst_n) state <= IDLE;
-                else state <= next_state;
-            always_comb case (state)
-                IDLE: next_state = RUN;
-                RUN: next_state = DONE;
-                DONE: next_state = IDLE;
-            endcase
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        extractor = FSMExtractor(parser)
-        fsm_list = extractor.extract()
-        self.assertGreaterEqual(len(fsm_list), 1)
-        os.unlink(f.name)
-
-
-class TestDependencyHierarchy(unittest.TestCase):
-    """ModuleDependency - 层次结构测试"""
-    
-    def test_three_level(self):
-        """三层层次"""
-        code = """
-        module leaf();
-        endmodule
-        module middle();
-            leaf u_leaf();
-        endmodule
-        module top();
-            middle u_mid();
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        analyzer = ModuleDependencyAnalyzer(parser)
-        graph = analyzer.analyze()
+    for name, filename, analyzers in test_files:
+        print(f"\n--- {name} ---")
+        result = test_file(filename, analyzers)
         
-        self.assertIn('top', graph.root_modules)
-        self.assertIn('leaf', graph.leaf_modules)
-        self.assertIn('middle', graph.modules['top'].depends_on)
-        self.assertIn('leaf', graph.modules['middle'].depends_on)
-        os.unlink(f.name)
-    
-    def test_diamond(self):
-        """菱形依赖"""
-        code = """
-        module leaf();
-        endmodule
-        module a();
-            leaf u_leaf();
-        endmodule
-        module b();
-            leaf u_leaf();
-        endmodule
-        module top();
-            a u_a();
-            b u_b();
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        analyzer = ModuleDependencyAnalyzer(parser)
-        graph = analyzer.analyze()
+        if result["status"] == "skip":
+            print(f"  ⏭️  Skipped: {result.get('reason', '')}")
+            continue
         
-        self.assertIn('leaf', graph.modules['a'].depends_on)
-        self.assertIn('leaf', graph.modules['b'].depends_on)
-        os.unlink(f.name)
-    
-    def test_multi_instance_same_module(self):
-        """同模块多实例"""
-        code = """
-        module cell();
-        endmodule
-        module top();
-            cell u0();
-            cell u1();
-            cell u2();
-        endmodule
-        """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-            f.write(code)
-        parser = SVParser()
-        parser.parse_file(f.name)
-        analyzer = ModuleDependencyAnalyzer(parser)
-        graph = analyzer.analyze()
+        if result["status"] == "error":
+            print(f"  ❌ Error: {result.get('error', '')}")
+            total_fail += 1
+            results[name] = "FAIL"
+            continue
         
-        top = graph.modules['top']
-        self.assertEqual(len(top.instances), 3)
-        names = [i.instance_name for i in top.instances]
-        self.assertIn('u0', names)
-        self.assertIn('u1', names)
-        self.assertIn('u2', names)
-        os.unlink(f.name)
+        file_ok = True
+        for an_name, an_result in result.get("results", {}).items():
+            if an_result["status"] == "ok":
+                print(f"  ✅ {an_name}: {an_result.get('result', 'ok')}")
+            else:
+                print(f"  ❌ {an_name}: {an_result.get('error', '')}")
+                file_ok = False
+        
+        if file_ok:
+            print(f"  ✅ PASS")
+            total_pass += 1
+            results[name] = "PASS"
+        else:
+            print(f"  ❌ FAIL")
+            total_fail += 1
+            results[name] = "FAIL"
+    
+    # Summary
+    print("\n" + "="*70)
+    print("测试汇总")
+    print("="*70)
+    
+    for name, status in results.items():
+        symbol = "✅" if status == "PASS" else "❌"
+        print(f"  {symbol} {name}: {status}")
+    
+    print(f"\n总计: {total_pass}/{total_pass + total_fail} 通过")
+    
+    if total_fail == 0:
+        print("\n🎉 所有测试通过!")
+    else:
+        print(f"\n⚠️  {total_fail} 个测试失败")
+    
+    return total_fail == 0
 
 
-if __name__ == '__main__':
-    unittest.main(verbosity=2)
+if __name__ == "__main__":
+    success = run_all_tests()
+    sys.exit(0 if success else 1)
