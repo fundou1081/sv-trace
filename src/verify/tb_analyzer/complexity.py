@@ -104,6 +104,27 @@ class TBMetrics:
     
     # Issues
     issues: List[str] = field(default_factory=list)
+    # Quality metrics
+    comment_ratio: float = 0.0  # comments / code_lines
+    assertion_density: float = 0.0  # assertions / code_lines
+    covergroup_density: float = 0.0  # covergroups / code_lines
+    constraint_per_rand: float = 0.0  # constraints / rand_vars
+    
+    # Performance metrics
+    memory_bits_total: int = 0
+    large_memory_warning: bool = False  # > 1MB total
+    deep_loop_count: int = 0  # nested loops
+    dynamic_struct_count: int = 0  # queues, dynamic arrays
+    
+    # Maintainability
+    avg_class_size: float = 0.0  # lines per class
+    max_class_size: int = 0
+    config_params_per_class: float = 0.0
+    
+    # Testability
+    covergroup_coverpoint_count: int = 0
+    transition_bins_count: int = 0
+
     # Packages
     package_count: int = 0
     package_names: List[str] = field(default_factory=list)
@@ -127,6 +148,8 @@ class TBMetrics:
     # Memory/Arrays
     memory_array_count: int = 0
     memory_size_sum: int = 0
+    queue_size_sum: int = 0
+    dynamic_array_count: int = 0
     
     # FSM
     fsm_state_count: int = 0
@@ -169,6 +192,10 @@ class TBComplexityAnalyzer:
         self._count_interfaces_ports()
         self._count_memory_arrays()
         self._count_fsm()
+        self._analyze_quality_metrics()
+        self._analyze_performance_metrics()
+        self._analyze_maintainability()
+        self._analyze_testability()
         self._calculate_score()
         self._check_issues()
         
@@ -490,6 +517,48 @@ class TBComplexityAnalyzer:
     def _count_fsm(self):
         self.metrics.fsm_state_count = len(re.findall(r'\b\w*state\w*\s*:', self.code.lower()))
 
+
+    def _analyze_quality_metrics(self):
+        """Calculate quality metrics"""
+        m = self.metrics
+        if m.code_lines > 0:
+            m.comment_ratio = round(m.comment_lines / m.code_lines, 3)
+            m.assertion_density = round(m.assertion_count / m.code_lines * 1000, 2)
+            m.covergroup_density = round(m.covergroup_count / m.code_lines * 1000, 2)
+        if m.rand_count > 0:
+            m.constraint_per_rand = round(m.constraint_count / m.rand_count, 2)
+    
+    def _analyze_performance_metrics(self):
+        """Calculate performance-related metrics"""
+        m = self.metrics
+        # Memory bits
+        m.memory_bits_total = m.memory_size_sum
+        m.large_memory_warning = m.memory_bits_total > 1024 * 1024  # > 1MB
+        
+        # Deep loops (nested for/while)
+        m.deep_loop_count = len(re.findall(r'\b(for|while)\s*\(', self.code))
+        
+        # Dynamic structures
+        # Dynamic structures count (rough estimate)
+        m.dynamic_struct_count = m.dynamic_array_count
+    
+    def _analyze_maintainability(self):
+        """Calculate maintainability metrics"""
+        m = self.metrics
+        if m.class_count > 0:
+            m.avg_class_size = round(m.code_lines / m.class_count, 1)
+        # Estimate max class size (rough)
+        class_sizes = re.findall(r'class\s+\w+.*?endclass', self.code, re.DOTALL)
+        if class_sizes:
+            m.max_class_size = max(len(s.split('\n')) for s in class_sizes)
+    
+    def _analyze_testability(self):
+        """Calculate testability metrics"""
+        m = self.metrics
+        # Coverpoints in covergroups
+        m.covergroup_coverpoint_count = len(re.findall(r'coverpoint\s+\w+', self.code))
+        # Transition bins
+        m.transition_bins_count = len(re.findall(r'transition|bin.*=>', self.code.lower()))
     def _calculate_score(self):
         """Calculate complexity score"""
         score = 0.0
@@ -762,6 +831,25 @@ class TBComplexityAnalyzer:
             },
             'fsm': {
                 'state_count': m.fsm_state_count,
+            },
+            'quality': {
+                'comment_ratio': m.comment_ratio,
+                'assertion_density': m.assertion_density,
+                'covergroup_density': m.covergroup_density,
+                'constraint_per_rand': m.constraint_per_rand,
+            },
+            'performance': {
+                'memory_bits_total': m.memory_bits_total,
+                'large_memory_warning': m.large_memory_warning,
+                'deep_loop_count': m.deep_loop_count,
+            },
+            'maintainability': {
+                'avg_class_size': m.avg_class_size,
+                'max_class_size': m.max_class_size,
+            },
+            'testability': {
+                'coverpoint_count': m.covergroup_coverpoint_count,
+                'transition_bins': m.transition_bins_count,
             },
             'complexity': {
                 'score': m.complexity_score,
