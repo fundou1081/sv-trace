@@ -4,23 +4,26 @@
 
 | 子项目 | 测试文件数 | 测试用例数 |
 |--------|-----------|-----------|
-| sv_ast | 3 | 30 |
+| sv_ast | 4 | 746+ |
 | sv_trace | 6 | 31 |
 | sv_verify | 8 | 23 |
 | sv_codecheck | 3 | 10 |
-| **总计** | **20** | **94** |
+| **总计** | **21** | **810+** |
 
 ---
 
-## 1. sv_ast (30 个测试用例)
+## 1. sv_ast (746+ 个测试用例)
 
 **定位**: 基于 pyslang 的 SystemVerilog AST 解析工具库
 
 | 测试文件 | 测试用例数 |
 |----------|-----------|
+| test_svtests.py | 716 (sv-tests 完整测试集) |
 | test_all.py | 10 |
 | test_class.py | 18 |
 | test_parse.py | 2 |
+
+**数据来源**: ~/my_dv_proj/sv-tests/tests/ (830 个 .sv 文件)
 
 ---
 
@@ -68,10 +71,13 @@
 ## 运行测试
 
 ```bash
-# 单个子项目
-cd tests/unit/sv_ast && PYTHONPATH=../../src python3 test_*.py
+# sv_ast (包含 sv-tests)
+cd tests/unit/sv_ast && python3 test_svtests.py
 
-# 全部
+# sv_trace
+cd tests/unit/sv_trace && python3 test_*.py
+
+# 全部测试
 python3 tests/unit/run_subproject_tests.py
 ```
 
