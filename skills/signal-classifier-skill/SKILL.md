@@ -1,44 +1,70 @@
----
-name: signal-classifier
-description: 信号分类工具，将RTL信号分类为clock/reset/data/control/status等类别，用于快速理解设计结构。
----
+# Signal Classification Skill
 
-# Signal Classifier Skill
+[Description]
+Classifies SystemVerilog signals into categories for analysis and documentation.
 
-信号分类工具
+[Trigger Phrases]
+- "信号分类", "signal classification"
+- "分析信号", "classify signals"
+- "信号类型"
 
-## CLI
+[Capabilities]
 
-```bash
-sv-signal classify design.sv
-sv-signal list design.sv --category clock
-sv-signal report design.sv --output report.txt
-```
+### Signal Types
+- **Data signals**: data_* , din, dout, payload
+- **Control signals**: valid, ready, enable, start
+- **Address signals**: addr_*, address
+- **Clock signals**: clk, clock
+- **Reset signals**: rst, reset, rst_n
+- **Status signals**: status, flag, busy
+- **Configuration**: config_*, mode, sel
 
-## Python API
+### Analysis
+- Count signals per category
+- Identify signal relationships
+- Extract bit widths
+- Find register signals
 
-```python
-from trace.signal_classifier import SignalClassifier
+[Usage]
+
+### CLI
+sv-signal <file.sv>
+
+### Python API
 from parse import SVParser
+from debug.signal_classifier import SignalClassifier
 
 parser = SVParser()
 parser.parse_file('design.sv')
 
-classifier = SignalClassifier()
-result = classifier.classify_from_parser(parser)
+classifier = SignalClassifier(parser)
+results = classifier.classify()
 
-print(f"Clocks: {len(result.clocks)}")
-print(f"Resets: {len(result.resets)}")
-print(f"Data: {len(result.data_signals)}")
+for category, signals in results.items():
+    print(f"{category}: {len(signals)} signals")
 
-report = classifier.generate_report(result, "design")
-print(report)
+[Output Format]
+
+Text:
+```
+SIGNAL CLASSIFICATION
+====================
+Data signals:    12
+Control signals:  8
+Address signals: 4
+Clock signals:    2
+Reset signals:    2
 ```
 
-## 分类规则
+JSON:
+{
+  "data": ["data_in", "data_out", ...],
+  "control": ["valid", "ready", ...],
+  "clock": ["clk"],
+  ...
+}
 
-- **Clock**: clk, clock, *_clk
-- **Reset**: rst, reset, *_rst_n
-- **Data**: data, din, dout, *_data
-- **Control**: en, enable, valid, ready
-- **Status**: flag, status, busy, error
+[Files]
+- CLI: bin/sv-signal
+- Module: src/debug/signal_classifier.py
+- Skill: skills/signal-classifier-skill/

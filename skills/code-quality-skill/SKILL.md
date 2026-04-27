@@ -1,45 +1,71 @@
----
-name: code-quality-checker
-description: 代码质量检查工具，检测多驱动、死代码、未使用信号、latch推断等问题。
----
+# Code Quality Analysis Skill
 
-# Code Quality Checker Skill
+[Description]
+Evaluates SystemVerilog code quality metrics and coding standards compliance.
 
-代码质量检查
+[Trigger Phrases]
+- "代码质量", "code quality"
+- "质量分析", "quality analysis"
+- "lint检查", "linting"
 
-## CLI
+[Capabilities]
 
-```bash
-sv-quality check design.sv
-sv-quality check design.sv --output quality_report.txt
-sv-quality multi-driver design.sv
-sv-quality unused design.sv
-```
+### Quality Metrics
+- Line counts (total, code, comment, blank)
+- Comment ratio
+- Naming convention checks
+- Module complexity scoring
 
-## Python API
+### Standards Compliance
+- Clock naming (clk_, clock)
+- Reset naming (rst_, reset_, rst_n)
+- Signal naming conventions
+- Module naming conventions
 
-```python
-from lint.code_quality import CodeQualityChecker
+### Complexity Analysis
+- Module size (lines per module)
+- Port count
+- Nesting depth
+- Parameter usage
+
+### Issue Detection
+- Unused signals
+- Unconnected ports
+- Incomplete case statements
+- Unreachable code
+
+[Usage]
+
+### CLI
+sv-quality <file.sv>
+
+### Python API
 from parse import SVParser
+from debug.complexity import ComplexityAnalyzer
 
 parser = SVParser()
 parser.parse_file('design.sv')
 
-checker = CodeQualityChecker(parser)
-report = checker.analyze()
+analyzer = ComplexityAnalyzer(parser)
+report = analyzer.analyze()
+print(report)
 
-print(f"Total issues: {report.total_count}")
-print(f"Critical: {report.critical_count}")
-print(f"High: {report.high_count}")
+[Output Format]
 
-output = checker.generate_report(report)
-print(output)
+Text:
+```
+CODE QUALITY REPORT
+==================
+Total lines:     1000
+Code lines:      750
+Comments:        150
+Comment ratio:   0.20
+
+Quality Score:   85/100
+Grade:          B (Good)
 ```
 
-## 检测的问题类型
-
-- **multi_driver**: 多驱动冲突
-- **dead_code**: 死代码
-- **unused_signal**: 未使用信号
-- **latch_inference**: Latch推断
-- **combinational_loop**: 组合逻辑环
+[Files]
+- CLI: bin/svquality
+- Module: src/debug/complexity.py
+- Skill: skills/code-quality-skill/
