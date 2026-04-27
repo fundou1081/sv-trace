@@ -50,8 +50,14 @@ class TBMetrics:
     max_nesting: int = 0
     avg_nesting: float = 0.0
     
-    # UVM Components
+    # UVM Components - detailed
     agent_count: int = 0
+    driver_count: int = 0
+    monitor_count: int = 0
+    sequencer_count: int = 0
+    scoreboard_count: int = 0
+    reference_model_count: int = 0
+    subscriber_count: int = 0
     constraint_count: int = 0
     assertion_count: int = 0
     assertion_lines: int = 0
@@ -72,9 +78,12 @@ class TBMetrics:
     assert_sequence_count: int = 0
     assert_static_count: int = 0
     
-    # Sequence complexity
+    # Sequence hierarchy
     sequence_body_lines: int = 0
     sequence_items: int = 0
+    sequence_hierarchy_depth: int = 0
+    nested_sequence_count: int = 0
+    sequence_macro_count: int = 0
     fork_join_count: int = 0
     send_port_count: int = 0
     get_try_count: int = 0
@@ -316,6 +325,14 @@ class TBComplexityAnalyzer:
             matches = re.findall(pattern, self.code.lower())
             setattr(self.metrics, key, len(matches))
         
+        # Count detailed UVM components
+        self.metrics.driver_count = len(re.findall(r'class\s+\w+_driver\s+extends\s+uvm_driver', self.code.lower()))
+        self.metrics.monitor_count = len(re.findall(r'class\s+\w+_monitor\s+extends\s+uvm_monitor', self.code.lower()))
+        self.metrics.sequencer_count = len(re.findall(r'class\s+\w+_sequencer\s+extends\s+uvm_sequencer', self.code.lower()))
+        self.metrics.scoreboard_count = len(re.findall(r'class\s+\w+_scoreboard\s+extends\s+uvm_scoreboard', self.code.lower()))
+        self.metrics.reference_model_count = len(re.findall(r'class\s+\w+_refmod(?:el)?\s+extends\s+uvm_component', self.code.lower()))
+        self.metrics.subscriber_count = len(re.findall(r'class\s+\w+_subscriber\s+extends\s+uvm_subscriber', self.code.lower()))
+        
         # Assertions
         self.metrics.assert_property_count = len(re.findall(r'assert\s+property\s*\(', self.code))
         self.metrics.assert_sequence_count = len(re.findall(r'assert\s+sequence\s*\(', self.code))
@@ -338,7 +355,7 @@ class TBComplexityAnalyzer:
         self.metrics.ifdef_count = len(re.findall(r'`ifdef|`ifndef', self.code))
     
     def _analyze_sequence_complexity(self):
-        """Analyze sequence body complexity"""
+        """Analyze sequence body complexity and hierarchy"""
         seq_matches = re.findall(
             r'class\s+\w+_seq\s+extends.*?endclass',
             self.code,
@@ -347,12 +364,46 @@ class TBComplexityAnalyzer:
         
         self.metrics.sequence_items = len(seq_matches)
         
+        # Calculate sequence hierarchy depth
+        seq_hierarchy = self._calc_sequence_hierarchy()
+        self.metrics.sequence_hierarchy_depth = seq_hierarchy['max_depth']
+        
         for seq in seq_matches:
             self.metrics.sequence_body_lines += seq.count('\n')
             self.metrics.fork_join_count += len(re.findall(r'fork', seq))
             self.metrics.send_port_count += len(re.findall(r'\.(start|put|send)\s*\(', seq))
             self.metrics.get_try_count += len(re.findall(r'\.(get|try_next|peek)\s*\(', seq))
             self.metrics.wait_count += len(re.findall(r'\bwait\s*\(', seq))
+            
+            # Count nested sequences
+            self.metrics.nested_sequence_count += len(re.findall(r'`uvm_do|\.start\(', seq))
+        
+        # Count sequence macros
+        self.metrics.sequence_macro_count = len(re.findall(
+            r'`uvm_do|`uvm_do_with|`uvm_create|`uvm_send|`uvm_rand_send',
+            self.code
+        ))
+    
+    def _calc_sequence_hierarchy(self) -> Dict:
+        """Calculate sequence nesting depth"""
+        # Find nested sequence definitions
+        seq_defs = re.findall(r'class\s+(\w+_seq)\s+extends.*?endclass', self.code, re.DOTALL)
+        
+        # Find sequence start points (where sequences are started)
+        start_calls = re.findall(r'(\w+_seq)\s*\(\)\s*\.start\(', self.code)
+        
+        # Build a simple hierarchy based on naming convention
+        # e.g., virt_seq starts child_seq
+        max_depth = 1
+        for virt_match in re.finditer(r'class\s+(\w+_virt_seq)\s+extends.*?begin(.*?)endclass', self.code, re.DOTALL):
+            virt_name = virt_match.group(1)
+            body = virt_match.group(2)
+            # Count how many sequences are started in this virtual sequence
+            starts = len(re.findall(r'\.start\s*\(', body))
+            if starts > 0:
+                max_depth = max(max_depth, 1 + starts)
+        
+        return {'max_depth': min(max_depth, 10), 'starts': len(start_calls)}
     
     def _analyze_factory(self):
         """Analyze factory usage"""
@@ -512,16 +563,29 @@ class TBComplexityAnalyzer:
         
         lines.extend([
             "",
-            "[Sequence Complexity]",
+            "[Sequence Hierarchy]",
             f"  Sequences:         {m.sequence_items:>6}",
+            f"  Hierarchy depth:  {m.sequence_hierarchy_depth:>6}",
+            f"  Nested starts:    {m.nested_sequence_count:>6}",
+            f"  Sequence macros:  {m.sequence_macro_count:>6}",
+            "",
+            "[Sequence Body]",
             f"  Sequence lines:   {m.sequence_body_lines:>6}",
             f"  fork/join:        {m.fork_join_count:>6}",
             f"  send/put:         {m.send_port_count:>6}",
             f"  get/try:          {m.get_try_count:>6}",
             f"  wait:             {m.wait_count:>6}",
             "",
-            "[Components]",
+            "[UVM Components]",
             f"  Agents:           {m.agent_count:>6}",
+            f"  Drivers:          {m.driver_count:>6}",
+            f"  Monitors:         {m.monitor_count:>6}",
+            f"  Sequencers:       {m.sequencer_count:>6}",
+            f"  Scoreboards:      {m.scoreboard_count:>6}",
+            f"  Ref Models:       {m.reference_model_count:>6}",
+            f"  Subscribers:      {m.subscriber_count:>6}",
+            "",
+            "[Constraints/Coverage]",
             f"  Constraints:      {m.constraint_count:>6}",
             f"  Covergroups:      {m.covergroup_count:>6}",
             "",
