@@ -311,3 +311,48 @@ sv-trace/
 <p align="center">
   <strong>SV-Trace</strong> - 让SystemVerilog分析更简单
 </p>
+---
+
+## 🧪 测试套件
+
+本项目包含 **784+** 测试用例，分为 4 个子项目测试集：
+
+### 子项目测试分布
+
+| 子项目 | 测试用例数 | 说明 |
+|--------|-----------|------|
+| sv_ast | 732 | AST 解析测试，包含 sv-tests 完整测试集 (830 个 .sv 文件) |
+| sv_trace | 27 | 信号追踪、数据流分析测试 |
+| sv_verify | 22 | 验证工具、调试分析测试 |
+| sv_codecheck | 3 | 代码质量检查测试 |
+
+### 测试数据来源
+
+- **sv-tests**: 外部开源 SystemVerilog 测试集 (830 个 .sv 文件)
+  - 路径: ~/my_dv_proj/sv-tests/tests/
+  - 覆盖: class, constraint, always_ff, always_comb, FSM, CDC 等
+
+### 运行测试
+
+```bash
+# 运行单个子项目测试
+cd tests/unit/sv_ast && python3 test_svtests.py
+
+# 运行全部子项目测试
+python3 tests/unit/run_subproject_tests.py
+```
+
+### 测试文件结构
+
+```
+tests/unit/
+├── sv_ast/          # AST 解析测试
+│   ├── test_svtests.py     # sv-tests 完整测试
+│   ├── test_all.py         # 综合测试
+│   └── ...
+├── sv_trace/        # 追踪器测试
+├── sv_verify/       # 验证工具测试
+└── sv_codecheck/    # 代码检查测试
+```
+
+> 📝 详细测试覆盖率见 [TEST_COVERAGE.md](docs/TEST_COVERAGE.md)
