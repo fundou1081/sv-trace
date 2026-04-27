@@ -136,15 +136,15 @@ class DriverCollector:
             stmt = node.statement
             stmt_kind = str(stmt.kind) if hasattr(stmt, 'kind') else ''
             
-            # always_comb: statement 是 SequentialBlockStatement
+            # always_comb with begin...end: statement 是 SequentialBlockStatement
             if 'SequentialBlockStatement' in stmt_kind or 'BlockStatement' in stmt_kind:
                 self._walk_statement(stmt, kind, module_name, "")
             
+            # always_comb with case (no begin...end): statement 是 CaseStatement
+            # always_comb with if (no begin...end): statement 是 ConditionalStatement
             # always_ff/always_latch: statement 是 TimingControlStatement
-            # 需要再取一层 .statement
-            elif 'TimingControl' in stmt_kind:
-                if hasattr(stmt, 'statement') and stmt.statement:
-                    self._walk_statement(stmt.statement, kind, module_name, "")
+            elif 'TimingControl' in stmt_kind or 'CaseStatement' in stmt_kind or 'ConditionalStatement' in stmt_kind:
+                self._walk_statement(stmt, kind, module_name, "")
                     
         except Exception as e:
             pass
@@ -169,6 +169,12 @@ class DriverCollector:
             
             stmt_kind = str(stmt.kind)
             
+            # Handle TimingControlStatement (from always_ff @(posedge clk) ...)
+            if 'TimingControl' in stmt_kind:
+                if hasattr(stmt, 'statement') and stmt.statement:
+                    self._walk_statement(stmt.statement, kind, module_name, clock)
+                return
+            
             if stmt_kind == 'SyntaxKind.SequentialBlockStatement':
                 if hasattr(stmt, 'items'):
                     for i in range(len(stmt.items)):
@@ -186,9 +192,11 @@ class DriverCollector:
                 return
             
             if 'If' in stmt_kind or 'Conditional' in stmt_kind:
+                # Process the then-clause (if branch)
                 if hasattr(stmt, 'statement') and stmt.statement:
                     self._walk_statement(stmt.statement, kind, module_name, clock)
-                if hasattr(stmt, 'elseClause') and stmt.elseClause.clause:
+                # Process the else-clause
+                if hasattr(stmt, 'elseClause') and stmt.elseClause and hasattr(stmt.elseClause, 'clause') and stmt.elseClause.clause:
                     self._walk_statement(stmt.elseClause.clause, kind, module_name, clock)
                 return
             
@@ -205,7 +213,7 @@ class DriverCollector:
                     self._walk_statement(stmt.statement, kind, module_name, clock)
                 return
             
-            if 'WhileLoop' in stmt_kind:
+            if 'WhileLoop' in stmt_kind or 'DoWhile' in stmt_kind:
                 if hasattr(stmt, 'statement') and stmt.statement:
                     self._walk_statement(stmt.statement, kind, module_name, clock)
                 return

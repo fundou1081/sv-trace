@@ -28,9 +28,7 @@ try:
     
     print(f"Drivers for reg1: {len(drivers)}")
     for d in drivers:
-        print(f"  [{d.driver_kind.name}] expr: {d.source_expr}")
-        print(f"    lower: {d.source_expr.lower()}")
-        print(f"    has rst: {'rst' in d.source_expr.lower()}")
-        print(f"    has <= 0: {'<= 0' in d.source_expr}")
+        print(f"  [{d.kind.name}] sources: {d.sources}")
+        print(f"    has sources: {bool(d.sources)}")
 finally:
     os.unlink(tmp)

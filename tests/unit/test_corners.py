@@ -14,7 +14,7 @@ from debug.analyzers.condition_coverage import ConditionCoverageAnalyzer
 from debug.analyzers.timed_path_analyzer import TimedPathAnalyzer
 
 
-TARGETED_DIR = os.path.join(os.path.dirname(__file__), 'targeted')
+TARGETED_DIR = os.path.join(os.path.dirname(__file__), '..', 'targeted')
 
 
 def test_fsm_corners():

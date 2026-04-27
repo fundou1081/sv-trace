@@ -3,6 +3,7 @@
 """
 import sys
 import os
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
@@ -26,12 +27,20 @@ def test_parse():
     print("=" * 50)
     
     code = '''module top(input clk, input [7:0] data); endmodule'''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    assert parser.trees, "解析失败"
-    print("✓ 基础解析 OK")
-    return True
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
+    
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        assert parser.trees, "解析失败"
+        print("✓ 基础解析 OK")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def test_parameter():
@@ -41,17 +50,25 @@ def test_parameter():
     print("=" * 50)
     
     code = '''module mem #(parameter ADDR_W = 8, parameter DATA_W = 16) (input clk); endmodule'''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    resolver = ParameterResolver(parser)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
     
-    assert resolver.get_param("ADDR_W").resolved_value == 8, "ADDR_W 解析失败"
-    assert resolver.get_param("DATA_W").resolved_value == 16, "DATA_W 解析失败"
-    
-    print(f"✓ ADDR_W = {resolver.get_param('ADDR_W').resolved_value}")
-    print(f"✓ DATA_W = {resolver.get_param('DATA_W').resolved_value}")
-    return True
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        resolver = ParameterResolver(parser)
+        
+        assert resolver.get_param("ADDR_W").resolved_value == 8, "ADDR_W 解析失败"
+        assert resolver.get_param("DATA_W").resolved_value == 16, "DATA_W 解析失败"
+        
+        print(f"✓ ADDR_W = {resolver.get_param('ADDR_W').resolved_value}")
+        print(f"✓ DATA_W = {resolver.get_param('DATA_W').resolved_value}")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def test_signal_query():
@@ -61,19 +78,27 @@ def test_signal_query():
     print("=" * 50)
     
     code = '''module top(input clk, input [7:0] data, output [7:0] out); endmodule'''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    sq = SignalQuery(parser)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
     
-    sig = sq.find_signal('data')
-    assert sig is not None, "未找到 data"
-    assert sig.width == 8, f"data width 应为 8，实际为 {sig.width}"
-    
-    print(f"✓ clk: width = {sq.find_signal('clk').width}")
-    print(f"✓ data: width = {sq.find_signal('data').width}")
-    print(f"✓ out: width = {sq.find_signal('out').width}")
-    return True
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        sq = SignalQuery(parser)
+        
+        sig = sq.find_signal('data')
+        assert sig is not None, "未找到 data"
+        assert sig.width == 8, f"data width 应为 8，实际为 {sig.width}"
+        
+        print(f"✓ clk: width = {sq.find_signal('clk').width}")
+        print(f"✓ data: width = {sq.find_signal('data').width}")
+        print(f"✓ out: width = {sq.find_signal('out').width}")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def test_driver():
@@ -88,17 +113,25 @@ module top;
     assign c = a + b;
 endmodule
 '''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    tracer = DriverTracer(parser)
-    drivers = tracer.find_driver('c')
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
     
-    assert len(drivers) > 0, "未找到 driver"
-    print(f"✓ c 的驱动: {len(drivers)}")
-    for d in drivers:
-        print(f"  - {d}")
-    return True
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        tracer = DriverTracer(parser)
+        drivers = tracer.find_driver('c')
+        
+        assert len(drivers) > 0, "未找到 driver"
+        print(f"✓ c 的驱动: {len(drivers)}")
+        for d in drivers:
+            print(f"  - {d}")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def test_load():
@@ -113,16 +146,24 @@ module top;
     assign c = a + b;
 endmodule
 '''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    tracer = LoadTracer(parser)
-    loads = tracer.find_load('a')
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
     
-    print(f"✓ a 的负载: {len(loads)}")
-    for l in loads:
-        print(f"  - {l}")
-    return True
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        tracer = LoadTracer(parser)
+        loads = tracer.find_load('a')
+        
+        print(f"✓ a 的负载: {len(loads)}")
+        for l in loads:
+            print(f"  - {l}")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def test_class():
@@ -138,18 +179,26 @@ class packet;
     endfunction
 endclass
 '''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    extractor = ClassExtractor(parser)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
     
-    cls = extractor.find_class("packet")
-    assert cls is not None, "未找到 packet class"
-    assert len(cls["members"]) >= 1, "未找到成员"
-    assert len(cls["methods"]) >= 1, "未找到方法"
-    
-    print(f"✓ Class: packet, members={len(cls['members'])}, methods={len(cls['methods'])}")
-    return True
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        extractor = ClassExtractor(parser)
+        
+        cls = extractor.find_class("packet")
+        assert cls is not None, "未找到 packet class"
+        assert len(cls["members"]) >= 1, "未找到成员"
+        assert len(cls["methods"]) >= 1, "未找到方法"
+        
+        print(f"✓ Class: packet, members={len(cls['members'])}, methods={len(cls['methods'])}")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def test_constraint():
@@ -166,18 +215,26 @@ class packet;
     }
 endclass
 '''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    extractor = ConstraintExtractor(parser)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
     
-    constraints = extractor.find_constraints("packet")
-    assert len(constraints) >= 1, "未找到 constraint"
-    
-    print(f"✓ Constraints: {len(constraints)}")
-    for c in constraints:
-        print(f"  - {c.name}: {len(c.constraints)} items")
-    return True
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        extractor = ConstraintExtractor(parser)
+        
+        constraints = extractor.find_constraints("packet")
+        assert len(constraints) >= 1, "未找到 constraint"
+        
+        print(f"✓ Constraints: {len(constraints)}")
+        for c in constraints:
+            print(f"  - {c.name}: {len(c.constraints)} items")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def test_covergroup():
@@ -191,19 +248,27 @@ covergroup mem_cg;
     coverpoint data { bins zero = {0}; }
 endgroup
 '''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    extractor = CovergroupExtractor(parser)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
     
-    cg = extractor.find_covergroup("mem_cg")
-    assert cg is not None, "未找到 covergroup"
-    assert len(cg.coverpoints) >= 1, "未找到 coverpoint"
-    
-    print(f"✓ Covergroup: {cg.name}, coverpoints={len(cg.coverpoints)}")
-    for cp in cg.coverpoints:
-        print(f"  - {cp.name}: {cp.bins}")
-    return True
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        extractor = CovergroupExtractor(parser)
+        
+        cg = extractor.find_covergroup("mem_cg")
+        assert cg is not None, "未找到 covergroup"
+        assert len(cg.coverpoints) >= 1, "未找到 coverpoint"
+        
+        print(f"✓ Covergroup: {cg.name}, coverpoints={len(cg.coverpoints)}")
+        for cp in cg.coverpoints:
+            print(f"  - {cp.name}: {cp.bins}")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def test_assertion():
@@ -220,17 +285,25 @@ module tb;
     endsequence
 endmodule
 '''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    extractor = AssertionExtractor(parser)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
     
-    assertions = extractor.get_all_assertions()
-    sequences = extractor.get_all_sequences()
-    
-    print(f"✓ Assertions: {len(assertions)}")
-    print(f"✓ Sequences: {len(sequences)}")
-    return True
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        extractor = AssertionExtractor(parser)
+        
+        assertions = extractor.get_all_assertions()
+        sequences = extractor.get_all_sequences()
+        
+        print(f"✓ Assertions: {len(assertions)}")
+        print(f"✓ Sequences: {len(sequences)}")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def test_connection():
@@ -244,19 +317,27 @@ module top;
     mem u_mem (.clk(clk), .addr(addr));
 endmodule
 '''
-    parser = SVParser()
-    parser.parse_text(code)
     
-    tracer = ConnectionTracer(parser)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
+        f.write(code)
+        tmp = f.name
     
-    inst = tracer.find_instance("u_mem")
-    assert inst is not None, "未找到实例"
-    assert len(inst.connections) >= 1, "未找到连接"
-    
-    print(f"✓ Instance: {inst.name} ({inst.module_type})")
-    for conn in inst.connections:
-        print(f"  - .{conn.dest} -> {conn.signal}")
-    return True
+    try:
+        parser = SVParser()
+        parser.parse_file(tmp)
+        
+        tracer = ConnectionTracer(parser)
+        
+        inst = tracer.find_instance("u_mem")
+        assert inst is not None, "未找到实例"
+        assert len(inst.connections) >= 1, "未找到连接"
+        
+        print(f"✓ Instance: {inst.name} ({inst.module_type})")
+        for conn in inst.connections:
+            print(f"  - .{conn.dest} -> {conn.signal}")
+        return True
+    finally:
+        os.unlink(tmp)
 
 
 def main():

@@ -14,7 +14,7 @@ from trace.controlflow import ControlFlowTracer
 from trace.connection import ConnectionTracer
 
 
-TARGETED_DIR = os.path.join(os.path.dirname(__file__), 'targeted')
+TARGETED_DIR = os.path.join(os.path.dirname(__file__), '..', 'targeted')
 
 
 def test_file(filename, analyzers):

@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from core.models import Parameter
 from typing import Dict, Any, Optional
+import pyslang
 
 
 class ParameterResolver:
@@ -23,25 +24,41 @@ class ParameterResolver:
             
             root = tree.root
             
-            if 'ModuleDeclaration' not in str(type(root)):
-                continue
+            # Use visitor to find all ModuleDeclarations
+            modules = []
+            def visitor(node):
+                if node.kind == pyslang.SyntaxKind.ModuleDeclaration:
+                    modules.append(node)
+                return pyslang.VisitAction.Advance
             
-            if hasattr(root, 'header') and root.header:
-                header = root.header
-                if hasattr(header, 'parameters') and header.parameters:
-                    for decl in header.parameters.declarations:
-                        self._extract_param_decl(decl)
+            root.visit(visitor)
             
-            if hasattr(root, 'body') and root.body:
-                for member in root.body:
-                    self._extract_from_member(member)
+            for mod in modules:
+                # Extract from module header parameters
+                if hasattr(mod, 'header') and mod.header:
+                    header = mod.header
+                    if hasattr(header, 'parameters') and header.parameters:
+                        params = header.parameters
+                        if hasattr(params, 'declarations') and params.declarations:
+                            decls = params.declarations
+                            for i in range(len(decls)):
+                                decl = decls[i]
+                                # Skip non-ParameterDeclaration (like commas)
+                                if hasattr(decl, 'kind') and 'ParameterDeclaration' in str(decl.kind):
+                                    self._extract_param_decl(decl)
+                
+                # Extract from module body
+                if hasattr(mod, 'body') and mod.body:
+                    for member in mod.body:
+                        self._extract_from_member(member)
     
     def _extract_param_decl(self, decl):
         if not decl:
             return
         
         if hasattr(decl, 'declarators') and decl.declarators:
-            for d in decl.declarators:
+            for i in range(len(decl.declarators)):
+                d = decl.declarators[i]
                 name = ""
                 value = ""
                 
@@ -62,7 +79,7 @@ class ParameterResolver:
                         name=name,
                         value=value,
                         module="",
-                        
+                        resolved_value=resolved
                     )
     
     def _extract_from_member(self, member):
@@ -75,68 +92,28 @@ class ParameterResolver:
             if hasattr(member, attr):
                 child = getattr(member, attr)
                 if child:
-                    if isinstance(child, list):
+                    if hasattr(child, '__iter__') and not isinstance(child, str):
                         for c in child:
                             self._extract_from_member(c)
-                    else:
-                        self._extract_from_member(child)
     
-    def _resolve_value(self, value: str) -> Optional[int]:
-        if not value:
-            return None
-        
+    def _resolve_value(self, value: str) -> Any:
+        """解析参数值"""
         value = value.strip()
         
+        # 尝试解析为数字
         try:
-            if value.isdigit():
+            if value.startswith("'h"):
+                return int(value[2:], 16)
+            elif value.startswith("'b"):
+                return int(value[2:], 2)
+            elif value.startswith("'d"):
+                return int(value[2:])
+            elif value.isdigit():
                 return int(value)
-            
-            for base in ["'h", "'H", "'b", "'B", "'d", "'D"]:
-                if base in value:
-                    parts = value.split(base)
-                    if len(parts) == 2:
-                        base_char = base[1]
-                        if base_char in 'hH':
-                            return int(parts[1], 16)
-                        elif base_char in 'bB':
-                            return int(parts[1], 2)
-                        else:
-                            return int(parts[1], 10)
-            
-            if value in self.params:
-                return self.params[value].resolved_value
-            
-            return int(value, 0)
         except:
-            return None
-    
-    def resolve(self, value: str) -> Any:
-        if not value:
-            return value
-        
-        resolved = self._resolve_value(value)
-        if resolved is not None:
-            return resolved
-        
-        if value in self.params:
-            return self.params[value].resolved_value
+            pass
         
         return value
-    
-    def resolve_width(self, width_expr: str) -> int:
-        if not width_expr:
-            return 1
-        
-        import re
-        match = re.match(r'(\w+)\s*-\s*(\d+)', width_expr.strip())
-        if match:
-            param_name = match.group(1)
-            num = int(match.group(2))
-            param_val = self.resolve(param_name)
-            if isinstance(param_val, int):
-                return param_val - num + 1
-        
-        return 1
     
     def get_param(self, name: str) -> Optional[Parameter]:
         return self.params.get(name)
@@ -149,3 +126,10 @@ class ParameterResolver:
     
     def __contains__(self, name: str) -> bool:
         return name in self.params
+    
+    def resolve(self, name: str) -> Any:
+        """解析参数值"""
+        param = self.params.get(name)
+        if param:
+            return param.resolved_value
+        return None

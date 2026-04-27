@@ -173,6 +173,10 @@ class ConnectionTracer:
     def get_all_instances(self) -> List[Instance]:
         return self.instances
     
+    def find_instance(self, name: str):
+        """别名 - 兼容旧API"""
+        return self.get_instance(name)
+
     def get_instance(self, name: str) -> Optional[Instance]:
         return self.instance_map.get(name)
     

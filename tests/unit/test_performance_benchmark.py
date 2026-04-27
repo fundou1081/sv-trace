@@ -15,7 +15,7 @@ from trace.dependency import FanoutAnalyzer, DependencyAnalyzer
 from debug.analyzers.fsm_analyzer import FSMAnalyzer
 from debug.analyzers.cdc import CDCExtendedAnalyzer
 
-TARGETED_DIR = os.path.join(os.path.dirname(__file__), 'targeted')
+TARGETED_DIR = os.path.join(os.path.dirname(__file__), '..', 'targeted')
 
 
 def measure_time(func, *args, **kwargs):
