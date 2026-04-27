@@ -1,21 +1,29 @@
 # SV-Trace 开源项目拆分建议
 
-## 背景
+## ⚠️ 名称冲突说明
 
-当前项目包含40+模块、9个CLI工具、20+Skills，功能涵盖：
-- SystemVerilog解析
-- RTL信号追踪
-- 验证约束分析
-- TB质量评估
-- 时序/CDC分析
+GitHub搜索发现以下项目名已被占用：
+- `sv-parser` → dalance/sv-parser (Rust语言)
+- `svlint` → dalance/svlint (Rust语言)
 
-## 建议：拆分为4个独立开源项目
+因此采用以下命名策略，避免冲突：
 
 ---
 
-## 1. 🧬 sv-parser (核心解析库)
+## 最终命名方案
 
-**定位**: Python pyslang封装，提供SystemVerilog解析能力
+| 原名 | 最终命名 | 说明 |
+|------|----------|------|
+| sv-parser | **sv-ast** | AST操作工具，与Rust版本区分 |
+| svlint | **sv-codecheck** | 代码检查工具 |
+| sv-trace | **sv-trace** | 信号追踪（原名可用） |
+| sv-verify | **sv-verify** | 验证工具（原名可用） |
+
+---
+
+## 1. 🧬 sv-ast (原sv-parser)
+
+**定位**: Python pyslang封装，提供SystemVerilog AST操作能力
 
 ### 包含模块
 ```
@@ -35,12 +43,12 @@ src/parse/
 
 ### 安装
 ```bash
-pip install sv-parser
+pip install sv-ast
 ```
 
 ---
 
-## 2. 🔍 sv-trace (RTL追踪分析)
+## 2. 🔍 sv-trace (信号追踪)
 
 **定位**: RTL信号追踪、数据流分析、依赖图构建
 
@@ -77,7 +85,7 @@ src/trace/
 
 ### 安装
 ```bash
-pip install sv-parser sv-trace
+pip install sv-ast sv-trace
 ```
 
 ---
@@ -110,8 +118,8 @@ src/verify/
 
 ### CLI工具
 - `sv-verify constraint`  # 约束分析
-- `sv-verify tb-quality`  # TB质量
-- `sv-verify coverage`   # 覆盖率
+- `sv-verify tb-quality`   # TB质量
+- `sv-verify coverage`    # 覆盖率
 
 ### 用户群体
 - 验证工程师
@@ -120,12 +128,12 @@ src/verify/
 
 ### 安装
 ```bash
-pip install sv-parser sv-verify
+pip install sv-ast sv-trace sv-verify
 ```
 
 ---
 
-## 4. 📊 sv-lint (代码质量工具)
+## 4. 📊 sv-codecheck (原svlint)
 
 **定位**: 代码质量检查、Linting、Style检查
 
@@ -140,9 +148,9 @@ src/lint/
 ```
 
 ### CLI工具
-- `sv-lint quality`     # 质量报告
-- `sv-lint naming`      # 命名检查
-- `sv-lint style`      # 风格检查
+- `sv-codecheck quality`     # 质量报告
+- `sv-codecheck naming`      # 命名检查
+- `sv-codecheck style`      # 风格检查
 
 ### 用户群体
 - 所有工程师
@@ -150,7 +158,7 @@ src/lint/
 
 ### 安装
 ```bash
-pip install sv-lint
+pip install sv-ast sv-codecheck
 ```
 
 ---
@@ -174,79 +182,49 @@ graphviz>=0.20
 
 ---
 
-## 拆分后的目录结构
+## Monorepo结构
+
+建议采用Monorepo结构，各自独立发布：
 
 ```
-sv-trace/                    # 当前项目 -> Archive/过渡
-├── sv-parser/              # 新项目1
-├── sv-trace-rtl/           # 新项目2  
-├── sv-verify/              # 新项目3
-├── sv-lint/                # 新项目4
-└── README_SPLIT.md         # 本文档
+sv-trace-org/              # 组织目录
+├── sv-ast/              # 项目1: AST操作
+├── sv-trace/            # 项目2: RTL追踪  
+├── sv-verify/           # 项目3: 验证工具
+├── sv-codecheck/         # 项目4: 代码检查
+└── README.md            # 主索引
+```
+
+每个项目可独立安装：
+```bash
+pip install sv-ast           # 只用解析器
+pip install sv-ast sv-verify  # 解析器+验证
+pip install sv-ast sv-trace sv-verify  # 完整安装
 ```
 
 ---
 
-## 迁移策略
+## 与dalance项目的区别
 
-### Phase 1: 拆分sv-parser
-```bash
-mkdir sv-parser && mv src/parse sv-parser/
-```
-
-### Phase 2: 拆分sv-trace
-```bash
-mkdir sv-trace-rtl && mv src/trace sv-trace-rtl/
-```
-
-### Phase 3: 拆分sv-verify
-```bash
-mkdir sv-verify && mv src/verify sv-verify/
-mv src/debug/constraint* sv-verify/
-mv src/debug/class* sv-verify/
-```
-
-### Phase 4: 拆分sv-lint
-```bash
-mkdir sv-lint && mv src/debug/complexity.py sv-lint/
-mv src/debug/signal* sv-lint/
-```
+| 特性 | dalance (Rust) | 我们 (Python) |
+|------|-----------------|---------------|
+| 语言 | Rust | Python |
+| 定位 | 底层解析 | 上层应用 |
+| API | C FFI | 原生Python |
+| 用户 | 嵌入式/C++集成 | 脚本/验证自动化 |
 
 ---
 
-## 推荐: 保持单仓库，分成多个子包
+## 下一步
 
-考虑到：
-1. 模块间有依赖关系
-2. 用户可能需要完整工具链
-3. 版本同步简单
+1. 确定最终项目数量（可以只发布最成熟的几个）
+2. 清理代码和测试
+3. 编写每个项目的独立README
+4. 配置CI/CD
+5. 发布到PyPI
 
-**建议**: 采用Monorepo结构，发布多个子包
-
-```toml
-# sv-parser/pyproject.toml
-[project]
-name = "sv-parser"
-
-# sv-trace/pyproject.toml
-[project]
-name = "sv-trace"
-dependencies = ["sv-parser"]
-
-# sv-verify/pyproject.toml
-[project]
-name = "sv-verify"
-dependencies = ["sv-parser", "sv-trace", "z3-solver"]
-```
-
----
-
-## 总结
-
-| 方案 | 优点 | 缺点 |
-|------|------|------|
-| **拆成4个项目** | 职责清晰、独立使用 | 依赖管理复杂 |
-| **Monorepo多包** | 版本同步、灵活组合 | 仓库较大 |
-| **保持现状** | 最简单 | 功能混杂 |
-
-**推荐**: 采用Monorepo方案，分成4个独立发布的Python子包
+建议优先级：
+1. **sv-ast** - 核心基础
+2. **sv-verify** - TB分析是强项
+3. **sv-trace** - RTL追踪
+4. **sv-codecheck** - 可后续发布
