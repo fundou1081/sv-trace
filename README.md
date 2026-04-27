@@ -1,6 +1,6 @@
 # SV-Trace
 
-> **开发说明**: 本项目由 [OpenClaw](https://github.com/openclaw) AI助手 与 [MiniMax](https://minimaxi.com) 大语言模型 合作开发。
+> **开发说明**: 本项目由 [OpenClaw](https://github.com/openclaw) AI助手 驱动，使用 [MiniMax](https://minimaxi.com) 与 [DeepSeek](https://deepseek.com) 大语言模型 合作开发。
 
 **SystemVerilog 静态分析工具库** - - 用于RTL设计分析、验证testbench质量评估、约束冲突检测
 
@@ -25,7 +25,7 @@
 
 ## 特性
 
-> 本项目是 AI 辅助编程的产物，通过 OpenClaw 平台调用 MiniMax 模型实现代码生成和优化。
+> 本项目是 AI 辅助编程的产物，通过 OpenClaw 平台调用 MiniMax 和 DeepSeek 模型实现代码生成和优化。
 
 ### 🔍 RTL分析
 - **信号追踪**: 驱动/负载追踪、数据流分析、控制流分析
