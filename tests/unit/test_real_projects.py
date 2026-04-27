@@ -1,181 +1,131 @@
 """
-真实项目测试 - tiny-gpu 和 basic_verilog
+真实项目测试 - 用开源项目验证解析能力
 
-用于验证 sv-trace 在实际项目上的表现
+使用真实的SystemVerilog项目来验证sv-trace的可靠性。
+所有项目都是从开源仓库克隆的。
 """
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from parse import SVParser
-from query.hierarchy import HierarchicalResolver
+import os
+import sys
+import pytest
 
+# 项目本地路径
+TEST_PROJECTS = {
+    'tiny-gpu': '/Users/fundou/my_dv_proj/tiny-gpu',
+    'basic_verilog': '/Users/fundou/my_dv_proj/basic_verilog',
+}
 
-# ========== Tiny-GPU 测试 ==========
-
-TINY_GPU_FILES = [
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/alu.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/core.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/gpu.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/controller.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/decoder.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/dispatch.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/fetcher.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/lsu.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/pc.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/registers.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/scheduler.sv",
-    "/Users/fundou/my_dv_proj/tiny-gpu/src/dcr.sv",
-]
+def get_project_path(name):
+    """获取项目路径，不存在则跳过"""
+    path = TEST_PROJECTS.get(name)
+    if path and os.path.exists(path):
+        return path
+    pytest.skip(f"Project {name} not found at {path}")
 
 
-def test_tiny_gpu():
-    """测试 tiny-gpu 项目"""
-    print("=" * 50)
-    print("Tiny-GPU 项目测试")
-    print("=" * 50)
+class TestTinyGPU:
+    """TinyGPU项目测试"""
     
-    parser = SVParser()
-    success = 0
-    failed = 0
+    @pytest.fixture
+    def project_path(self):
+        return get_project_path('tiny-gpu')
     
-    for f in TINY_GPU_FILES:
-        try:
-            parser.parse_file(f)
-            success += 1
-        except Exception as e:
-            failed += 1
-            print(f"  ✗ {os.path.basename(f)}: {e}")
+    def test_parse_all_files(self, project_path):
+        """解析所有SV文件"""
+        from parse import SVParser
+        
+        parser = SVParser()
+        for root, dirs, files in os.walk(project_path):
+            for f in files:
+                if f.endswith('.sv'):
+                    fpath = os.path.join(root, f)
+                    try:
+                        parser.parse_file(fpath)
+                    except Exception as e:
+                        pytest.fail(f"Failed to parse {fpath}: {e}")
+        
+        assert len(parser.trees) > 0, "No files parsed"
     
-    print(f"\n解析结果: {success}/{success+failed} 成功")
-    
-    resolver = HierarchicalResolver(parser)
-    modules = resolver._get_all_modules()
-    instances = resolver.get_all_instances()
-    
-    print(f"模块数: {len(modules)}")
-    print(f"实例数: {len(instances)}")
-    
-    # 测试层级追踪
-    print("\n层级追踪测试:")
-    test_paths = [
-        "gpu.fetcher_instance.pc_reg",    # gpu -> core -> fetcher -> pc
-        "core.alu_result",                  # core 模块内的信号
-    ]
-    
-    for path in test_paths:
-        result = resolver.resolve_signal(path)
-        if result:
-            print(f"  ✓ {path} -> {result.get('module', 'N/A')}")
-        else:
-            print(f"  ✗ {path} -> Not found")
-    
-    return success > 0 and failed == 0
+    def test_drive_load_tracing(self, project_path):
+        """测试驱动追踪"""
+        from trace.driver import DriverTracer
+        from parse import SVParser
+        
+        parser = SVParser()
+        
+        # 找第一个模块
+        for root, dirs, files in os.walk(project_path):
+            for f in files:
+                if f.endswith('.sv'):
+                    fpath = os.path.join(root, f)
+                    parser.parse_file(fpath)
+                    if parser.trees:
+                        break
+            if parser.trees:
+                break
+        
+        tracer = DriverTracer(parser)
+        drivers = tracer.trace()
+        
+        # 验证：driver结果应该是确定的
+        assert drivers is not None
 
 
-# ========== Basic Verilog 测试 ==========
-
-def find_sv_files(base_dir, limit=20):
-    """查找 SV 文件"""
-    files = []
-    for root, dirs, filenames in os.walk(base_dir):
-        for f in filenames:
-            if f.endswith('.sv'):
-                files.append(os.path.join(root, f))
-                if len(files) >= limit:
-                    return files
-    return files
-
-
-def test_basic_verilog():
-    """测试 basic_verilog 项目"""
-    print("\n" + "=" * 50)
-    print("Basic Verilog 项目测试")
-    print("=" * 50)
+class TestBasicVerilog:
+    """Basic Verilog项目测试"""
     
-    base_dir = "/Users/fundou/my_dv_proj/basic_verilog"
-    sv_files = find_sv_files(base_dir, limit=30)
+    @pytest.fixture
+    def project_path(self):
+        return get_project_path('basic_verilog')
     
-    print(f"找到 {len(sv_files)} 个 .sv 文件")
-    
-    parser = SVParser()
-    success = 0
-    failed = 0
-    
-    for f in sv_files[:20]:  # 测试前 20 个
-        try:
-            parser.parse_file(f)
-            success += 1
-        except Exception as e:
-            failed += 1
-    
-    print(f"解析结果: {success}/{success+failed} 成功")
-    
-    resolver = HierarchicalResolver(parser)
-    modules = resolver._get_all_modules()
-    instances = resolver.get_all_instances()
-    
-    print(f"模块数: {len(modules)}")
-    print(f"实例数: {len(instances)}")
-    
-    return success > 0
+    def test_parse_verilog(self, project_path):
+        """解析Verilog文件"""
+        from parse import SVParser
+        
+        parser = SVParser()
+        
+        for root, dirs, files in os.walk(project_path):
+            for f in files:
+                if f.endswith('.v') or f.endswith('.sv'):
+                    fpath = os.path.join(root, f)
+                    try:
+                        parser.parse_file(fpath)
+                    except Exception as e:
+                        pytest.fail(f"Failed to parse {fpath}: {e}")
+        
+        assert len(parser.trees) > 0
 
 
-# ========== 主测试 ==========
-
-def main():
-    results = {}
+class TestConstraintAnalysis:
+    """约束分析测试 - 用项目中的SV文件"""
     
-    results['tiny-gpu'] = test_tiny_gpu()
-    results['basic_verilog'] = test_basic_verilog()
+    @pytest.fixture
+    def project_path(self):
+        return get_project_path('basic_verilog')
     
-    print("\n" + "=" * 50)
-    print("测试总结")
-    print("=" * 50)
-    
-    for name, passed in results.items():
-        status = "✓ PASS" if passed else "✗ FAIL"
-        print(f"  {name}: {status}")
-    
-    all_passed = all(results.values())
-    print(f"\n总体: {'✓ ALL PASS' if all_passed else '✗ SOME FAILED'}")
-    return 0 if all_passed else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-
-
-def test_hierarchy_detail():
-    """详细层级追踪测试"""
-    print("\n" + "=" * 50)
-    print("详细层级追踪测试")
-    print("=" * 50)
-    
-    parser = SVParser()
-    for f in TINY_GPU_FILES:
-        parser.parse_file(f)
-    
-    resolver = HierarchicalResolver(parser)
-    
-    # 列出所有实例
-    print("\n所有实例:")
-    instances = resolver.get_all_instances()
-    for inst in instances:
-        print(f"  {inst['parent_module']}.{inst['instance_name']} -> {inst['module_type']}")
-        for p in inst.get('ports', []):
-            print(f"    {p['port']} ({p['direction']}) -> {p['connected_to']}")
-    
-    # 测试已知路径
-    print("\n已知路径测试:")
-    
-    # gpu 模块中的 dcr
-    result = resolver.resolve_signal("gpu.dcr_instance")
-    print(f"  gpu.dcr_instance: {result}")
-    
-    # core 模块中的 fetcher
-    result = resolver.resolve_signal("core.fetcher_instance")
-    print(f"  core.fetcher_instance: {result}")
+    def test_constraint_parsing(self, project_path):
+        """测试约束解析"""
+        from debug.constraint_parser_v2 import parse_constraints
+        from parse import SVParser
+        
+        parser = SVParser()
+        
+        # 扫描项目中的SV文件
+        sv_files = []
+        for root, dirs, files in os.walk(project_path):
+            for f in files:
+                if f.endswith('.sv'):
+                    sv_files.append(os.path.join(root, f))
+        
+        if not sv_files:
+            pytest.skip("No .sv files found")
+        
+        parser.parse_file(sv_files[0])
+        cp = parse_constraints(parser)
+        
+        # 验证：约束分析不应该崩溃
+        assert cp is not None
 
 
-if __name__ == "__main__":
-    test_hierarchy_detail()
+if __name__ == '__main__':
+    pytest.main([__file__, '-v'])
