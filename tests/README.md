@@ -1,16 +1,42 @@
-# sv-trace 测试套件
+# SV-Trace 测试状态
 
-## 测试用例库
+## 测试历史
 
-tests/sv_cases/:
-- driver/driver_basic.sv - DriverTracer测试
-- fsm/fsm_simple.sv - FSMExtractor测试
-- cdc/cdc_basic.sv - CDC分析测试
-- iospec/iospec_basic.sv - IOSpecExtractor测试
-- dependency/dependency_hierarchy.sv - 模块依赖测试
-- lint/lint_issues.sv - Lint问题测试
+| 日期 | 版本 | 状态 |
+|------|------|------|
+| 2026-04-24 | V1 | 基础测试 |
+| 2026-04-24 | V2 | 详细测试 |
 
-运行: python3 tests/run_all_tests.py
+## 测试结果摘要 (V2)
 
-sv-tests兼容性: 1030 passed, 0 failed
+### Phase 2: Trace 模块
+- **通过**: 11/18
+- **失败**: 2/18
+- **待确认**: 5/18
 
+### Phase 3: Debug 分析器
+- **通过**: 7/11
+- **待确认**: 4/11
+
+### Phase 4: Query 模块
+- **通过**: 4/9
+- **待确认**: 5/9
+
+## 已知问题
+
+1. `DependencyAnalyzer`: TypeError in driver.sources
+2. `GraphVisualizer`: __init__() argument issue
+3. `XValueDetector`: Wrong class name
+
+## 下一步
+
+1. 修复已知问题
+2. 完成待确认模块的验证
+3. 添加真实RTL回归测试
+
+## 测试文档
+
+- [测试计划 V1](TEST_PLAN.md)
+- [测试计划 V2](TEST_PLAN_V2.md)
+- [测试结果 V1](TEST_RESULTS.md)
+- [测试结果 V2](TEST_RESULTS_V2.md)
