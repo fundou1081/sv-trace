@@ -104,6 +104,33 @@ class TBMetrics:
     
     # Issues
     issues: List[str] = field(default_factory=list)
+    # Packages
+    package_count: int = 0
+    package_names: List[str] = field(default_factory=list)
+    package_imports: Dict[str, List[str]] = field(default_factory=dict)
+    
+    # Functions/Tasks
+    function_count: int = 0
+    task_count: int = 0
+    
+    # Randomization
+    randomize_count: int = 0
+    
+    # Transactions
+    deep_copy_count: int = 0
+    clone_count: int = 0
+    
+    # Interfaces/Ports
+    interface_count: int = 0
+    port_count: int = 0
+    
+    # Memory/Arrays
+    memory_array_count: int = 0
+    memory_size_sum: int = 0
+    
+    # FSM
+    fsm_state_count: int = 0
+
 
 
 class TBComplexityAnalyzer:
@@ -135,6 +162,13 @@ class TBComplexityAnalyzer:
         self._analyze_factory()
         self._analyze_config_db()
         self._analyze_imports()
+        self._analyze_packages()
+        self._count_functions_tasks()
+        self._count_randomization()
+        self._count_transactions()
+        self._count_interfaces_ports()
+        self._count_memory_arrays()
+        self._count_fsm()
         self._calculate_score()
         self._check_issues()
         
@@ -421,6 +455,41 @@ class TBComplexityAnalyzer:
         self.metrics.import_count = len(re.findall(r'\bimport\s+[\w:]+;', self.code))
         self.metrics.include_count = len(re.findall(r'`include\s+"[^"]+"', self.code))
     
+
+    def _analyze_packages(self):
+        pkg = re.findall(r'package\s+(\w+)\s*;', self.code)
+        self.metrics.package_count = len(pkg)
+        self.metrics.package_names = pkg[:20]
+        for p in pkg:
+            sec = re.search(r'package\s+' + p + r'\s*;.*?(?=package\s+\w+\s*;|$)', self.code, re.DOTALL)
+            if sec:
+                imps = re.findall(r'import\s+(\w+)\s*::', sec.group(0))
+                if imps:
+                    self.metrics.package_imports[p] = list(set(imps))
+    
+    def _count_functions_tasks(self):
+        self.metrics.function_count = len(re.findall(r'\bfunction\s+\w+', self.code))
+        self.metrics.task_count = len(re.findall(r'\btask\s+\w+', self.code))
+    
+    def _count_randomization(self):
+        self.metrics.randomize_count = len(re.findall(r'\.randomize\s*\(', self.code))
+    
+    def _count_transactions(self):
+        self.metrics.deep_copy_count = len(re.findall(r'\.deep_copy\s*\(', self.code))
+        self.metrics.clone_count = len(re.findall(r'\.clone\s*\(', self.code))
+    
+    def _count_interfaces_ports(self):
+        self.metrics.interface_count = len(re.findall(r'\binterface\s+\w+', self.code))
+        self.metrics.port_count = len(re.findall(r'\binput\b|\boutput\b|\binout\b', self.code))
+    
+    def _count_memory_arrays(self):
+        self.metrics.memory_array_count = len(re.findall(r'\w+\s+\w+\s*\[\s*\d+\s*:\s*\d+\s*\]', self.code))
+        for msb, lsb in re.findall(r'\[(\d+)\s*:\s*(\d+)\]', self.code):
+            self.metrics.memory_size_sum += max(0, int(msb) - int(lsb) + 1)
+    
+    def _count_fsm(self):
+        self.metrics.fsm_state_count = len(re.findall(r'\b\w*state\w*\s*:', self.code.lower()))
+
     def _calculate_score(self):
         """Calculate complexity score"""
         score = 0.0
@@ -666,6 +735,33 @@ class TBComplexityAnalyzer:
                 'agents': m.agent_count,
                 'constraints': m.constraint_count,
                 'covergroups': m.covergroup_count,
+            },
+            'packages': {
+                'count': m.package_count,
+                'names': m.package_names,
+                'imports': m.package_imports,
+            },
+            'functions_tasks': {
+                'functions': m.function_count,
+                'tasks': m.task_count,
+            },
+            'randomization': {
+                'randomize_count': m.randomize_count,
+            },
+            'transactions': {
+                'deep_copy': m.deep_copy_count,
+                'clone': m.clone_count,
+            },
+            'interfaces_ports': {
+                'interfaces': m.interface_count,
+                'ports': m.port_count,
+            },
+            'memory_arrays': {
+                'count': m.memory_array_count,
+                'total_bits': m.memory_size_sum,
+            },
+            'fsm': {
+                'state_count': m.fsm_state_count,
             },
             'complexity': {
                 'score': m.complexity_score,
