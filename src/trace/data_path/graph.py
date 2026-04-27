@@ -1,37 +1,41 @@
-"""Data Path Graph
-
-构建数据通路有向图并进行结构分析
-"""
+"""Data Path Graph"""
 
 import collections
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, List, Set, Tuple
 
 
 class DataPathGraph:
-    """数据通路图"""
-    
     def __init__(self, nodes: Dict, edges: List):
-        self.nodes = nodes  # Dict[name] = node_type
-        self.edges = edges  # List[(src, dst, edge_type)]
+        self.nodes = nodes
+        try:
+            it = iter(edges)
+            first = next(it)
+            if hasattr(first, 'src'):  # DataPathEdge objects
+                self.edges = [(e.src, e.dst, e.edge_type if hasattr(e, 'edge_type') else 'data') for e in edges]
+            else:
+                self.edges = edges
+        except:
+            self.edges = edges
         
-        # 构建邻接表
         self.adj = collections.defaultdict(list)
         self.radj = collections.defaultdict(list)
-        self._build_adjacency()
+        self._build_adj()
     
-    def _build_adjacency(self):
-        for src, dst, etype in self.edges:
-            self.adj[src].append((dst, etype))
-            self.radj[dst].append((src, etype))
+    def _build_adj(self):
+        for e in self.edges:
+            if len(e) >= 2:
+                src, dst = e[0], e[1]
+                etype = e[2] if len(e) > 2 else 'data'
+                self.adj[src].append((dst, etype))
+                self.radj[dst].append((src, etype))
     
-    def get_in_degree(self, node: str) -> int:
+    def get_in_degree(self, node):
         return len(self.radj.get(node, []))
     
-    def get_out_degree(self, node: str) -> int:
+    def get_out_degree(self, node):
         return len(self.adj.get(node, []))
     
-    def find_scc(self) -> List[List[str]]:
-        """找强连通分量 - 循环路径"""
+    def find_scc(self):
         index = {}
         low = {}
         on_stack = {}
@@ -69,65 +73,5 @@ class DataPathGraph:
         
         return sccs
     
-    def find_path(self, start: str, end: str, max_len: int = 10) -> List[List[str]]:
-        """找路径"""
-        if start not in self.nodes or end not in self.nodes:
-            return []
-        
-        paths = []
-        visited = set()
-        
-        def dfs(curr, path):
-            if len(path) > max_len:
-                return
-            if curr == end:
-                paths.append(path.copy())
-                return
-            
-            visited.add(curr)
-            for next_node, _ in self.adj.get(curr, []):
-                if next_node not in visited:
-                    path.append(next_node)
-                    dfs(next_node, path)
-                    path.pop()
-            visited.remove(curr)
-        
-        dfs(start, [start])
-        return paths
-    
-    def get_critical_nodes(self, top_k: int = 10) -> List[Tuple[str, int]]:
-        """找关键节点 - 高介数中心性(被依赖最多)"""
-        in_degrees = [(n, self.get_in_degree(n)) for n in self.nodes]
-        return sorted(in_degrees, key=lambda x: -x[1])[:top_k]
-    
-    def get_longest_path(self) -> List[str]:
-        """找最长路径（无环情况下）"""
-        # 简化版 - DFS找最长路径
-        longest = []
-        
-        def dfs(node, path, visited):
-            nonlocal longest
-            if len(path) > len(longest):
-                longest = path.copy()
-            
-            visited.add(node)
-            for next_node, _ in self.adj.get(node, []):
-                if next_node not in visited:
-                    dfs(next_node, path + [next_node], visited.copy())
-        
-        for start in self.nodes:
-            dfs(start, [start], set())
-        
-        return longest
-    
-    def summary(self) -> str:
-        """返回图摘要"""
-        sccs = self.find_scc()
-        critical = self.get_critical_nodes()
-        
-        lines = ["DataPath Graph Summary", "=" * 40]
-        lines.append(f"  Nodes: {len(self.nodes)}")
-        lines.append(f"  Edges: {len(self.edges)}")
-        lines.append(f"  SCCs: {len(sccs)}")
-        lines.append(f"  Critical nodes: {critical[:5]}")
-        return "\n".join(lines)
+    def summary(self):
+        return f"Graph: {len(self.nodes)} nodes, {len(self.edges)} edges"
