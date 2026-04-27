@@ -8,6 +8,7 @@ from .class_info import (
     ConstraintModeInfo,
 )
 from .class_extractor import ClassExtractor
+from .constraint_parser_v2 import ConstraintParserV2
 from .class_hierarchy import ClassHierarchyBuilder
 from .class_usage import (
     ClassInstantiationTracer,
@@ -28,4 +29,6 @@ __all__ = [
     'ClassExtractor',
     'ClassHierarchyBuilder',
     'ClassInstantiationTracer',
+    # Constraint parser V2
+    'ConstraintParserV2',
 ]

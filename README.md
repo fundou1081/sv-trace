@@ -342,3 +342,13 @@ Paths:
   c -> b [type=comb, depth=1]
   a -> c [type=comb, depth=1]
 ```
+
+## Constraint Parser V2 (2026-04)
+
+全新架构使用 pyslang + z3:
+
+```bash
+bin/svtrace constraint design.sv  # 使用
+```
+
+完整文档: `docs/CONSTRAINT_PARSER_V2.md`
