@@ -1,7 +1,4 @@
-"""TB Complexity Analyzer
-
-Analyzes UVM testbench complexity with objective metrics.
-"""
+"""TB Complexity Analyzer - Enhanced with Class References and Random Variables"""
 
 import re
 from typing import Dict, List, Set, Tuple
@@ -10,7 +7,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class TBMetrics:
-    """TB complexity metrics - objective data"""
+    """TB complexity metrics - comprehensive"""
     # Line counts
     total_lines: int = 0
     code_lines: int = 0
@@ -32,6 +29,23 @@ class TBMetrics:
     implements_count: int = 0
     parent_classes: List[str] = field(default_factory=list)
     
+    # Class references (non-inheritance)
+    class_refs: Dict[str, List[str]] = field(default_factory=dict)
+    class_instance_map: Dict[str, List[str]] = field(default_factory=dict)
+    class_graph_edges: List[Tuple[str, str]] = field(default_factory=list)
+    class_graph_nodes: List[str] = field(default_factory=list)
+    
+    # Random variables
+    rand_count: int = 0
+    randc_count: int = 0
+    rand_vars: List[str] = field(default_factory=list)
+    rand_var_types: Dict[str, str] = field(default_factory=dict)
+    
+    # Random variable relationships
+    rand_constraint_map: Dict[str, List[str]] = field(default_factory=dict)
+    constraint_rand_map: Dict[str, str] = field(default_factory=dict)
+    rand_relations: List[Tuple[str, str]] = field(default_factory=list)
+    
     # Nesting
     max_nesting: int = 0
     avg_nesting: float = 0.0
@@ -46,6 +60,14 @@ class TBMetrics:
     config_db_get: int = 0
     config_db_set: int = 0
     
+    # Sequence complexity
+    sequence_body_lines: int = 0
+    sequence_items: int = 0
+    fork_join_count: int = 0
+    send_port_count: int = 0
+    get_try_count: int = 0
+    wait_count: int = 0
+    
     # Factory
     factory_create_count: int = 0
     uvm_object_utils_count: int = 0
@@ -54,10 +76,6 @@ class TBMetrics:
     # Imports
     import_count: int = 0
     include_count: int = 0
-    
-    # Class relationship graph data
-    class_graph_nodes: List[str] = field(default_factory=list)
-    class_graph_edges: List[Tuple[str, str]] = field(default_factory=list)
     
     # Complexity
     complexity_score: float = 0.0
@@ -68,7 +86,7 @@ class TBMetrics:
 
 
 class TBComplexityAnalyzer:
-    """Analyze testbench complexity with objective metrics"""
+    """Analyze testbench complexity with comprehensive metrics"""
     
     def __init__(self, code: str = None, filepath: str = None):
         self.code = code
@@ -84,12 +102,15 @@ class TBComplexityAnalyzer:
         """Analyze TB complexity"""
         self.code = code
         
-        # All analysis methods
         self._count_lines()
         self._analyze_parameters()
         self._analyze_classes()
+        self._analyze_class_refs()
+        self._analyze_random_vars()
+        self._analyze_random_constraints()
         self._analyze_nesting()
         self._count_components()
+        self._analyze_sequence_complexity()
         self._analyze_factory()
         self._analyze_config_db()
         self._analyze_imports()
@@ -123,7 +144,6 @@ class TBComplexityAnalyzer:
         self.metrics.parameter_count = len(re.findall(r'parameter\s+', self.code))
         self.metrics.localparam_count = len(re.findall(r'localparam\s+', self.code))
         
-        # Parameter usage in expressions
         param_refs = len(re.findall(r'\b\w+\s*=\s*\w+', self.code))
         total_params = self.metrics.parameter_count + self.metrics.localparam_count
         if total_params > 0:
@@ -131,16 +151,21 @@ class TBComplexityAnalyzer:
     
     def _analyze_classes(self):
         """Analyze class structure"""
-        class_matches = re.findall(r'class\s+(\w+)(?:\s+extends\s+(\w+))?(?:\s+implements\s+([\w,\s]+))?', self.code)
+        # Use line-based approach to avoid matching "rand bit class" etc
+        lines = self.code.split('\n')
+        class_matches = []
+        for line in lines:
+            match = re.match(r'\s*class\s+(\w+)(?:\s+extends\s+(\w+))?', line)
+            if match:
+                class_matches.append((match.group(1), match.group(2)))
+        
         self.metrics.class_count = len(class_matches)
         
-        for name, parent, impl in class_matches:
+        for name, parent in class_matches:
             self.metrics.class_names.append(name)
             if parent:
                 self.metrics.class_graph_edges.append((name, parent))
                 self.metrics.parent_classes.append(parent)
-            if impl:
-                self.metrics.implements_count += len(impl.split(','))
         
         self.metrics.extends_count = len([p for p in self.metrics.parent_classes if p])
         self.metrics.class_graph_nodes = self.metrics.class_names
@@ -162,12 +187,117 @@ class TBComplexityAnalyzer:
                 return depth
             return max(count_depth(c, depth+1) for c in children[node])
         
-        all_nodes = set(c for c, p in self.metrics.class_graph_edges)
-        roots = all_nodes - set(p for c, p in self.metrics.class_graph_edges)
+        # Root = parent that is never a child (top of hierarchy)
+        all_children = set(c for c, p in self.metrics.class_graph_edges)
+        all_parents = set(p for c, p in self.metrics.class_graph_edges)
+        roots = all_parents - all_children
+        
         if not roots and self.metrics.class_graph_edges:
             roots = {self.metrics.class_graph_edges[0][1]}
         
         return max(count_depth(r) for r in roots) if roots else 0
+    
+    def _analyze_class_refs(self):
+        """Analyze class references (non-inheritance)"""
+        # Find class instances: agent = agent::type_id::create("name", this)
+        # or: class_name inst_name;
+        inst_pattern = r'(\w+)\s+(\w+)\s*;'
+        instances = re.findall(inst_pattern, self.code)
+        
+        for var_type, var_name in instances:
+            # Check if var_type is a class name
+            if var_type[0].isupper() and var_type not in ['bit', 'byte', 'int', 'logic', 'reg', 'wire']:
+                if var_type not in self.metrics.class_instance_map:
+                    self.metrics.class_instance_map[var_type] = []
+                self.metrics.class_instance_map[var_type].append(var_name)
+        
+        # Class refs within methods/bodies
+        for class_name in self.metrics.class_names:
+            # Find references to other classes within this class body
+            class_pattern = rf'class\s+{class_name}.*?(?=class\s+\w+|$)'
+            match = re.search(class_pattern, self.code, re.DOTALL)
+            if match:
+                class_body = match.group(0)
+                # Find other class names referenced
+                refs = []
+                for other_class in self.metrics.class_names:
+                    if other_class != class_name and other_class in class_body:
+                        refs.append(other_class)
+                if refs:
+                    self.metrics.class_refs[class_name] = list(set(refs))
+    
+    def _analyze_random_vars(self):
+        """Analyze random variables"""
+        # rand/randc declarations - handles "rand bit [7:0] data" format
+        rand_pattern = r'rand\s+(?:bit\s+(?:\[\d+:\d+\]\s+)?|int\s+|byte\s+)?(\w+)'
+        rand_matches = re.findall(rand_pattern, self.code)
+        randc_pattern = r'randc\s+(?:bit\s+(?:\[\d+:\d+\]\s+)?|int\s+|byte\s+)?(\w+)'
+        randc_matches = re.findall(randc_pattern, self.code)
+        
+        for var_name in rand_matches:
+            self.metrics.rand_count += 1
+            self.metrics.rand_vars.append(var_name)
+            self.metrics.rand_var_types[var_name] = 'bit'
+        
+        for var_name in randc_matches:
+            self.metrics.randc_count += 1
+            if var_name not in self.metrics.rand_vars:
+                self.metrics.rand_vars.append(var_name)
+                self.metrics.rand_var_types[var_name] = 'randc'
+        
+        # Determine bit widths
+        bit_width_pattern = r'(rand[cs]?)\s+bit\s*\[(\d+):(\d+)\]\s+(\w+)'
+        for modifier, msb, lsb, var_name in re.findall(bit_width_pattern, self.code):
+            width = int(msb) - int(lsb) + 1
+            self.metrics.rand_var_types[var_name] = f'bit[{width-1}:0]'
+        
+        # Integer types
+        int_pattern = r'(rand[cs]?)\s+int\s+(\w+)'
+        for modifier, var_name in re.findall(int_pattern, self.code):
+            self.metrics.rand_var_types[var_name] = 'int'
+            if modifier == 'randc':
+                self.metrics.randc_count += 1
+            else:
+                self.metrics.rand_count += 1
+            self.metrics.rand_vars.append(var_name)
+            
+            # Determine type
+            if msb and lsb:
+                width = int(msb) - int(lsb) + 1
+                if width > 8:
+                    var_type = f"bit[{width-1}:0]"
+                else:
+                    var_type = "bit" if width <= 1 else f"byte"
+            else:
+                var_type = "bit"
+            self.metrics.rand_var_types[var_name] = var_type
+    
+    def _analyze_random_constraints(self):
+        """Analyze relationships between random variables and constraints"""
+        # Find constraint blocks and which variables they affect
+        constraint_blocks = re.findall(
+            r'constraint\s+(\w+)\s*\{([^}]*)\}',
+            self.code,
+            re.DOTALL
+        )
+        
+        for const_name, const_body in constraint_blocks:
+            # Find variables referenced in this constraint
+            vars_in_const = []
+            for var_name in self.metrics.rand_vars:
+                if var_name in const_body:
+                    vars_in_const.append(var_name)
+                    self.metrics.constraint_rand_map[var_name] = const_name
+            
+            if vars_in_const:
+                self.metrics.rand_constraint_map[const_name] = vars_in_const
+        
+        # Find relationships between random variables (if they appear in same constraint)
+        for const_name, vars_list in self.metrics.rand_constraint_map.items():
+            if len(vars_list) > 1:
+                for i in range(len(vars_list)):
+                    for j in range(i+1, len(vars_list)):
+                        self.metrics.rand_relations.append((vars_list[i], vars_list[j]))
     
     def _analyze_nesting(self):
         """Analyze nesting depth"""
@@ -205,6 +335,26 @@ class TBComplexityAnalyzer:
             matches = re.findall(pattern, self.code.lower())
             setattr(self.metrics, key, len(matches))
     
+    def _analyze_sequence_complexity(self):
+        """Analyze sequence body complexity"""
+        # Find sequence bodies
+        seq_matches = re.findall(
+            r'class\s+\w+_seq\s+extends.*?endclass',
+            self.code,
+            re.DOTALL
+        )
+        
+        self.metrics.sequence_items = len(seq_matches)
+        
+        for seq in seq_matches:
+            self.metrics.sequence_body_lines += seq.count('\n')
+            
+            # Count sequence operations
+            self.metrics.fork_join_count += len(re.findall(r'fork', seq))
+            self.metrics.send_port_count += len(re.findall(r'\.(start|put|send)\s*\(', seq))
+            self.metrics.get_try_count += len(re.findall(r'\.(get|try_next|peek)\s*\(', seq))
+            self.metrics.wait_count += len(re.findall(r'\bwait\s*\(', seq))
+    
     def _analyze_factory(self):
         """Analyze factory usage"""
         self.metrics.factory_create_count = len(re.findall(r'type_id::create\(', self.code))
@@ -229,28 +379,33 @@ class TBComplexityAnalyzer:
         # Lines factor (max 15)
         score += min(15, m.code_lines / 15)
         
-        # Nesting factor (max 20)
-        score += min(20, m.max_nesting * 2)
+        # Nesting factor (max 15)
+        score += min(15, m.max_nesting * 1.5)
         
-        # Class hierarchy factor (max 15)
-        score += min(15, m.class_hierarchy_depth * 3)
-        score += min(10, m.class_count * 0.5)
+        # Class complexity (max 20)
+        score += min(10, m.class_hierarchy_depth * 2)
+        score += min(10, len(m.class_refs) * 0.5)
         
-        # Components factor (max 20)
+        # Random variable complexity (max 15)
+        score += min(10, m.rand_count * 0.3)
+        score += min(5, len(m.rand_relations) * 0.5)
+        
+        # Sequence complexity (max 15)
+        score += min(15, m.sequence_items * 2)
+        score += min(5, m.fork_join_count * 0.5)
+        
+        # Components factor (max 15)
         total_components = (
             m.agent_count * 2 +
             m.constraint_count * 0.3 +
             m.assertion_count * 0.2 +
             m.covergroup_count * 1.0 +
-            m.sequence_count * 0.5
+            m.sequence_count * 1.5
         )
-        score += min(20, total_components)
+        score += min(15, total_components)
         
-        # Config complexity (max 10)
-        score += min(10, (m.config_db_get + m.config_db_set) * 0.3)
-        
-        # Factory usage (max 10)
-        score += min(10, m.factory_create_count * 0.5)
+        # Config complexity (max 5)
+        score += min(5, (m.config_db_get + m.config_db_set) * 0.2)
         
         self.metrics.complexity_score = round(score, 2)
         
@@ -278,16 +433,16 @@ class TBComplexityAnalyzer:
             issues.append(f"Large TB: {m.code_lines} LOC")
         if m.constraint_count > 100:
             issues.append(f"Many constraints: {m.constraint_count}")
-        if m.class_hierarchy_depth > 5:
-            issues.append(f"Deep hierarchy: {m.class_hierarchy_depth} levels")
-        if m.config_db_get > 50:
-            issues.append(f"Many config_db::get: {m.config_db_get}")
-        if m.factory_create_count > 100:
-            issues.append(f"Many factory creates: {m.factory_create_count}")
+        if m.rand_count > 50:
+            issues.append(f"Many rand vars: {m.rand_count}")
+        if len(m.rand_relations) > 50:
+            issues.append(f"Complex var relations: {len(m.rand_relations)}")
+        if m.sequence_body_lines > 1000:
+            issues.append(f"Long sequences: {m.sequence_body_lines} lines")
         if m.covergroup_count == 0 and m.code_lines > 500:
-            issues.append("No covergroups defined")
+            issues.append("No covergroups")
         if m.assertion_count == 0 and m.code_lines > 500:
-            issues.append("No assertions defined")
+            issues.append("No assertions")
         
         self.metrics.issues = issues
     
@@ -296,64 +451,77 @@ class TBComplexityAnalyzer:
         m = self.metrics
         
         lines = [
-            "=" * 65,
-            "TB COMPLEXITY ANALYSIS REPORT (Enhanced)",
-            "=" * 65,
+            "=" * 70,
+            "TB COMPLEXITY ANALYSIS REPORT (Comprehensive)",
+            "=" * 70,
             "",
             "[Code Metrics]",
             f"  Total lines:      {m.total_lines:>6}",
             f"  Code lines:       {m.code_lines:>6}",
             f"  Comments:         {m.comment_lines:>6}",
-            f"  Blanks:           {m.blank_lines:>6}",
             "",
             "[Parameter Usage]",
             f"  Parameters:       {m.parameter_count:>6}",
             f"  Localparams:      {m.localparam_count:>6}",
-            f"  Usage ratio:      {m.param_usage_ratio*100:>5.1f}%",
             "",
             "[Class Analysis]",
             f"  Class count:      {m.class_count:>6}",
             f"  Hierarchy depth:  {m.class_hierarchy_depth:>6}",
-            f"  Extends count:    {m.extends_count:>6}",
-            f"  Implements:       {m.implements_count:>6}",
-            "",
-            "[Class Graph Data]",
-            f"  Nodes: {len(m.class_graph_nodes)}",
+            f"  Class refs:       {len(m.class_refs):>6}",
         ]
         
-        if m.class_graph_edges:
-            lines.append("  Edges (child -> parent):")
-            for child, parent in m.class_graph_edges[:10]:
-                lines.append(f"    {child} -> {parent}")
-            if len(m.class_graph_edges) > 10:
-                lines.append(f"    ... ({len(m.class_graph_edges) - 10} more)")
+        if m.class_refs:
+            lines.append("  Class references:")
+            for cls, refs in list(m.class_refs.items())[:5]:
+                lines.append(f"    {cls} -> {', '.join(refs[:3])}")
         
         lines.extend([
             "",
-            "[Nesting]",
-            f"  Max depth:        {m.max_nesting:>6}",
-            f"  Avg depth:        {m.avg_nesting:>6.1f}",
+            "[Random Variables]",
+            f"  rand count:       {m.rand_count:>6}",
+            f"  randc count:      {m.randc_count:>6}",
+        ])
+        
+        if m.rand_vars:
+            lines.append(f"  Variables: {', '.join(m.rand_vars[:8])}")
+            if len(m.rand_vars) > 8:
+                lines.append(f"             ... ({len(m.rand_vars) - 8} more)")
+        
+        if m.rand_relations:
+            lines.extend([
+                "",
+                "[Random Variable Relations]",
+                f"  Total relations: {len(m.rand_relations):>6}",
+            ])
+            lines.append("  Related pairs:")
+            for v1, v2 in m.rand_relations[:10]:
+                lines.append(f"    {v1} <-> {v2}")
+            if len(m.rand_relations) > 10:
+                lines.append(f"    ... ({len(m.rand_relations) - 10} more)")
+        
+        if m.rand_constraint_map:
+            lines.extend(["", "[Constraint Mapping]"])
+            for const, vars_list in list(m.rand_constraint_map.items())[:5]:
+                lines.append(f"  {const}: {', '.join(vars_list)}")
+        
+        lines.extend([
+            "",
+            "[Sequence Complexity]",
+            f"  Sequences:         {m.sequence_items:>6}",
+            f"  Sequence lines:    {m.sequence_body_lines:>6}",
+            f"  fork/join:         {m.fork_join_count:>6}",
+            f"  send/put:          {m.send_port_count:>6}",
+            f"  get/try:           {m.get_try_count:>6}",
+            f"  wait:              {m.wait_count:>6}",
             "",
             "[Components]",
             f"  Agents:           {m.agent_count:>6}",
             f"  Constraints:      {m.constraint_count:>6}",
             f"  Assertions:       {m.assertion_count:>6}",
             f"  Covergroups:      {m.covergroup_count:>6}",
-            f"  Sequences:        {m.sequence_count:>6}",
-            f"  Virtual seqs:     {m.virtual_seq_count:>6}",
-            "",
-            "[Config DB]",
-            f"  config_db::get:   {m.config_db_get:>6}",
-            f"  config_db::set:   {m.config_db_set:>6}",
             "",
             "[Factory]",
             f"  factory creates:  {m.factory_create_count:>6}",
-            f"  `uvm_object_utils:   {m.uvm_object_utils_count:>5}",
-            f"  `uvm_component_utils: {m.uvm_component_utils_count:>4}",
-            "",
-            "[Imports/Includes]",
-            f"  import:           {m.import_count:>6}",
-            f"  `include:         {m.include_count:>6}",
             "",
             "[Complexity]",
             f"  Score:            {m.complexity_score:>6.1f}",
@@ -366,61 +534,60 @@ class TBComplexityAnalyzer:
                 lines.append(f"  ⚠️  {issue}")
         
         return "\n".join(lines)
-
+    
     def get_json(self) -> Dict:
         """Get metrics as JSON-serializable dict"""
-        import json
+        m = self.metrics
         return {
             'code_metrics': {
-                'total_lines': self.metrics.total_lines,
-                'code_lines': self.metrics.code_lines,
-                'comment_lines': self.metrics.comment_lines,
-                'blank_lines': self.metrics.blank_lines,
+                'total_lines': m.total_lines,
+                'code_lines': m.code_lines,
+                'comment_lines': m.comment_lines,
+                'blank_lines': m.blank_lines,
             },
             'parameter_usage': {
-                'parameter_count': self.metrics.parameter_count,
-                'localparam_count': self.metrics.localparam_count,
-                'param_usage_ratio': self.metrics.param_usage_ratio,
+                'parameter_count': m.parameter_count,
+                'localparam_count': m.localparam_count,
             },
             'class_analysis': {
-                'class_count': self.metrics.class_count,
-                'hierarchy_depth': self.metrics.class_hierarchy_depth,
-                'extends_count': self.metrics.extends_count,
-                'implements_count': self.metrics.implements_count,
-                'class_names': self.metrics.class_names,
+                'class_count': m.class_count,
+                'hierarchy_depth': m.class_hierarchy_depth,
+                'extends_count': m.extends_count,
+                'class_refs': m.class_refs,
+                'class_instance_map': m.class_instance_map,
             },
             'class_graph': {
-                'nodes': self.metrics.class_graph_nodes,
-                'edges': [{'from': e[0], 'to': e[1]} for e in self.metrics.class_graph_edges],
+                'nodes': m.class_graph_nodes,
+                'edges': [{'from': e[0], 'to': e[1]} for e in m.class_graph_edges],
             },
-            'nesting': {
-                'max_depth': self.metrics.max_nesting,
-                'avg_depth': self.metrics.avg_nesting,
+            'random_variables': {
+                'rand_count': m.rand_count,
+                'randc_count': m.randc_count,
+                'variables': m.rand_vars,
+                'var_types': m.rand_var_types,
+            },
+            'random_relations': {
+                'constraint_map': m.rand_constraint_map,
+                'constraint_rand_map': m.constraint_rand_map,
+                'relations': [{'var1': r[0], 'var2': r[1]} for r in m.rand_relations],
+            },
+            'sequence_complexity': {
+                'sequence_count': m.sequence_items,
+                'body_lines': m.sequence_body_lines,
+                'fork_join': m.fork_join_count,
+                'send_port': m.send_port_count,
+                'get_try': m.get_try_count,
+                'wait': m.wait_count,
             },
             'components': {
-                'agents': self.metrics.agent_count,
-                'constraints': self.metrics.constraint_count,
-                'assertions': self.metrics.assertion_count,
-                'covergroups': self.metrics.covergroup_count,
-                'sequences': self.metrics.sequence_count,
-                'virtual_sequences': self.metrics.virtual_seq_count,
-            },
-            'config_db': {
-                'get_count': self.metrics.config_db_get,
-                'set_count': self.metrics.config_db_set,
-            },
-            'factory': {
-                'create_count': self.metrics.factory_create_count,
-                'uvm_object_utils': self.metrics.uvm_object_utils_count,
-                'uvm_component_utils': self.metrics.uvm_component_utils_count,
-            },
-            'imports': {
-                'import_count': self.metrics.import_count,
-                'include_count': self.metrics.include_count,
+                'agents': m.agent_count,
+                'constraints': m.constraint_count,
+                'assertions': m.assertion_count,
+                'covergroups': m.covergroup_count,
             },
             'complexity': {
-                'score': self.metrics.complexity_score,
-                'grade': self.metrics.complexity_grade,
+                'score': m.complexity_score,
+                'grade': m.complexity_grade,
             },
-            'issues': self.metrics.issues,
+            'issues': m.issues,
         }
