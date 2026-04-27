@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""RTL Data path analysis CLI"""
+
+import sys
+sys.path.insert(0, 'src')
+
+from parse import SVParser
+from trace.data_path import analyze_data_path
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: sv-datapath <file.sv>")
+        sys.exit(1)
+    
+    file_path = sys.argv[1]
+    parser = SVParser()
+    parser.parse_file(file_path)
+    
+    analyzer = analyze_data_path(parser)
+    print(analyzer.get_report())
+
+if __name__ == '__main__':
+    main()

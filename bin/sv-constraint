@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""Constraint analysis CLI"""
+
+import sys
+sys.path.insert(0, 'src')
+
+from parse import SVParser
+from debug.constraint_parser_v2 import parse_constraints
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: sv-constraint <file.sv>")
+        sys.exit(1)
+    
+    file_path = sys.argv[1]
+    parser = SVParser()
+    parser.parse_file(file_path)
+    
+    cp = parse_constraints(parser)
+    print(cp.get_report())
+
+if __name__ == '__main__':
+    main()
