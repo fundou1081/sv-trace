@@ -5,10 +5,10 @@ description = "SystemVerilog static analysis library for RTL tracing, verificati
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "方浩博 (Fang Haobo)", email = "your@email.com"}
+    {name = "fundou1081", email = "fundou1081@users.noreply.github.com"}
 ]
 maintainers = [
-    {name = "方浩博 (Fang Haobo)", email = "your@email.com"}
+    {name = "fundou1081", email = "fundou1081@users.noreply.github.com"}
 ]
 requires-python = ">=3.11"
 keywords = [
@@ -36,9 +36,9 @@ dev = ["pytest>=7.0", "pytest-cov>=4.0", "black>=23.0", "ruff>=0.1.0"]
 all = ["z3-solver>=4.16", "graphviz>=0.20", "pytest>=7.0", "black>=23.0", "ruff>=0.1.0"]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/sv-trace"
-Repository = "https://github.com/yourusername/sv-trace"
-Issues = "https://github.com/yourusername/sv-trace/issues"
+Homepage = "https://github.com/fundou1081/sv-trace"
+Repository = "https://github.com/fundou1081/sv-trace"
+Issues = "https://github.com/fundou1081/sv-trace/issues"
 
 [build-system]
 requires = ["setuptools>=65.0", "wheel"]

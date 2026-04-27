@@ -19,8 +19,8 @@ CLI Tools:
     sv-quality         - Code quality analysis
     sv-signal          - Signal classification
 
-For more information, see: https://github.com/yourusername/sv-trace
+For more information, see: https://github.com/fundou1081/sv-trace
 """
 
 __version__ = "0.1.0"
-__author__ = "方浩博 (Fang Haobo)"
+__author__ = "fundou1081"
