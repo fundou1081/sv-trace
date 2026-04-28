@@ -477,3 +477,8 @@ print(s.generate_nested_if_coverage(conditions, 'nested'))
 | 非法值检测 | generate_illegal_bins | illegal_values列表 |
 | 保留值忽略 | generate_ignore_bins | ignore_values列表 |
 | 嵌套IF | generate_nested_if_coverage | conditions列表 |
+
+## Schema 参考
+
+每个工具的JSON格式定义详见 [SCHEMAS.md](../SCHEMAS.md)
+
