@@ -45,7 +45,5 @@ try:
                                     print(f"        item[{k}]: {type(item).__name__}")
                                     if 'ForLoop' in str(type(item)):
                                         print(f"          === FOR LOOP FOUND ===")
-                                        print(f"          has body: {hasattr(item, 'body')}")
-                                        print(f"          body: {item.body}")
 finally:
     os.unlink(tmp)
