@@ -222,4 +222,28 @@ class CoverageStimulusSuggester:
         }
 
 
+
+
+    def generate_illegal_bins(self, signal, illegal_values):
+        """生成illegal bins用于不可能出现的情况"""
+        lines = []
+        lines.append(signal + '_cp: coverpoint ' + signal + ' {')
+        lines.append('    bins valid = {default};')
+        for val in illegal_values:
+            lines.append('    illegal bins i_' + val + ' = {' + val + '};')
+        lines.append('  }')
+        lines.append('  // illegal: should never be hit')
+        return chr(10).join(lines)
+
+    def generate_ignore_bins(self, signal, ignore_values):
+        """生成ignore bins用于不关心的值"""
+        lines = []
+        lines.append(signal + '_cp: coverpoint ' + signal + ' {')
+        lines.append('    bins valid = {default};')
+        for val in ignore_values:
+            lines.append('    ignore_bins i_' + val + ' = {' + val + '};')
+        lines.append('  }')
+        return chr(10).join(lines)
+
+
 __all__ = ['CoverageStimulusSuggester', 'Condition', 'CoveragePoint', 'Stimulus']
