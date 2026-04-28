@@ -1,107 +1,93 @@
 """
-Constraint 解析器 - constraint 块提取
+Constraint 解析器 - 专注于constraint内容提取
 """
-import sys
-import os
-import re
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
-from typing import Dict, List, Optional
 from dataclasses import dataclass
+from typing import List
+import re
 
 
 @dataclass
-class ConstraintBlock:
-    """constraint 块"""
+class ConstraintInfo:
+    """单个constraint信息"""
     name: str = ""
-    constraints: List[str] = None
+    class_name: str = ""
+    expr: str = ""
     
-    def __init__(self):
-        self.constraints = []
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "class": self.class_name,
+            "expr": self.expr
+        }
 
 
 class ConstraintExtractor:
-    """Constraint 提取器"""
+    """Constraint内容提取器"""
     
-    def __init__(self, parser):
+    def __init__(self, parser=None):
         self.parser = parser
-        self.constraints: Dict[str, List[ConstraintBlock]] = {}
-        self._extract_all_constraints()
+        self.constraints: List[ConstraintInfo] = []
     
-    def _extract_all_constraints(self):
-        for key, tree in self.parser.trees.items():
-            if not tree or not hasattr(tree, 'root') or not tree.root:
-                continue
+    def extract_from_text(self, code: str) -> List[ConstraintInfo]:
+        """从源码文本提取constraint"""
+        results = []
+        
+        # 找到所有class和其中的constraint
+        class_pattern = r'class\s+(\w+)[^{]*\{(.+?)\s+endclass'
+        
+        for class_m in re.finditer(class_pattern, code, re.DOTALL):
+            class_name = class_m.group(1).strip()
+            class_body = class_m.group(2)
             
-            root = tree.root
+            # 提取constraint
+            # constraint name { expr };
+            constr_pattern = r'constraint\s+(\w+)\s*\{([^}]+)\}'
+            for m in re.finditer(constr_pattern, class_body):
+                name = m.group(1).strip()
+                expr = m.group(2).strip()
+                results.append(ConstraintInfo(
+                    name=name,
+                    class_name=class_name,
+                    expr=expr
+                ))
             
-            if 'ClassDeclaration' in str(type(root)):
-                self._extract_from_class(root)
-            
-            if hasattr(root, 'members') and root.members:
-                for m in root.members:
-                    self._find_class_in_member(m)
+            # 提取单行constraint: constraint expr;
+            simple_pattern = r'constraint\s+(\w+)\s+([^;{]+);'
+            for m in re.finditer(simple_pattern, class_body):
+                name = m.group(1).strip()
+                expr = m.group(2).strip()
+                results.append(ConstraintInfo(
+                    name=name,
+                    class_name=class_name,
+                    expr=expr
+                ))
+        
+        self.constraints = results
+        return results
     
-    def _find_class_in_member(self, member):
-        type_name = str(type(member))
+    def extract_constraints_only(self, code: str) -> List[dict]:
+        """只提取constraint表达式，不关心class结构"""
+        results = []
         
-        if 'ClassDeclaration' in type_name:
-            self._extract_from_class(member)
+        # constraint name { expr };
+        pattern = r'constraint\s+(\w+)\s*\{([^}]+)\}'
+        for m in re.finditer(pattern, code):
+            name = m.group(1).strip()
+            expr = m.group(2).strip()
+            results.append({"name": name, "expr": expr})
         
-        for attr in ['members', 'body']:
-            if hasattr(member, attr):
-                child = getattr(member, attr)
-                if child:
-                    if isinstance(child, list):
-                        for c in child:
-                            self._find_class_in_member(c)
-                    else:
-                        self._find_class_in_member(child)
+        return results
     
-    def _extract_from_class(self, cls):
-        class_name = ""
-        if hasattr(cls, 'name') and cls.name:
-            class_name = cls.name.value if hasattr(cls.name, 'value') else str(cls.name)
-        
-        items = getattr(cls, 'items', [])
-        
-        for item in items:
-            type_name = str(type(item))
-            item_str = str(item)
-            
-            # ConstraintDeclarationSyntax
-            if 'ConstraintDeclaration' in type_name:
-                block = self._parse_constraint_block(item_str)
-                if block:
-                    if class_name not in self.constraints:
-                        self.constraints[class_name] = []
-                    self.constraints[class_name].append(block)
+    def list_constraints(self) -> List[str]:
+        """列出所有constraint名"""
+        return [c.name for c in self.constraints]
     
-    def _parse_constraint_block(self, item_str: str) -> Optional[ConstraintBlock]:
-        block = ConstraintBlock()
-        
-        # 匹配 constraint 块名
-        match = re.search(r'constraint\s+(\w+)\s*\{', item_str)
-        if match:
-            block.name = match.group(1)
-        
-        # 提取约束内容 - 简单从字符串解析
-        # 去掉 { }
-        content = re.sub(r'constraint\s+\w+\s*\{', '', item_str)
-        content = content.rstrip('}').strip()
-        
-        if content:
-            lines = content.split(';')
-            for line in lines:
-                line = line.strip()
-                if line:
-                    block.constraints.append(line)
-        
-        return block if block.constraints else None
-    
-    def find_constraints(self, class_name: str) -> List[ConstraintBlock]:
-        return self.constraints.get(class_name, [])
-    
-    def get_all_constraints(self) -> Dict[str, List[ConstraintBlock]]:
-        return self.constraints
+    def get_constraint(self, name: str) -> ConstraintInfo:
+        """获取指定constraint"""
+        for c in self.constraints:
+            if c.name == name:
+                return c
+        return None
+
+
+__all__ = ['ConstraintExtractor', 'ConstraintInfo']
