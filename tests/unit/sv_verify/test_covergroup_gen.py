@@ -59,3 +59,73 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# 更复杂的测试用例
+COMPLEX_CASES = [
+    ("fsm_state", [
+        Condition('state==IDLE', 'if', 'condition'),
+        Condition('state==RUN', 'if', 'condition'),
+        Condition('state==DONE', 'if', 'condition'),
+    ]),
+    ("priority_encoder", [
+        Condition('req[3]', 'if', 'condition'),
+        Condition('req[2]', 'if', 'condition'),
+        Condition('req[1]', 'if', 'condition'),
+        Condition('req[0]', 'if', 'condition'),
+    ]),
+    ("alu_op", [
+        Condition('op == ADD', 'if', 'condition'),
+        Condition('op == SUB', 'if', 'condition'),
+        Condition('op == MUL', 'if', 'condition'),
+        Condition('op == DIV', 'if', 'condition'),
+    ]),
+    ("fifo_full", [
+        Condition('wr_ptr == rd_ptr && wr_en', 'if', 'condition'),
+        Condition('count == DEPTH', 'if', 'condition'),
+        Condition('count == 0', 'if', 'condition'),
+    ]),
+    ("cdc_meta", [
+        Condition('src_valid && !dst_ack', 'if', 'condition'),
+        Condition('toggle_count == 2', 'if', 'condition'),
+    ]),
+    ("edge_detect", [
+        Condition('!last_d && cur_d', 'if', 'condition'),
+        Condition('last_d && !cur_d', 'if', 'condition'),
+    ]),
+    ("parity", [
+        Condition('^data[7:0]', 'if', 'condition'),
+        Condition('data[7]^data[6]^data[5]', 'if', 'condition'),
+    ]),
+    ("ack_timeout", [
+        Condition('ack_valid && (timer > TIMEOUT)', 'if', 'condition'),
+    ]),
+]
+
+
+def test_complex():
+    print("\n=== Complex Cases ===")
+    passed = 0
+    for name, conds in COMPLEX_CASES:
+        s = CoverageStimulusSuggester()
+        s.conditions = conds
+        s.coverage_points = [
+            CoveragePoint(f'cp_{i}', c.expr, c.type, [])
+            for i, c in enumerate(conds)
+        ]
+        
+        try:
+            cg = s.generate_covergroup(name)
+            assert 'covergroup' in cg
+            assert 'coverpoint' in cg
+            print(f"  ✅ {name}: {len(conds)} conditions")
+            passed += 1
+        except Exception as e:
+            print(f"  ❌ {name}: {e}")
+    
+    print(f"\nComplex: {passed}/{len(COMPLEX_CASES)} passed")
+    return passed == len(COMPLEX_CASES)
+
+
+if __name__ == '__main__':
+    test_complex()
