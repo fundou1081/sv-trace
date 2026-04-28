@@ -117,6 +117,11 @@ class ModuleIOExtractor:
                 # 检查位宽
                 width = 1
                 port_str = ' '.join(parts[1:])
+                
+                # 跳过 reg, wire, logic 等类型关键词
+                for keyword in ['reg', 'wire', 'logic', 'bit']:
+                    port_str = port_str.replace(keyword, '').strip()
+                
                 # 匹配 [xxx:0] 格式
                 width_match = re.search(r'\[.*?:\s*0\]', port_str)
                 if width_match:

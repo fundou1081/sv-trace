@@ -48,10 +48,24 @@ class CoverageStimulusSuggester:
                 continue
             self._find_conditions(tree.root)
     
+    def extract_from_text(self, source: str):
+        """从源码文本提取条件"""
+        import pyslang
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            if tree and tree.root:
+                self._find_conditions(tree.root)
+        except Exception as e:
+            print(f"Parse error: {e}")
+        
+        return self
+    
     def _find_conditions(self, node):
+        # 使用visit遍历所有节点
         def callback(n):
             kind = n.kind
-            if kind == SyntaxKind.IfStatement:
+            if kind == SyntaxKind.ConditionalStatement:
                 self._extract_if_condition(n)
             elif kind == SyntaxKind.CaseStatement:
                 self._extract_case_branches(n)
@@ -61,15 +75,16 @@ class CoverageStimulusSuggester:
         node.visit(callback)
     
     def _extract_if_condition(self, node):
-        if hasattr(node, 'checks') and node.checks:
-            for check in node.checks:
-                if hasattr(check, 'expr') and check.expr:
-                    expr = str(check.expr)
-                    self.conditions.append(Condition(expr, 'if', 'condition'))
+        # 使用 predicate 获取条件
+        if hasattr(node, 'predicate') and node.predicate:
+            expr = str(node.predicate)
+            self.conditions.append(Condition(expr, 'if', 'condition'))
         
+        # 处理if body
         if hasattr(node, 'statement') and node.statement:
             self._find_conditions(node.statement)
         
+        # 处理else
         if hasattr(node, 'elseClause') and node.elseClause:
             ec = node.elseClause
             if hasattr(ec, 'clause') and ec.clause:
