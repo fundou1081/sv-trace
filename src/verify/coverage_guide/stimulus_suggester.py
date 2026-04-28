@@ -132,62 +132,82 @@ class CoverageStimulusSuggester:
         signals = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', expr)
         keywords = {'if', 'else', 'case', 'end', 'begin', 'module', 'input', 'output', 'wire', 'reg', 'logic', 'posedge', 'negedge'}
         signals = [s for s in signals if s not in keywords]
-        return {s: 0 for s in signals[:5]}
+        return dict((s, 0) for s in signals[:5])
     
-    def generate_covergroup(self, module_name: str = "dut") -> str:
+    def generate_bins(self, signal, width=1, expr=''):
+        """生成coverpoint的bins"""
+        lines = []
+        
+        if width == 1:
+            # 单bit
+            lines.append(f"  {signal}_cp: coverpoint {signal} {{")
+            lines.append("    bins one = {1'b1};")
+            lines.append("    bins zero = {1'b0};")
+            lines.append("  }")
+        else:
+            # 多bit
+            w = width
+            max_val = (1 << width) - 1
+            lines.append(f"  {signal}_cp: coverpoint {signal} {{")
+            lines.append(f"    bins zero = {{{w}'h0}};")
+            lines.append(f"    bins max = {{{w}'h{max_val:x}}};")
+            lines.append("    bins mid = {default};")
+            lines.append("  }")
+        
+        # 间接信号带表达式
+        if expr:
+            lines.append(f"  // Derived: {expr}")
+            lines.append(f"  {signal}_result: coverpoint ({expr}) {{")
+            lines.append("    bins asserted = {1'b1};")
+            lines.append("    bins deasserted = {1'b0};")
+            lines.append("  }")
+        
+        return '\n'.join(lines)
+    
+    def generate_covergroup(self, module_name="dut") -> str:
         """生成SystemVerilog covergroup"""
         points = self.get_coverage_points()
         
         lines = []
-        lines.append(f"// ============================================")
         lines.append(f"// Auto-generated Covergroup for {module_name}")
-        lines.append(f"// ============================================")
-        lines.append(f"")
         lines.append(f"covergroup cg_{module_name}(input {module_name} dut);")
         
         for point in points:
             if point.type == 'if':
-                # if条件生成交叉coverage
                 signals = self._extract_signals(point.condition)
                 lines.append(f"  // Condition: {point.condition}")
                 for sig in signals.keys():
                     lines.append(f"  {sig}: coverpoint dut.{sig} {{")
-                    lines.append(f"    bins true = {{1}};")
-                    lines.append(f"    bins false = {{0}};")
-                    lines.append(f"  }}")
+                    lines.append("    bins true = {1};")
+                    lines.append("    bins false = {0};")
+                    lines.append("  }")
                 if len(signals) >= 2:
                     lines.append(f"  cross {', '.join(signals.keys())};")
-            
             elif point.type == 'case':
-                # case分支生成coverage
                 lines.append(f"  // Case branch: {point.branch}")
                 lines.append(f"  case_branch: coverpoint dut.{point.condition} {{")
-                lines.append(f"    bins default = {{default}};")
-                lines.append(f"  }}")
+                lines.append("    bins default = {default};")
+                lines.append("  }")
         
-        lines.append(f"endgroup")
-        lines.append(f"")
-        lines.append(f"// 实例化示例:")
+        lines.append("endgroup")
+        lines.append("")
         lines.append(f"// cg_{module_name} cg = new(dut);")
-        lines.append(f"// cg.sample();")
         
         return '\n'.join(lines)
     
-    def generate_coverpoint(self, signal_name: str, values: List[int] = None) -> str:
+    def generate_coverpoint(self, signal_name, values=None):
         """生成单个coverpoint"""
-        lines = [
-            f"  {signal_name}_cp: coverpoint {signal_name} {{",
-        ]
+        lines = [f"  {signal_name}_cp: coverpoint {signal_name} {{"]
         
         if values:
             for v in values:
                 lines.append(f"    bins val_{v} = {{{v}}};")
         else:
-            lines.append(f"    bins zero = {{0}};")
-            lines.append(f"    bins one = {{1}};")
-            lines.append(f"    bins default = {{default}};")
+            lines.append("    bins zero = {0};")
+            lines.append("    bins one = {1};")
+            lines.append("    bins default = {default};")
         
-        lines.append(f"  }}")
+        lines.append("  }")
         return '\n'.join(lines)
     
     def analyze(self):
