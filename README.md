@@ -1,8 +1,30 @@
 # SV-Trace
 
-> **开发说明**: 本项目由 [OpenClaw](https://github.com/openclaw) AI助手 驱动，使用 [MiniMax](https://minimaxi.com) 与 [DeepSeek](https://deepseek.com) 大语言模型 合作开发。
+> **开发说明**: 本项目由 [OpenClaw](https://github.com/openclaw) AI助手 驱动
 
-**SystemVerilog 静态分析工具库** - - 用于RTL设计分析、验证testbench质量评估、约束冲突检测
+## 🎯 项目定位
+
+**AI Agent 硬件理解引擎** - 给 AI Agent 用的"万能CT机"
+
+本项目不是给人类工程师直接用的 EDA 工具，而是做给 AI Agent 调用的"感知器官"。
+
+### 核心理念
+
+**"AI Agent Skill 底层基座"**:
+
+1. **非交互式、可编程** - Agent 通过 API 调用，返回结构化数据
+2. **原子化、可组合** - 每个功能像"技能原子"，Agent 可按需调用
+3. **上下文自扩展** - Agent 能根据前一步结果动态决定下一步操作
+
+### 独特优势
+
+- 打破传统 EDA 的"批次处理范式" - 支持流式、探索式增量分析
+- 对"正确性"有更高容忍度 - Agent 可通过多轮交互自行修正
+- AI 生成代码是优势 - 用 AI 快速生成技能，契合"覆盖面优先"目标
+
+---
+
+**SystemVerilog 静态分析工具库** - 用于RTL设计分析、验证testbench质量评估、约束冲突检测
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
