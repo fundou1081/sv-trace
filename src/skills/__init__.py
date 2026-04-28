@@ -86,7 +86,7 @@ SKILLS = {
         "class": "ModuleDependencyAnalyzer",
         "desc": "模块依赖分析",
         "tier": 2,
-        "test_status": "needs_fix",
+        "test_status": "verified",
     },
     # VERIFY 模块
     "fsm_extractor": {

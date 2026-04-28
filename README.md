@@ -467,3 +467,45 @@ sv-trace/
 | sv_verify | verify/, debug/ | 验证工具/调试 |
 | sv_codecheck | lint/ | 代码检查/Linting |
 
+
+---
+
+## 🧠 技能发现API
+
+项目提供统一的技能注册表，支持按Tier和状态过滤。
+
+### 使用方法
+
+```bash
+# 列出所有技能
+PYTHONPATH=src python3 -m skills
+
+# 按Tier过滤
+PYTHONPATH=src python3 -m skills --tier 1
+
+# 按状态过滤
+PYTHONPATH=src python3 -m skills --status verified
+```
+
+### 技能统计
+
+| Tier | 名称 | 描述 | 数量 |
+|------|------|------|------|
+| G1 | 核心 | 经过充分测试验证 | 5 |
+| Y2 | 重要 | 已验证但需更多测试 | 6 |
+| O3 | 辅助 | 实验性功能 | 2 |
+| R4 | 探索 | 探索性功能 | 0 |
+
+### 状态说明
+
+- ✅ Verified (已验证): 经过测试验证
+- 🔬 Experimental (实验性): 正在开发
+- ⚠️ Needs Fix (需修复): 已知问题
+
+### 核心技能
+
+- **解析**: SVParser, ParameterResolver, ClassExtractor, ConstraintExtractor
+- **追踪**: DriverTracer, LoadTracer, ConnectionTracer, ControlFlowTracer, DataPathAnalyzer
+- **验证**: FSMExtractor, CoverageAdvisor
+- **检查**: Linter
+
