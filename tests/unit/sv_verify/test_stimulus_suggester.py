@@ -178,3 +178,98 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# 更多组合条件测试
+COMBO_CASES = [
+    # 1. 多位选信号
+    ("bit_select", '''
+module bit_sel(input [3:0] data, [1:0] sel, output y);
+    assign y = data[sel];
+endmodule
+'''),
+    
+    # 2. 部分选择
+    ("part_select", '''
+module part_sel(input [7:0] data, output [3:0] y);
+    assign y = data[7:4];
+endmodule
+'''),
+    
+    # 3. 动态部分选择
+    ("dynamic_part_sel", '''
+module dyn_part(input [7:0] data, [2:0] idx, output [1:0] y);
+    assign y = data[idx+:2];
+endmodule
+'''),
+    
+    # 4. 多条件与
+    ("multi_and", '''
+module multi_and(input a, b, c, d, output y);
+    assign y = a & b & c & d;
+endmodule
+'''),
+    
+    # 5. 多条件或
+    ("multi_or", '''
+module multi_or(input a, b, c, d, output y);
+    assign y = a | b | c | d;
+endmodule
+'''),
+    
+    # 6. 混合与或
+    ("mixed_and_or", '''
+module mixed(input a, b, c, d, output y);
+    assign y = (a & b) | (c & d);
+endmodule
+'''),
+    
+    # 7. 移位条件
+    ("shift_cond", '''
+module shift_cond(input [7:0] data, [2:0] sel, output [7:0] y);
+    assign y = data << sel;
+endmodule
+'''),
+    
+    # 8. 重复选择
+    ("repeat_sel", '''
+module repeat_sel(input [1:0] sel, input a, b, c, d, output y);
+    assign y = sel==0 ? a : (sel==1 ? b : (sel==2 ? c : d));
+endmodule
+'''),
+    
+    # 9. 跨位选
+    ("cross_bit", '''
+module cross(input [7:0] a, [7:0] b, sel, output y);
+    assign y = sel ? a[7:4] : b[3:0];
+endmodule
+'''),
+    
+    # 10. 条件移位
+    ("cond_shift", '''
+module cond_shift(input [7:0] data, input en, input [1:0] amount, output [7:0] y);
+    assign y = en ? (data << amount) : data;
+endmodule
+'''),
+]
+
+
+# 运行额外测试
+def test_combo():
+    print("\n=== 组合条件测试 ===")
+    passed = 0
+    for name, code in COMBO_CASES:
+        try:
+            parser = SVParser()
+            parser.parse_text(code)
+            suggester = CoverageStimulusSuggester(parser)
+            print(f"  ✅ {name}")
+            passed += 1
+        except Exception as e:
+            print(f"  ❌ {name}: {str(e)[:30]}")
+    print(f"\n组合测试: {passed}/{len(COMBO_CASES)} 通过")
+    return passed == len(COMBO_CASES)
+
+
+if __name__ == '__main__':
+    test_combo()
