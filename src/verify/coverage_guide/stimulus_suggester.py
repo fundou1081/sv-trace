@@ -246,4 +246,39 @@ class CoverageStimulusSuggester:
         return chr(10).join(lines)
 
 
+
+
+    def generate_nested_if_coverage(self, conditions, module_name='dut'):
+        """生成多层嵌套if的coverage (自动生成交叉coverage)"""
+        lines = []
+        lines.append('// Nested IF Coverage for ' + module_name)
+        lines.append('covergroup cg_' + module_name + '(input ' + module_name + ' dut);')
+        
+        # 每个条件生成coverpoint
+        for i, cond in enumerate(conditions):
+            expr = cond.expr
+            # 提取信号
+            sigs = self._extract_signals(expr)
+            for sig in sigs.keys():
+                lines.append('  ' + sig + ': coverpoint dut.' + sig + ' {')
+                lines.append('    bins ' + sig + '_true = {1};')
+                lines.append('    bins ' + sig + '_false = {0};')
+                lines.append('  }')
+        
+        # 生成嵌套深度交叉
+        all_sigs = set()
+        for cond in conditions:
+            all_sigs.update(self._extract_signals(cond.expr).keys())
+        
+        all_sigs = list(all_sigs)
+        
+        if len(all_sigs) >= 2:
+            lines.append('  // 嵌套深度 = ' + str(len(conditions)))
+            lines.append('  cross ' + ', '.join(all_sigs) + ';')
+        
+        lines.append('endgroup')
+        
+        return chr(10).join(lines)
+
+
 __all__ = ['CoverageStimulusSuggester', 'Condition', 'CoveragePoint', 'Stimulus']
