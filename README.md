@@ -378,3 +378,92 @@ tests/unit/
 ```
 
 > 📝 详细测试覆盖率见 [TEST_COVERAGE.md](docs/TEST_COVERAGE.md)
+
+---
+
+## 🏗️ 项目架构
+
+### 模块结构
+
+```
+sv-trace/
+├── src/
+│   ├── parse/          # 核心解析器 (pyslang 封装)
+│   │   ├── parser.py          # SVParser 主解析器
+│   │   ├── params.py          # 参数解析
+│   │   ├── class_utils.py     # Class/constraint 提取
+│   │   ├── constraint.py      # 约束解析
+│   │   └── ...
+│   │
+│   ├── core/           # 核心数据模型
+│   │   └── models.py          # Driver, Signal, Parameter 等
+│   │
+│   ├── trace/          # 信号追踪模块
+│   │   ├── driver.py          # 驱动追踪 (DriverTracer)
+│   │   ├── load.py            # 负载追踪 (LoadTracer)
+│   │   ├── connection.py      # 连接追踪 (ConnectionTracer)
+│   │   ├── controlflow.py     # 控制流分析
+│   │   ├── dependency.py      # 依赖分析
+│   │   ├── datapath.py        # 数据路径分析
+│   │   └── area_estimator.py  # 面积估算
+│   │
+│   ├── query/          # 信号查询模块
+│   │   ├── signal.py          # SignalQuery 信号查询
+│   │   ├── path.py            # 路径分析
+│   │   └── ...
+│   │
+│   ├── verify/         # 验证工具模块
+│   │   ├── constraint_generator.py   # 约束生成
+│   │   ├── coverage_advisor.py       # 覆盖率指导
+│   │   ├── simulator.py              # 仿真器
+│   │   └── ...
+│   │
+│   ├── debug/          # 调试分析模块
+│   │   ├── fsm.py              # FSM 提取
+│   │   ├── class_extractor.py  # Class 提取
+│   │   └── ...
+│   │
+│   ├── lint/           # 代码检查模块
+│   │   ├── linter.py           # Lint 主程序
+│   │   └── code_quality.py     # 代码质量
+│   │
+│   └── power/          # 功耗分析模块
+│       └── power_domain.py     # 功耗域分析
+│
+└── tests/              # 测试套件
+    ├── unit/           # 单元测试
+    │   ├── sv_ast/     # AST 解析测试
+    │   ├── sv_trace/   # 追踪器测试
+    │   ├── sv_verify/  # 验证工具测试
+    │   └── sv_codecheck/ # 代码检查测试
+    ├── targeted/       # 针对性测试用例
+    ├── sv_cases/       # 分类测试用例
+    └── edge_cases/     # 边界情况测试
+```
+
+### 核心类说明
+
+| 类名 | 模块 | 功能 |
+|------|------|------|
+| SVParser | parse | SystemVerilog 解析器 |
+| DriverTracer | trace | 信号驱动追踪 |
+| LoadTracer | trace | 信号负载追踪 |
+| ConnectionTracer | trace | 模块连接追踪 |
+| ControlFlowTracer | trace | 控制流分析 |
+| SignalQuery | query | 信号查询接口 |
+| ModuleDependencyAnalyzer | debug | 模块依赖分析 |
+| FSMExtractor | debug | FSM 状态机提取 |
+| ConstraintExtractor | parse | 约束提取 |
+| ClassExtractor | parse | Class 提取 |
+| CoverageAdvisor | verify | 覆盖率指导 |
+| Linter | lint | 代码风格检查 |
+
+### 子项目划分
+
+| 子项目 | 源码目录 | 定位 |
+|--------|----------|------|
+| sv_ast | parse/, core/ | AST 解析 (830+ 测试) |
+| sv_trace | trace/ | 信号追踪/数据流 |
+| sv_verify | verify/, debug/ | 验证工具/调试 |
+| sv_codecheck | lint/ | 代码检查/Linting |
+
