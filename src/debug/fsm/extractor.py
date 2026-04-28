@@ -7,8 +7,6 @@ import re
 from typing import Dict, List, Set, Optional, Tuple
 from dataclasses import dataclass, field
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
-
 
 @dataclass
 class FSMState:
@@ -53,70 +51,91 @@ class FSMExtractor:
         fsm_list = []
         
         for tree in self.parser.trees.values():
-            if not tree or not hasattr(tree, 'root'):
+            if not tree or not tree.root:
                 continue
             
             root = tree.root
+            
+            # root is the ModuleDeclaration, directly iterate its members
             if not hasattr(root, 'members'):
                 continue
             
+            # 收集所有过程块
+            ff_stmt = None
+            comb_stmt = None
+            
             for i in range(len(root.members)):
-                member = root.members[i]
-                if 'ModuleDeclaration' not in str(type(member)):
+                stmt = root.members[i]
+                
+                if 'ProceduralBlock' not in str(type(stmt)):
                     continue
                 
-                if not hasattr(member, 'members'):
-                    continue
+                stmt_str = str(stmt.statement) if hasattr(stmt, 'statement') else ''
                 
-                # 收集所有过程块
-                ff_stmt = None
-                comb_stmt = None
-                
-                for j in range(len(member.members)):
-                    stmt = member.members[j]
-                    
-                    if 'ProceduralBlock' in str(type(stmt)):
-                        stmt_str = str(stmt.statement) if hasattr(stmt, 'statement') else ''
-                        
-                        if '@(posedge' in stmt_str or '@(negedge' in stmt_str:
-                            # 检查是否包含 state <= next_state 模式
-                            if re.search(r'\w+\s*<=?\s*next_state', stmt_str):
-                                ff_stmt = stmt_str
-                        else:
-                            # always_comb
-                            if 'case' in stmt_str and 'next_state' in stmt_str:
-                                comb_stmt = stmt_str
-                
-                # 如果找到了 FF+Comb 对，尝试提取 FSM
-                if ff_stmt and comb_stmt:
-                    # 查找状态变量
-                    state_var = self._find_state_var(ff_stmt, comb_stmt)
-                    if state_var:
-                        fsm = self._analyze_fsm(state_var, ff_stmt, comb_stmt)
-                        if fsm and self._is_likely_fsm(fsm):
-                            fsm_list.append(fsm)
+                if '@(posedge' in stmt_str or '@(negedge' in stmt_str:
+                    if re.search(r'\w+\s*<=?\s*next_state', stmt_str):
+                        ff_stmt = stmt_str
+                else:
+                    if 'case' in stmt_str and 'next_state' in stmt_str:
+                        comb_stmt = stmt_str
+            
+            # 如果找到了 FF+Comb 对，尝试提取 FSM
+            if ff_stmt and comb_stmt:
+                state_var = self._find_state_var(ff_stmt, comb_stmt)
+                if state_var:
+                    fsm = self._analyze_fsm(state_var, ff_stmt, comb_stmt)
+                    if fsm and self._is_likely_fsm(fsm):
+                        fsm_list.append(fsm)
         
         return fsm_list
     
+    def extract_from_text(self, source: str) -> List[FSMInfo]:
+        """从源码文本提取"""
+        import pyslang
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            root = tree.root
+            
+            ff_stmt = None
+            comb_stmt = None
+            
+            for stmt in root.members:
+                if 'ProceduralBlock' not in str(type(stmt)):
+                    continue
+                
+                stmt_str = str(stmt.statement) if hasattr(stmt, 'statement') else ''
+                
+                if '@(posedge' in stmt_str or '@(negedge' in stmt_str:
+                    if re.search(r'\w+\s*<=?\s*next_state', stmt_str):
+                        ff_stmt = stmt_str
+                else:
+                    if 'case' in stmt_str and 'next_state' in stmt_str:
+                        comb_stmt = stmt_str
+            
+            if ff_stmt and comb_stmt:
+                state_var = self._find_state_var(ff_stmt, comb_stmt)
+                if state_var:
+                    fsm = self._analyze_fsm(state_var, ff_stmt, comb_stmt)
+                    if fsm and self._is_likely_fsm(fsm):
+                        return [fsm]
+            return []
+        except Exception as e:
+            print(f"FSM extract error: {e}")
+            return []
+    
     def _find_state_var(self, ff_stmt: str, comb_stmt: str) -> Optional[str]:
         """查找状态变量"""
-        # 从 always_ff 中查找被赋值的信号
-        # 模式: signal <= next_state
         for match in re.finditer(r'(\w+)\s*<=?\s*next_state', ff_stmt):
             sig = match.group(1)
             if sig not in ['clk', 'clock', 'rst', 'reset']:
-                # 确认在 always_comb 中有 case(state_var)
                 if f'case ({sig})' in comb_stmt or f'case({sig})' in comb_stmt:
                     return sig
         return None
     
     def _analyze_fsm(self, state_var: str, ff_stmt: str, comb_stmt: str) -> Optional[FSMInfo]:
         """分析状态机"""
-        
-        # 提取所有状态名
         state_names = set()
         
-        # 从 always_comb 的 case 中提取
         case_match = re.search(r'case\s*\(\s*' + state_var + r'\s*\)(.*?)endcase', comb_stmt, re.DOTALL)
         if case_match:
             case_body = case_match.group(1)
@@ -128,7 +147,6 @@ class FSMExtractor:
         if not states:
             return None
         
-        # 查找复位状态
         reset_state = ""
         reset_pattern = rf'if\s*\([^)]+\)\s*{state_var}\s*<=?\s*(\w+)'
         match = re.search(reset_pattern, ff_stmt)
@@ -140,7 +158,6 @@ class FSMExtractor:
                 if s.name == reset_state:
                     s.is_reset = True
         
-        # 提取转换关系
         for s in states:
             s.transitions = self._extract_transitions(state_var, comb_stmt, s.name)
         
@@ -161,7 +178,6 @@ class FSMExtractor:
         """提取从某个状态出发的转换"""
         transitions = []
         
-        # 找到 state_name: 后的代码块
         pattern = rf'{state_name}\s*:\s*(.*?)(?=\n\s*\w+\s*:|\n\s*endcase)'
         match = re.search(pattern, comb_stmt, re.DOTALL)
         
@@ -170,7 +186,6 @@ class FSMExtractor:
         
         block = match.group(1)
         
-        # 查找 next_state = XXX
         for ns_match in re.finditer(r'next_state\s*=\s*(\w+)', block):
             next_state = ns_match.group(1)
             condition = self._extract_condition(block)

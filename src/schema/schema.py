@@ -123,7 +123,19 @@ def to_schema(parser, source: str = "") -> SVSchema:
     # 3. 提取FSM
     try:
         from debug.fsm import FSMExtractor
-        # 需要parser
+        extractor = FSMExtractor(None)
+        fsm_list = extractor.extract_from_text(source)
+        for fsm in fsm_list:
+            schema.add_fsm({
+                "module": fsm.name,
+                "states": [s.name for s in fsm.states],
+                "state_var": fsm.state_var,
+                "reset_state": fsm.reset_state,
+                "transitions": [
+                    {"from": s.name, "to": t[1], "cond": t[0]}
+                    for s in fsm.states for t in s.transitions
+                ]
+            })
     except Exception as e:
         print(f"FSM extraction error: {e}")
     
@@ -140,7 +152,8 @@ def to_schema(parser, source: str = "") -> SVSchema:
                 "id": point.id,
                 "condition": point.condition,
                 "type": point.type,
-                "suggestions": point.suggestions
+                "suggestions": point.suggestions,
+                "kind": getattr(point, 'kind', 'condition')
             })
     except Exception as e:
         print(f"Coverage generation error: {e}")
