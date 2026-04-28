@@ -29,8 +29,8 @@ class StimulusSuggestion:
     reasoning: str = ""
 
 class CoverageStimulusSuggester:
-    def __init__(self):
-        self.parser = None
+    def __init__(self, parser=None):
+        self.parser = parser
         self.driver_collector = None
     
     def load_design(self, filepaths):

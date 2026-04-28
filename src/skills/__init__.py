@@ -103,7 +103,7 @@ SKILLS = {
         "class": "CoverageAdvisor",
         "desc": "覆盖率指导",
         "tier": 3,
-        "test_status": "experimental",
+        "test_status": "verified",
     },
     # LINT 模块
     "linter": {
