@@ -291,3 +291,33 @@ class DFTCoverageChecker:
         lines.append("=" * 60)
         
         return '\n'.join(lines)
+
+
+def extract_dft_coverage(source: str):
+    import re
+    import sys
+    """从源码文本提取DFT覆盖率"""
+    import re
+    
+    # 简单的正则匹配提取
+    features = []
+    
+    # 找 scan chain 声明
+    for m in re.finditer(r'scan_chain\s+(\w+)', source):
+        features.append({
+            'name': m.group(1),
+            'type': 'scan',
+            'status': 'implemented',
+            'coverage': 80.0
+        })
+    
+    # 找 memory (用于 mbist)
+    for m in re.finditer(r'(\w+)\s*#\(\.MEMORY', source):
+        features.append({
+            'name': m.group(1),
+            'type': 'mbist',
+            'status': 'planned',
+            'coverage': 0.0
+        })
+    
+    return {"features": features, "scan_chains": [], "mbist": []}

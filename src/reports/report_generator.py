@@ -20,6 +20,24 @@ class VerificationReport:
     bugs: Dict
     issues: List[str]
 
+    def extract_from_text(source: str):
+        """从源码文本生成验证报告"""
+        import re
+        
+        # 收集基本信息
+        modules = re.findall(r'module\s+(\w+)', source)
+        always = re.findall(r'always\s+@', source)
+        assigns = re.findall(r'assign\s+', source)
+        
+        # 创建报告
+        return {
+            "modules": modules,
+            "module_count": len(modules),
+            "always_blocks": len(always),
+            "assigns": len(assigns),
+            "generated": True
+        }
+
 class ReportGenerator:
     """报告生成器"""
     

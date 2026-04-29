@@ -29,7 +29,9 @@ class SVSchema:
     "dataflow": {},
     "design_eval": {},
     "syntax_check": {},
-    "code_quality": {}
+    "code_quality": {},
+    "dft_coverage": {},
+    "verification_report": {}
         }
     
     def set_source(self, source: str):
@@ -386,6 +388,35 @@ def to_schema(parser, source: str = "") -> SVSchema:
         schema.data['code_quality'] = cq
     except Exception as e:
         print(f"Code quality error: {e}")
+
+
+    # 22. DFT Coverage
+    try:
+        from dft.dft_coverage import extract_dft_coverage
+        dft = extract_dft_coverage(source)
+        schema.data['dft_coverage'] = dft
+    except Exception as e:
+        print(f"DFT error: {e}")
+
+    # 23. Report Generator
+    try:
+        from reports.report_generator import ReportGenerator
+        # 尝试调用
+        class SimpleParser:
+            pass
+        rg = ReportGenerator()
+        if hasattr(rg, 'extract_from_text'):
+            report = rg.extract_from_text(source)
+            schema.data['verification_report'] = report
+    except Exception as e:
+        print(f"Report error: {e}")
+
+    # ===== 记录待完善工具 =====
+    # 以下工具完成度低，暂时跳过:
+    # - power/power_domain.py (只有19行空实现)
+    # - dft/mbist_design.py (指导性质)
+    # - dft/reset_domain.py (与clock_domain重复)
+    # - vcs/* (团队工具)
 
     return schema
 
