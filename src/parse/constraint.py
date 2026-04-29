@@ -91,3 +91,34 @@ class ConstraintExtractor:
 
 
 __all__ = ['ConstraintExtractor', 'ConstraintInfo']
+
+
+def extract_constraints_from_text(code: str) -> List[dict]:
+    """从源码文本提取constraint (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        
+        def collector(node):
+            if node.kind == SyntaxKind.ConstraintDeclaration:
+                name = str(node.name).strip() if hasattr(node, 'name') else 'unknown'
+                expr = str(node)
+                # 清理 expr
+                expr = expr.replace('\n', ' ').strip()[:80]
+                results.append({
+                    'name': name,
+                    'class': '',
+                    'expr': expr
+                })
+            return pyslang.VisitAction.Advance
+        
+        tree.root.visit(collector)
+    
+    except Exception as e:
+        print(f"Constraint extract error: {e}")
+    
+    return results
