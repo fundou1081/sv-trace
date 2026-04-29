@@ -190,3 +190,8 @@ class SVLinter:
             r = check()
             report.issues.extend(r.issues)
         return report
+
+
+def lint_code(source: str):
+    """代码检查"""
+    return check_quality(source)

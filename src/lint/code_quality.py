@@ -241,3 +241,19 @@ class CodeQualityChecker:
         
         lines.append("\n" + "=" * 70)
         return "\n".join(lines)
+
+
+def check_quality(source: str):
+    """代码质量检查"""
+    import re
+    issues = []
+    
+    # 检查常见的 code smell
+    if source.count('endcase') < source.count('case'):
+        issues.append("missing endcase")
+    if source.count('endmodule') < source.count('module'):
+        issues.append("missing endmodule")
+    if len(source.split('\n')) > 1000:
+        issues.append("file too large")
+    
+    return {"issues": issues, "score": max(0, 100 - len(issues) * 20)}

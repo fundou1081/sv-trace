@@ -120,3 +120,13 @@ class SyntaxCompatibilityChecker:
             lines.append("\n✅ 未发现问题")
         
         return '\n'.join(lines)
+
+
+def check_syntax(source: str):
+    """语法检查"""
+    import pyslang
+    try:
+        tree = pyslang.SyntaxTree.fromText(source)
+        return {"valid": True, "errors": []}
+    except Exception as e:
+        return {"valid": False, "errors": [str(e)]}

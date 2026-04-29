@@ -24,7 +24,12 @@ class SVSchema:
                 "covergroup": ""
             },
             "constraints": [],
-            "parameters": [], "signals": {}, "loads": [], "complexity": [], "clock_domains": {}, "uninitialized": [], "signal_count": 0, "datapath_boundaries": {}, "timing_paths": [], "risks": {"risks": [], "summary": {}}
+            "parameters": [], "signals": {}, "loads": [], "complexity": [], "clock_domains": {}, "uninitialized": [], "signal_count": 0, "datapath_boundaries": {}, "timing_paths": [], "risks": {"risks": [], "summary": {}},
+    "controlflow": {},
+    "dataflow": {},
+    "design_eval": {},
+    "syntax_check": {},
+    "code_quality": {}
         }
     
     def set_source(self, source: str):
@@ -340,6 +345,47 @@ def to_schema(parser, source: str = "") -> SVSchema:
             schema.data['constraints'] = constrs
     except Exception as e:
         print(f"Constraint gen error: {e}")
+
+
+    # 17. Apps - Control flow analysis
+    try:
+        from apps.controlflow import analyze_controlflow
+        cf = analyze_controlflow(source)
+        schema.data['controlflow'] = cf
+    except Exception as e:
+        print(f"Controlflow error: {e}")
+
+    # 18. Apps - Data flow analysis
+    try:
+        from apps.dataflow import analyze_dataflow
+        df = analyze_dataflow(source)
+        schema.data['dataflow'] = df
+    except Exception as e:
+        print(f"Dataflow error: {e}")
+
+    # 19. Apps - Design evaluation
+    try:
+        from apps.evaluate import evaluate_design
+        ev = evaluate_design(source)
+        schema.data['design_eval'] = ev
+    except Exception as e:
+        print(f"Evaluate error: {e}")
+
+    # 20. Lint - Syntax check
+    try:
+        from lint.syntax_check import check_syntax
+        syn = check_syntax(source)
+        schema.data['syntax_check'] = syn
+    except Exception as e:
+        print(f"Syntax check error: {e}")
+
+    # 21. Lint - Code quality
+    try:
+        from lint.code_quality import check_quality
+        cq = check_quality(source)
+        schema.data['code_quality'] = cq
+    except Exception as e:
+        print(f"Code quality error: {e}")
 
     return schema
 

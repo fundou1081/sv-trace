@@ -253,3 +253,11 @@ endmodule
 
 if __name__ == "__main__":
     demo()
+
+
+def analyze_dataflow(source: str):
+    """分析数据流"""
+    import re
+    # 提取 assign 语句
+    assigns = re.findall(r'assign\s+(\w+)\s*=\s*([^;]+);', source)
+    return {"assigns": [{"signal": a[0], "expr": a[1].strip()[:30]} for a in assigns], "count": len(assigns)}

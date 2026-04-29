@@ -186,3 +186,22 @@ endmodule
 
 if __name__ == "__main__":
     demo()
+
+
+def analyze_controlflow(source: str):
+    """分析控制流"""
+    import pyslang
+    tree = pyslang.SyntaxTree.fromText(source)
+    
+    class TextParser:
+        def __init__(self, tree):
+            self.trees = {"input.sv": tree}
+            self.compilation = tree
+    
+    # 简化分析
+    blocks = []
+    for i, line in enumerate(source.split('\n')):
+        if 'always' in line or 'case' in line or 'if' in line:
+            blocks.append({"line": i+1, "code": line.strip()[:50]})
+    
+    return {"blocks": blocks, "count": len(blocks)}

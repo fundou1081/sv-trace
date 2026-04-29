@@ -63,3 +63,19 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+def evaluate_design(source: str):
+    """评估设计"""
+    import re
+    # 统计 module, always, assign 等
+    modules = re.findall(r'module\s+(\w+)', source)
+    always = re.findall(r'always\s+@', source)
+    assigns = re.findall(r'assign\s+', source)
+    
+    return {
+        "modules": len(modules),
+        "always_blocks": len(always),
+        "assigns": len(assigns),
+        "score": min(100, len(always) * 10 + len(assigns) * 5)
+    }
