@@ -613,3 +613,21 @@ __all__ = [
     'CDCPath',
     'Severity',
 ]
+
+
+# 便捷函数
+def analyze_cdc(source: str):
+    """从源码文本提取CDC问题"""
+    import pyslang
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(source)
+        
+        class TextParser:
+            def __init__(self, tree):
+                self.trees = {"input.sv": tree}
+        
+        return CDCExtendedAnalyzer(TextParser(tree))
+    except Exception as e:
+        print(f"CDC analyze error: {e}")
+        return None

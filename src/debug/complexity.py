@@ -34,6 +34,24 @@ class CyclomaticComplexityAnalyzer:
         self.parser = parser
         self.results: Dict[str, ComplexityResult] = {}
     
+    def extract_from_text(source: str, module_name: str = "top"):
+        """从源码文本提取复杂度分析"""
+        import pyslang
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+                    self.compilation = tree
+            
+            analyzer = CyclomaticComplexityAnalyzer(TextParser(tree))
+            return analyzer
+        except Exception as e:
+            print(f"Complexity analyze error: {e}")
+            return None
+
     def analyze(self, module_name: str = None) -> Dict[str, ComplexityResult]:
         # 遍历所有解析的 tree
         for tree_key, tree in self.parser.trees.items():

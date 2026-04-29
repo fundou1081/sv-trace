@@ -24,7 +24,7 @@ class SVSchema:
                 "covergroup": ""
             },
             "constraints": [],
-            "parameters": [], "signals": {}, "loads": []
+            "parameters": [], "signals": {}, "loads": [], "complexity": [], "clock_domains": {}, "uninitialized": []
         }
     
     def set_source(self, source: str):
@@ -93,6 +93,21 @@ class SVSchema:
         """保存到文件"""
         with open(filepath, 'w') as f:
             f.write(self.to_json())
+
+
+
+
+def _create_text_parser(source: str):
+    """创建用于从文本提取的 mock parser"""
+    import pyslang
+    tree = pyslang.SyntaxTree.fromText(source)
+    
+    class TextParser:
+        def __init__(self, tree):
+            self.trees = {"input.sv": tree}
+            self.compilation = tree
+    
+    return TextParser(tree)
 
 
 def to_schema(parser, source: str = "") -> SVSchema:
@@ -179,7 +194,7 @@ def to_schema(parser, source: str = "") -> SVSchema:
     # 7. 提取 drivers (信号驱动信息)
     try:
         from trace.driver import DriverCollector
-        dc = DriverCollector.extract_from_text(source)
+        dc = DriverCollector(_create_text_parser(source))
         if dc:
             for sig, drvs in dc.drivers.items():
                 drivers_list = []
@@ -198,7 +213,7 @@ def to_schema(parser, source: str = "") -> SVSchema:
     # 8. 提取 loads (信号加载点)
     try:
         from trace.load import LoadTracer
-        lt = LoadTracer.extract_from_text(source)
+        lt = LoadTracer(_create_text_parser(source))
         if lt and lt._loads:
             loads_list = []
             for load in lt._loads:
@@ -210,6 +225,55 @@ def to_schema(parser, source: str = "") -> SVSchema:
             schema.data['loads'] = loads_list
     except Exception as e:
         print(f"Load extraction error: {e}")
+
+
+    # 9. 复杂度分析
+    try:
+        from debug.complexity import CyclomaticComplexityAnalyzer
+        ca = CyclomaticComplexityAnalyzer(_create_text_parser(source))
+        results = ca.analyze()
+        complexity_list = []
+        for mod_name, result in results.items():
+            complexity_list.append({
+                'module': mod_name,
+                'total_complexity': result.total_complexity,
+                'grade': result.grade,
+                'procedures': [
+                    {'name': p.name, 'complexity': p.complexity, 'line': p.line}
+                    for p in result.procedures
+                ]
+            })
+        schema.data['complexity'] = complexity_list
+    except Exception as e:
+        print(f"Complexity analysis error: {e}")
+
+    # 10. 时钟域分析
+    try:
+        from debug.analyzers.clock_domain import ClockDomainAnalyzer
+        cda = ClockDomainAnalyzer(_create_text_parser(source))
+        clock_domains = {}
+        for clk, regs in cda._clock_domains.items():
+            clock_domains[clk] = list(regs)
+        schema.data['clock_domains'] = clock_domains
+    except Exception as e:
+        print(f"Clock domain analysis error: {e}")
+
+    # 11. 未初始化检测
+    try:
+        from debug.analyzers.uninitialized import UninitializedDetector
+        ud = UninitializedDetector(_create_text_parser(source))
+        uninit_list = []
+        all_issues = ud.detect_all()
+        for sig, issues in all_issues.items():
+            for issue in issues:
+                uninit_list.append({
+                    'signal': issue.signal,
+                'type': issue.issue_type,
+                'severity': issue.severity
+            })
+        schema.data['uninitialized'] = uninit_list
+    except Exception as e:
+        print(f"Uninitialized detection error: {e}")
 
     return schema
 

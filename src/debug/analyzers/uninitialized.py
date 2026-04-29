@@ -19,6 +19,22 @@ class UninitializedIssue:
     severity: str  # high, medium, low
 
 
+    def extract_from_text(source: str):
+        """从源码文本提取未初始化信号"""
+        import pyslang
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+            
+            return UninitializedDetector(TextParser(tree))
+        except Exception as e:
+            print(f"Uninitialized detect error: {e}")
+            return None
+
 class UninitializedDetector:
     """未初始化检测器"""
     

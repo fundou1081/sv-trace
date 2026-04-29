@@ -21,6 +21,22 @@ class RegisterInfo:
     reset_signal: str = ""
 
 
+    def extract_from_text(source: str):
+        """从源码文本提取时钟域"""
+        import pyslang
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+            
+            return ClockDomainAnalyzer(TextParser(tree))
+        except Exception as e:
+            print(f"ClockDomain analyze error: {e}")
+            return None
+
 class ClockDomainAnalyzer:
     """时钟域分析器 - 从 AST 直接提取时钟信息"""
     
