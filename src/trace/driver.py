@@ -346,6 +346,22 @@ class DriverCollector:
         
         return drivers
     
+    def extract_from_text(source: str):
+        """从源码文本提取 drivers"""
+        import pyslang
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+            
+            return DriverCollector(TextParser(tree))
+        except Exception as e:
+            print(f"Driver extract error: {e}")
+            return None
+
     def get_all_signals(self) -> List[str]:
         """Get list of all signals with drivers"""
         return list(self.drivers.keys())

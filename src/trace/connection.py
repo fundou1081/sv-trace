@@ -33,6 +33,22 @@ class Instance:
 class ConnectionTracer:
     """追踪模块实例和连接"""
     
+    def extract_from_text(source: str):
+        """从源码文本提取 connections"""
+        import pyslang
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+            
+            return ConnectionTracer(TextParser(tree))
+        except Exception as e:
+            print(f"Connection extract error: {e}")
+            return None
+
     def __init__(self, parser):
         self.parser = parser
         self.instances: List[Instance] = []

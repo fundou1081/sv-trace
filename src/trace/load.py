@@ -30,6 +30,23 @@ class LoadTracer:
         # 使用正则表达式实现
         self._impl = None
     
+    def extract_from_text(source: str):
+        """从源码文本提取 loads"""
+        import pyslang
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+                    self.compilation = tree
+            
+            return LoadTracer(TextParser(tree))
+        except Exception as e:
+            print(f"Load extract error: {e}")
+            return None
+
     def find_load(self, signal_name: str, module_name: str = None) -> List[Load]:
         """查找信号被加载的位置"""
         # 使用正则表达式实现
@@ -129,6 +146,23 @@ class _LoadTracerRegexImpl:
         
         return loads
     
+    def extract_from_text(source: str):
+        """从源码文本提取 loads"""
+        import pyslang
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+                    self.compilation = tree
+            
+            return LoadTracer(TextParser(tree))
+        except Exception as e:
+            print(f"Load extract error: {e}")
+            return None
+
     def find_load(self, signal_name: str, module_name: str = None) -> List[Load]:
         """查找信号被加载的位置"""
         self._loads = []

@@ -24,7 +24,7 @@ class SVSchema:
                 "covergroup": ""
             },
             "constraints": [],
-            "parameters": []
+            "parameters": [], "signals": {}, "loads": []
         }
     
     def set_source(self, source: str):
@@ -175,6 +175,42 @@ def to_schema(parser, source: str = "") -> SVSchema:
     except Exception as e:
         print(f"Parameter extraction error: {e}")
     
+
+    # 7. 提取 drivers (信号驱动信息)
+    try:
+        from trace.driver import DriverCollector
+        dc = DriverCollector.extract_from_text(source)
+        if dc:
+            for sig, drvs in dc.drivers.items():
+                drivers_list = []
+                for d in drvs:
+                    drivers_list.append({
+                        'signal': d.signal,
+                        'kind': d.kind.name if hasattr(d.kind, 'name') else str(d.kind),
+                        'sources': d.sources,
+                        'clock': d.clock,
+                        'line': d.lines[0] if d.lines else 0
+                    })
+                schema.data['signals'][sig] = drivers_list
+    except Exception as e:
+        print(f"Driver extraction error: {e}")
+
+    # 8. 提取 loads (信号加载点)
+    try:
+        from trace.load import LoadTracer
+        lt = LoadTracer.extract_from_text(source)
+        if lt and lt._loads:
+            loads_list = []
+            for load in lt._loads:
+                loads_list.append({
+                    'signal': load.signal,
+                    'kind': getattr(load, 'kind', 'load'),
+                    'context': getattr(load, 'context', '')
+                })
+            schema.data['loads'] = loads_list
+    except Exception as e:
+        print(f"Load extraction error: {e}")
+
     return schema
 
 

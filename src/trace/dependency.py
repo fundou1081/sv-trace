@@ -271,6 +271,23 @@ class FanoutAnalyzer:
     """Fanout分析器 - 精确计算信号扇出"""
     
     def __init__(self, parser):
+    def extract_from_text(source: str):
+        """从源码文本提取 dependencies"""
+        import pyslang
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+            
+            return DependencyAnalyzer(TextParser(tree))
+        except Exception as e:
+            print(f"Dependency extract error: {e}")
+            return None
+
+
         self.parser = parser
         self._fanout_cache: Dict[str, FanoutInfo] = {}
     
