@@ -242,3 +242,42 @@ tests/sv_cases/pyslang_tests/
 ├── clock_reset_test.sv    # 6 clock/reset 测试用例
 └── run_pyslang_tests.py    # 测试运行器
 ```
+
+---
+
+## 新增场景测试 (2026-04-29 晚)
+
+### 测试结果 (8/8 全部通过)
+
+| 场景 | 测试文件 | 结果 |
+|------|----------|------|
+| Class | class_test.sv | ✅ 11 classes |
+| Module IO | module_io_test.sv | ✅ 7 modules |
+| Clock/Reset | clock_reset_test.sv | ✅ 14 clocks |
+| Sequence/Property | sequence_property_test.sv | ✅ 6 assertions |
+| Interface | interface_test.sv | ✅ 4 interfaces |
+| Package | package_test.sv | ✅ 3 packages |
+| Covergroup | covergroup_test.sv | ✅ 4 covergroups |
+| Function/Task | function_task_test.sv | ✅ 5 functions/tasks |
+
+### 测试用例文件清单
+
+```
+tests/sv_cases/pyslang_tests/
+├── class_test.sv              # 11 class 测试用例
+├── module_io_test.sv         # 7 module 测试用例
+├── clock_reset_test.sv       # 6 clock/reset 测试用例
+├── sequence_property_test.sv  # 6 sequence/property 测试用例
+├── interface_test.sv         # 4 interface 测试用例
+├── package_test.sv          # 3 package 测试用例
+├── covergroup_test.sv        # 4 covergroup 测试用例
+├── function_task_test.sv     # 5 function/task 测试用例
+├── struct_union_test.sv      # struct/union 测试用例
+├── generate_test.sv          # generate 块测试用例
+└── run_pyslang_tests.py     # 测试运行器
+```
+
+### 修复记录
+
+1. **parametric_analyzer**: 支持 Interface 和 Package 名称提取
+   - InterfaceDeclaration/PackageDeclaration 需要从 header 获取名称
