@@ -155,15 +155,15 @@ class ModuleIOExtractor:
             tree = pyslang.SyntaxTree.fromText(code)
             root = tree.root
             
-            # 找到所有 ModuleDeclaration
-            if root.kind == SyntaxKind.ModuleDeclaration:
-                modules_data = [root]
-            else:
-                # 可能需要遍历
-                modules_data = []
-                for m in root:
-                    if hasattr(m, 'kind') and m.kind.value_name == 'ModuleDeclaration':
-                        modules_data.append(m)
+            # 找到所有 ModuleDeclaration - 使用 visit 遍历
+            modules_data = []
+            
+            def collect_module(node):
+                if node.kind.name == 'ModuleDeclaration':
+                    modules_data.append(node)
+                return pyslang.VisitAction.Advance
+            
+            tree.root.visit(collect_module)
             
             for mod in modules_data:
                 if not hasattr(mod, 'header'):
