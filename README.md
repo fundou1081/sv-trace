@@ -272,17 +272,59 @@ analyzer.visualize('data_path.png')
 sv-trace/
 ├── src/
 │   ├── parse/          # 核心解析器 (pyslang)
+│   │   └── pyslang/     # pyslang AST 封装
 │   ├── trace/          # 追踪器模块
 │   │   └── data_path/ # 数据通路分析
 │   ├── debug/          # 分析工具
 │   ├── verify/         # 验证支持
-│   └── apps/           # 应用工具
+│   ├── apps/           # 应用工具
+│   └── pyslang_helper/ # pyslang 辅助工具库
 ├── bin/                # CLI工具 (9个)
 ├── skills/             # Agent Skills (20+)
 ├── tests/              # 测试用例
 ├── docs/               # 文档
+│   └── pyslang-spec/  # ⭐ pyslang 语法规范子项目
+│   └── pyslang-spec/  # ⭐ pyslang 语法规范子项目
 └── templates/          # 模板
 ```
+
+> ⭐ **pyslang 语法规范子项目**: 位于 `docs/pyslang-spec/`，包含 536 个 SyntaxKind 完整映射、节点属性参考。开发时请保持代码与规范的一致性。
+
+---
+
+## ⭐ pyslang 语法规范子项目
+
+> **重要**: 本项目包含一个独立的 **pyslang 语法规范子项目**，位于 `docs/pyslang-spec/`。
+
+### 目的
+
+确保 sv-trace 的所有工具与 pyslang AST 规范保持一致，避免因理解偏差导致的 bug。
+
+### 内容
+
+| 文档 | 说明 |
+|------|------|
+| `SKILL.md` | 语法规范主文档 - 536个 SyntaxKind 分类 |
+| `syntaxkind_mapping.md` | 完整的 SyntaxKind → SystemVerilog 映射表 |
+| `node_attribute_mapping.md` | 节点属性快速参考 |
+
+### 辅助工具
+
+```python
+# src/pyslang_helper/ - pyslang AST 解析辅助库
+from pyslang_helper import SVParser, extract_all
+```
+
+### 开发准则
+
+1. **新增工具时**: 先查阅 `docs/pyslang-spec/SKILL.md` 确认节点类型
+2. **遇到疑问时**: 对照 `syntaxkind_mapping.md` 验证 SyntaxKind
+3. **发现差异时**: 更新文档和代码，确保一致性
+4. **提交前**: 运行 `pyslang_helper` 测试确保解析正确
+
+### 更新记录
+
+- 2026-04-29: 初始版本，包含 536 个 SyntaxKind 映射
 
 ---
 
