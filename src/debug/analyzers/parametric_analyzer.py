@@ -530,8 +530,13 @@ def extract_interfaces_from_text(code: str) -> List[dict]:
     
     def collect(node):
         if node.kind == SyntaxKind.InterfaceDeclaration:
-            name = str(node.name) if hasattr(node, 'name') else 'unknown'
-            results.append({'name': name.strip(), 'kind': 'interface'})
+            # interface 名称从 header 获取
+            header = getattr(node, 'header', None)
+            if header:
+                name = str(header.name).strip() if hasattr(header, 'name') else 'unknown'
+            else:
+                name = 'unknown'
+            results.append({'name': name, 'kind': 'interface'})
         
         return pyslang.VisitAction.Advance
     
@@ -555,6 +560,34 @@ def extract_classes_from_text(code: str) -> List[dict]:
         if node.kind == SyntaxKind.ClassDeclaration:
             name = str(node.name) if hasattr(node, 'name') else 'unknown'
             results.append({'name': name.strip(), 'kind': 'class'})
+        
+        return pyslang.VisitAction.Advance
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        tree.root.visit(collect)
+    except Exception as e:
+        pass
+    
+    return results
+
+
+def extract_packages_from_text(code: str) -> List[dict]:
+    """从源码提取 package (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    def collect(node):
+        if node.kind == SyntaxKind.PackageDeclaration:
+            # package 名称从 header 获取
+            header = getattr(node, 'header', None)
+            if header:
+                name = str(header.name).strip() if hasattr(header, 'name') else 'unknown'
+            else:
+                name = 'unknown'
+            results.append({'name': name, 'kind': 'package'})
         
         return pyslang.VisitAction.Advance
     
