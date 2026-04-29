@@ -124,3 +124,28 @@ b95d00a Refactor: covergroup.py 使用 pyslang
 - [ADR-001: 使用 pyslang 作为解析引擎](./ADR-001.md)
 - [ADR-027: Constraint Parser V2 升级架构](./ADR-027-constraint-parser-v2.md)
 - pyslang 文档: https://pypi.org/project/pyslang/
+
+---
+
+## 批次2: debug/analyzers/ (2026-04-29 进行中)
+
+| 模块 | 正则数 | pyslang方法 | 状态 |
+|------|--------|-------------|------|
+| code_quality_scorer.py | 85 | 计数为主，可保留正则 | ⏳ |
+| parametric_analyzer.py | 31 | ✅ extract_params/func/interface/class | ✅ |
+| code_metrics_analyzer.py | 27 | 计数为主，可保留正则 | ⏳ |
+| clock_tree_analyzer.py | 14 | ✅ extract_clock_signals | ✅ |
+| reset_domain_analyzer.py | 11 | ✅ extract_reset_signals/async_reset | ✅ |
+
+### Git Commits (批次2)
+
+```
+11402d0 Refactor: reset_domain_analyzer.py 添加 pyslang 方法
+2cb3796 Refactor: clock_tree_analyzer.py 添加 pyslang 时钟提取
+9aeb2ba Refactor: parametric_analyzer.py 添加 pyslang 方法
+```
+
+### 说明
+
+- **code_quality_scorer.py** 和 **code_metrics_analyzer.py** 主要用于统计计数（关键字出现次数），这些用正则即可，不需要 pyslang
+- 高优先级的结构化提取已完成
