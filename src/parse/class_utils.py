@@ -188,3 +188,127 @@ class ClassExtractor:
 
 
 __all__ = ['ClassExtractor', 'ClassMember', 'ClassMethod', 'ClassConstraint']
+
+
+# === pyslang 版本方法 (2026-04-29) ===
+
+def extract_classes_from_text(code: str) -> List[dict]:
+    """从源码文本提取 (使用 pyslang AST)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        root = tree.root
+        
+        # 获取所有类
+        all_classes = []
+        if root.kind == SyntaxKind.ClassDeclaration:
+            all_classes = [root]
+        else:
+            for c in root:
+                if hasattr(c, 'kind') and c.kind == SyntaxKind.ClassDeclaration:
+                    all_classes.append(c)
+        
+        for cls in all_classes:
+            name = str(cls.name) if hasattr(cls, 'name') else 'unknown'
+            
+            info = {'name': name, 'members': [], 'methods': [], 'constraints': []}
+            
+            # 遍历items
+            items = getattr(cls, 'items', [])
+            for item in items:
+                if not item:
+                    continue
+                
+                kind = item.kind
+                kind_str = str(kind)
+                
+                # Property 
+                if 'Property' in kind.name or 'Rand' in kind.name:
+                    member = _extract_member(item)
+                    if member:
+                        info['members'].append(member)
+                
+                # Method
+                if 'Method' in kind.name:
+                    method = _extract_method(item)
+                    if method:
+                        info['methods'].append(method)
+                
+                # Constraint
+                if 'Constraint' in kind_str:
+                    constraint = _extract_constraint(item)
+                    if constraint:
+                        info['constraints'].append(constraint)
+            
+            results.append(info)
+            
+    except Exception as e:
+        print(f"Class extract error: {e}")
+    
+    return results
+
+
+def _extract_member(item):
+    import re
+    # 使用 qualifiers 获取 rand mode
+    rand_mode = ""
+    if hasattr(item, 'qualifiers'):
+        qual = str(item.qualifiers).strip()
+        if qual:
+            rand_mode = "randc" if "randc" in qual.lower() else "rand"
+    
+    # 使用 declaration 获取类型和名字
+    data_type = "logic"
+    width = 1
+    name = ""
+    
+    if hasattr(item, 'declaration'):
+        decl = str(item.declaration).strip().rstrip(';')
+        # 解析 "bit [7:0] data" 格式
+        match = re.match(r'(\w+)\s*\[(\d+):0\]\s*(\w+)', decl)
+        if match:
+            data_type = match.group(1)
+            width = int(match.group(2)) + 1
+            name = match.group(3)
+        else:
+            # 简单类型 "bit data"
+            parts = decl.split()
+            if len(parts) >= 2:
+                data_type = parts[0]
+                name = parts[1]
+    
+    if name:
+        return {'name': name, 'data_type': data_type, 'width': width, 'rand_mode': rand_mode}
+    return None
+
+
+def _extract_method(item):
+    import re
+    # 从 declaration 获取信息
+    decl = str(getattr(item, 'declaration', ''))
+    if not decl:
+        return None
+    
+    # 提取 kind (function/task)
+    kind = "function" if "function" in decl else "task"
+    
+    # 解析 "function bit [7:0] name()" 格式
+    # 先找到名字
+    name_match = re.search(r'(function|task)\s+[\w\s\[\]:]+\s*(\w+)\s*\(', decl)
+    if name_match:
+        return_type = name_match.group(1) if name_match.group(1) else ""
+        method_name = name_match.group(2)
+    else:
+        return None
+    
+    return {'name': method_name, 'kind': kind, 'return_type': return_type}
+
+
+def _extract_constraint(item):
+    name = str(getattr(item, 'name', 'unknown'))
+    expr = str(item)[:50]
+    return {'name': name, 'expr': expr}
