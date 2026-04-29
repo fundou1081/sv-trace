@@ -187,3 +187,58 @@ b95d00a Refactor: covergroup.py 使用 pyslang
 | 批次3 trace/query/ | ~20 | ✅ 分析完成 | 全部保留 |
 
 **正则转 pyslang 重构任务基本完成！**
+
+---
+
+## 测试验证 (2026-04-29)
+
+### 针对性测试结果
+
+| 测试组 | 测试文件 | 结果 |
+|--------|----------|------|
+| Class | class_test.sv | ✅ 11 classes |
+| Module IO | module_io_test.sv | ✅ 7 modules |
+| Clock | clock_reset_test.sv | ✅ 14 clocks |
+
+### 测试用例覆盖
+
+**Class 测试覆盖:**
+- 简单类、多成员类
+- 继承类 (extends)
+- randc 类型
+- 软约束 (soft)
+- foreach 约束
+- dist 约束
+- 条件约束 (if-else)
+- solve before
+- 方法类 (function/task)
+
+**Module IO 测试覆盖:**
+- ANSI 风格端口
+- 位宽指定端口
+- 参数化模块
+- 多时钟模块
+- 复杂端口类型
+
+**Clock/Reset 测试覆盖:**
+- 同步复位
+- 异步复位
+- 多时钟
+- 门控时钟
+- 双沿时钟
+- 多复位域
+
+### 已知限制
+
+1. **非ANSI风格端口暂不支持** - module_io 目前只支持 ANSI 风格 (input clk, ...) 端口声明
+2. **方法未单独统计** - 函数/任务声明与 constraint 是不同概念，当前未分开统计
+
+### 测试文件位置
+
+```
+tests/sv_cases/pyslang_tests/
+├── class_test.sv          # 11 class 测试用例
+├── module_io_test.sv      # 7 module 测试用例
+├── clock_reset_test.sv    # 6 clock/reset 测试用例
+└── run_pyslang_tests.py    # 测试运行器
+```
