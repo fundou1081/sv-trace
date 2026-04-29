@@ -128,3 +128,43 @@ class AssertionExtractor:
     
     def get_all_properties(self) -> Dict[str, PropertyDef]:
         return self.properties
+
+
+def extract_assertions_from_text(code: str) -> List[dict]:
+    """从源码文本提取 assertions/sequences/properties (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    # 主要的 assertion 相关声明类型
+    target_kinds = {
+        'SequenceDeclaration',
+        'PropertyDeclaration',
+        'AssertPropertyStatement',
+        'AssumePropertyStatement', 
+        'CoverPropertyStatement',
+    }
+    
+    def collect(node):
+        kind_name = node.kind.name
+        
+        if kind_name in target_kinds:
+            name = str(getattr(node, 'name', '')).strip()
+            expr = str(node)[:100].replace('\n', ' ').strip()
+            
+            results.append({
+                'name': name,
+                'kind': kind_name,
+                'expr': expr
+            })
+        
+        return pyslang.VisitAction.Advance
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        tree.root.visit(collect)
+    except Exception as e:
+        pass
+    
+    return results
