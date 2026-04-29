@@ -117,12 +117,14 @@ class DomainInfo:
 
 
 @dataclass
+@dataclass
 class Parameter:
     """参数信息"""
     name: str
     module: str
     value: str = ""
     width: int = 0
+    resolved_value: int = 0
 
 
 @dataclass

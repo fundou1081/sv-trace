@@ -14,17 +14,15 @@ class Condition:
         self.type = type
         self.branch = branch
         self.line = line
-        self.branch = branch
 
 
-class CoveragePoint:
-    def __init__(self, id, condition, type, suggestions, line=0, branch=""):
+class CoveragePoint:\n    branch: str = ""\n\nclass CoveragePointOld:
+    def __init__(self, id, condition, type, suggestions, line=0):
         self.id = id
         self.condition = condition
         self.type = type
         self.suggestions = suggestions
         self.line = line
-        self.branch = branch
 
 
 class Stimulus:
@@ -107,15 +105,6 @@ class CoverageStimulusSuggester:
             self.conditions.append(Condition(str(node.condition), 'ternary', 'condition'))
     
     def get_coverage_points(self):
-        # 兼容旧代码：如果没有 branch 属性，添加它
-        for cond in self.conditions:
-            if not hasattr(cond, "branch"):
-                cond.branch = ""
-        if self.coverage_points:
-            for p in self.coverage_points:
-                if not hasattr(p, "branch"):
-                    p.branch = ""
-
         if self.coverage_points:
             return self.coverage_points
         

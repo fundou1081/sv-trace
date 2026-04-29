@@ -33,7 +33,7 @@ class ConstraintExtractor:
         results = []
         
         # 找到所有class和其中的constraint
-        class_pattern = r'class\s+(\w+)[^{]*\{(.+?)\s+endclass'
+        class_pattern = r'class\s+(\w+)[^{]*\{([\s\S]*?)\s*endclass'
         
         for class_m in re.finditer(class_pattern, code, re.DOTALL):
             class_name = class_m.group(1).strip()

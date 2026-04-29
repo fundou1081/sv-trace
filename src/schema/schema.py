@@ -158,6 +158,23 @@ def to_schema(parser, source: str = "") -> SVSchema:
     except Exception as e:
         print(f"Coverage generation error: {e}")
     
+
+    # 5. 提取 constraints
+    try:
+        constraints = _extract_constraints(source)
+        for c in constraints:
+            schema.add_constraint(c)
+    except Exception as e:
+        print(f"Constraint extraction error: {e}")
+    
+    # 6. 提取 parameters
+    try:
+        params = _extract_parameters(source)
+        for p in params:
+            schema.add_parameter(p)
+    except Exception as e:
+        print(f"Parameter extraction error: {e}")
+    
     return schema
 
 
@@ -227,3 +244,58 @@ SCHEMA_DOC = """
 
 if __name__ == "__main__":
     print(SCHEMA_DOC)
+
+
+def _extract_constraints(source: str) -> List[Dict]:
+    """从源码提取 constraints（支持嵌套的 {}）"""
+    import re
+    constraints = []
+    
+    pos = 0
+    while pos < len(source):
+        m = re.search(r'constraint\s+(\w+)\s*\{', source[pos:])
+        if not m:
+            break
+        
+        name = m.group(1)
+        start = pos + m.end() - 1
+        
+        # 找对应的 closing brace（处理嵌套）
+        depth = 1
+        i = start + 1
+        while i < len(source) and depth > 0:
+            if source[i] == '{':
+                depth += 1
+            elif source[i] == '}':
+                depth -= 1
+            i += 1
+        
+        expr = source[start+1:i-1].strip()
+        
+        # 找所属的 class
+        class_match = re.search(r'class\s+(\w+)[^{]*\{', source[:start])
+        class_name = class_match.group(1) if class_match else ''
+        
+        constraints.append({'name': name, 'class': class_name, 'expr': expr})
+        pos = i
+    
+    return constraints
+
+
+def _extract_parameters(source: str) -> List[Dict]:
+    """从源码提取 parameters"""
+    import re
+    params = []
+    
+    # 首先找 #(...) 中的参数
+    param_list_match = re.search(r'#\s*\(([^)]+)\)', source)
+    if param_list_match:
+        param_list = param_list_match.group(1)
+        for m in re.finditer(r'(\w+)\s*[=:]\s*([^,]+)', param_list):
+            params.append({
+                'type': 'parameter',
+                'name': m.group(1).strip(),
+                'value': m.group(2).strip()
+            })
+    
+    return params
