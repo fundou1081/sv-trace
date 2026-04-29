@@ -436,3 +436,132 @@ class ParametricDesignAnalyzer:
 
 
 __all__ = ['ParametricDesignAnalyzer', 'ParametricReport']
+
+
+# === pyslang 版本方法 (2026-04-29) ===
+# 原有的正则方法保留兼容，逐步迁移到 pyslang
+
+def extract_params_from_text(code: str) -> List[dict]:
+    """从源码提取 parameter (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    def collect(node):
+        kind_name = node.kind.name
+        
+        # ParameterDeclaration 和 LocalParameterDeclaration
+        if 'Parameter' in kind_name and 'Declaration' in kind_name:
+            is_local = 'Local' in kind_name
+            
+            # 从 declarators 获取名字和默认值
+            declarators = getattr(node, 'declarators', [])
+            if hasattr(declarators, 'declarators'):
+                declarators = declarators.declarators
+            
+            for d in declarators:
+                name = str(d.name) if hasattr(d, 'name') else 'unknown'
+                # 从 type 获取默认值
+                param_type = getattr(node, 'type', None)
+                default = str(d.dimensions) if hasattr(d, 'dimensions') else ''
+                
+                results.append({
+                    'name': name.strip(),
+                    'default': default.strip(),
+                    'kind': 'localparam' if is_local else 'parameter'
+                })
+        
+        return pyslang.VisitAction.Advance
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        tree.root.visit(collect)
+    except Exception as e:
+        pass
+    
+    return results
+
+
+def extract_functions_from_text(code: str) -> List[dict]:
+    """从源码提取 function/task (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    def collect(node):
+        kind_name = node.kind.name
+        
+        if 'Function' in kind_name or 'Task' in kind_name:
+            if 'Declaration' in kind_name:
+                # 从 prototype 获取名字
+                proto = getattr(node, 'prototype', None)
+                if proto:
+                    name = str(proto.name) if hasattr(proto, 'name') else 'unknown'
+                    return_type = str(proto.returnType) if hasattr(proto, 'returnType') else ''
+                else:
+                    name = 'unknown'
+                    return_type = ''
+                
+                results.append({
+                    'name': name.strip(),
+                    'kind': 'task' if 'Task' in kind_name else 'function',
+                    'return_type': return_type.strip()
+                })
+        
+        return pyslang.VisitAction.Advance
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        tree.root.visit(collect)
+    except Exception as e:
+        pass
+    
+    return results
+
+
+def extract_interfaces_from_text(code: str) -> List[dict]:
+    """从源码提取 interface (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    def collect(node):
+        if node.kind == SyntaxKind.InterfaceDeclaration:
+            name = str(node.name) if hasattr(node, 'name') else 'unknown'
+            results.append({'name': name.strip(), 'kind': 'interface'})
+        
+        return pyslang.VisitAction.Advance
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        tree.root.visit(collect)
+    except Exception as e:
+        pass
+    
+    return results
+
+
+def extract_classes_from_text(code: str) -> List[dict]:
+    """从源码提取 class (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    def collect(node):
+        if node.kind == SyntaxKind.ClassDeclaration:
+            name = str(node.name) if hasattr(node, 'name') else 'unknown'
+            results.append({'name': name.strip(), 'kind': 'class'})
+        
+        return pyslang.VisitAction.Advance
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        tree.root.visit(collect)
+    except Exception as e:
+        pass
+    
+    return results
