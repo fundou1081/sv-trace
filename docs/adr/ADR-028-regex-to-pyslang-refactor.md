@@ -281,3 +281,36 @@ tests/sv_cases/pyslang_tests/
 
 1. **parametric_analyzer**: 支持 Interface 和 Package 名称提取
    - InterfaceDeclaration/PackageDeclaration 需要从 header 获取名称
+
+---
+
+## 开源项目测试用例 (2026-04-29 晚)
+
+### 来源
+
+来自 OpenTitan 项目 (https://github.com/lowrisc/opentitan)
+
+### 测试用例清单
+
+| 文件 | 来源 | 覆盖语法 |
+|------|------|----------|
+| opentitan_uart.sv | hw/ip/uart/rtl/uart_core.sv | interface 类型端口, import, typedef enum, always_ff/comb |
+| opentitan_spi.sv | hw/ip/spi_device/rtl/spi_device.sv | 参数化端口, 多维数组, tlul/alert interface |
+| opentitan_hmac.sv | hw/ip/hmac/rtl/hmac.sv | `include, import, typedef enum, assertion |
+| opentitan_rv_dm.sv | hw/ip/rv_dm/rtl/rv_dm.sv | genvar for, parameter 数组, localparam struct |
+| opentitan_aes_pkg.sv | hw/ip/aes/rtl/aes_pkg.sv | typedef logic 数组, parameter 复杂计算, typedef struct/union |
+
+### 测试结果 (5/5 通过)
+
+所有开源项目测试用例均解析成功。
+
+### 测试文件位置
+
+```
+tests/sv_cases/open_source/
+├── opentitan_uart.sv
+├── opentitan_spi.sv
+├── opentitan_hmac.sv
+├── opentitan_rv_dm.sv
+└── opentitan_aes_pkg.sv
+```
