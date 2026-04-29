@@ -374,3 +374,64 @@ def analyze_clock_tree(parser) -> ClockTreeResult:
     """便捷函数"""
     analyzer = ClockTreeAnalyzer(parser)
     return analyzer.result
+
+
+# === pyslang 版本方法 (2026-04-29) ===
+
+def extract_clock_signals_from_text(code: str) -> List[dict]:
+    """从源码提取时钟信号 (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    def collect(node):
+        kind_name = node.kind.name
+        
+        # 提取时钟 input 端口
+        if kind_name == 'ImplicitAnsiPort':
+            header = getattr(node, 'header', None)
+            if header:
+                direction = getattr(header, 'direction', None)
+                if direction and 'Input' in direction.kind.name:
+                    decl = getattr(node, 'declarator', None)
+                    if decl:
+                        name = str(decl.name).strip()
+                        if 'clk' in name.lower() or 'clock' in name.lower():
+                            results.append({
+                                'name': name,
+                                'kind': 'clock_input',
+                                'type': 'input'
+                            })
+        
+        # 提取 always_ff 时钟
+        if kind_name == 'EventControlWithExpression':
+            edge = 'posedge'
+            clock_name = ''
+            
+            for child in node:
+                if child.kind.name == 'ParenthesizedEventExpression':
+                    for c2 in child:
+                        if c2.kind.name == 'SignalEventExpression':
+                            for c3 in c2:
+                                if 'Edge' in c3.kind.name:
+                                    edge = 'posedge' if 'Pos' in c3.kind.name else 'negedge'
+                                if c3.kind.name == 'IdentifierName':
+                                    clock_name = str(c3).strip()
+            
+            if clock_name:
+                results.append({
+                    'name': clock_name,
+                    'kind': 'ff_clock',
+                    'edge': edge
+                })
+        
+        return pyslang.VisitAction.Advance
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        tree.root.visit(collect)
+    except Exception as e:
+        pass
+    
+    return results
