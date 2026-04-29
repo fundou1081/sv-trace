@@ -577,3 +577,72 @@ __all__ = [
     'ResetTreeNode',
     'check_reset_integrity',
 ]
+
+
+# === pyslang 版本方法 (2026-04-29) ===
+
+def extract_reset_signals_from_text(code: str) -> List[dict]:
+    """从源码提取复位相关信号 (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    def collect(node):
+        kind_name = node.kind.name
+        
+        # 检查是否是 input 端口且名字包含 reset
+        if kind_name == 'ImplicitAnsiPort':
+            header = getattr(node, 'header', None)
+            if header:
+                direction = getattr(header, 'direction', None)
+                if direction and 'Input' in direction.kind.name:
+                    decl = getattr(node, 'declarator', None)
+                    if decl:
+                        name = str(decl.name) if hasattr(decl, 'name') else ''
+                        if 'rst' in name.lower() or 'reset' in name.lower():
+                            results.append({
+                                'name': name,
+                                'kind': 'reset_input',
+                                'type': 'input'
+                            })
+        
+        return pyslang.VisitAction.Advance
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        tree.root.visit(collect)
+    except Exception as e:
+        pass
+    
+    return results
+
+
+def extract_async_reset_from_text(code: str) -> List[dict]:
+    """从源码提取异步复位 always_ff 块 (使用 pyslang)"""
+    import pyslang
+    from pyslang import SyntaxKind
+    
+    results = []
+    
+    def collect(node):
+        kind_name = node.kind.name
+        
+        if 'AlwaysFf' in kind_name:
+            # 检查是否有异步复位 (or negedge rst)
+            item_str = str(node)
+            if 'or' in item_str.lower() and ('rst' in item_str.lower() or 'reset' in item_str.lower()):
+                results.append({
+                    'kind': 'async_always_ff',
+                    'expr': item_str[:60].replace('\n', ' ')
+                })
+        
+        return pyslang.VisitAction.Advance
+    
+    try:
+        tree = pyslang.SyntaxTree.fromText(code)
+        tree.root.visit(collect)
+    except Exception as e:
+        pass
+    
+    return results
