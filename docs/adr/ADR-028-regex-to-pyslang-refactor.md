@@ -149,3 +149,41 @@ b95d00a Refactor: covergroup.py 使用 pyslang
 
 - **code_quality_scorer.py** 和 **code_metrics_analyzer.py** 主要用于统计计数（关键字出现次数），这些用正则即可，不需要 pyslang
 - 高优先级的结构化提取已完成
+
+---
+
+## 批次3: trace/ & query/ (2026-04-29 分析完成)
+
+### 分析结果
+
+| 模块 | 正则数 | 分析 |
+|------|--------|------|
+| trace/load.py | 7 | 简单模式匹配 |
+| query/overflow_risk_detector.py | 7 | 简单模式匹配 |
+| query/signal.py | 6 | 简单模式匹配 |
+| trace/datapath.py | 1 | 简单模式匹配 |
+| trace/flow_analyzer.py | 1 | 简单模式匹配 |
+
+### 结论
+
+批次3的文件主要是**简单模式匹配**（信号名、赋值语句解析），这些用正则即可满足需求，不需要 pyslang AST。
+
+**不需要迁移到 pyslang 的场景**：
+1. 关键字计数（如 `re.findall(r'\binput\b', content)`）
+2. 简单字符串模式匹配（如 `re.match(r'clk.*', name)`）
+3. 赋值语句解析（如 `re.search(r'(\w+)\s*=', line)`）
+
+**需要迁移到 pyslang 的场景**：
+1. 复杂语法结构（class/constraint/assertion）
+2. 嵌套层级结构
+3. 需要精确的 AST 节点信息
+
+### 最终状态
+
+| 批次 | 模块数 | 完成 | 保留正则 |
+|------|--------|------|----------|
+| 批次1 parse/ | 5 | ✅ 5 | 少量 |
+| 批次2 debug/analyzers/ | 5 | ✅ 3 (2个保留) | 2个计数为主 |
+| 批次3 trace/query/ | ~20 | ✅ 分析完成 | 全部保留 |
+
+**正则转 pyslang 重构任务基本完成！**
