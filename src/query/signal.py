@@ -217,3 +217,21 @@ class SignalQuery:
                                 signals.append(Signal(name=name, module=mod_name, width=width))
         
         return signals
+
+
+def query_signals(source: str):
+    """从源码文本查询信号"""
+    try:
+        import pyslang
+        tree = pyslang.SyntaxTree.fromText(source)
+        
+        class TextParser:
+            def __init__(self, tree):
+                self.trees = {"input.sv": tree}
+                self.compilation = tree
+        
+        sq = SignalQuery(TextParser(tree))
+        return sq
+    except Exception as e:
+        print(f"Signal query error: {e}")
+        return None

@@ -24,7 +24,7 @@ class SVSchema:
                 "covergroup": ""
             },
             "constraints": [],
-            "parameters": [], "signals": {}, "loads": [], "complexity": [], "clock_domains": {}, "uninitialized": []
+            "parameters": [], "signals": {}, "loads": [], "complexity": [], "clock_domains": {}, "uninitialized": [], "signal_count": 0, "datapath_boundaries": {}, "timing_paths": []
         }
     
     def set_source(self, source: str):
@@ -274,6 +274,53 @@ def to_schema(parser, source: str = "") -> SVSchema:
         schema.data['uninitialized'] = uninit_list
     except Exception as e:
         print(f"Uninitialized detection error: {e}")
+
+
+    # 12. 信号查询
+    try:
+        from query.signal import query_signals
+        sq = query_signals(source)
+        # 列出所有信号
+        all_signals = sq.list_all_signals()
+        schema.data['signal_count'] = len(all_signals)
+    except Exception as e:
+        print(f"Signal query error: {e}")
+
+    # 13. DataPath 边界分析
+    try:
+        from query.datapath_boundary_analyzer import DataPathBoundaryAnalyzer
+        dpa = DataPathBoundaryAnalyzer(_create_text_parser(source))
+        # 获取所有信号的边界
+        boundaries = {}
+        for sig in dpa.get_all_signals():
+            result = dpa.analyze(sig)
+            if result and result.bins:
+                boundaries[sig] = [
+                    {'name': b.name, 'value': b.value}
+                    for b in result.bins
+                ]
+        schema.data['datapath_boundaries'] = boundaries
+    except Exception as e:
+        print(f"DataPath error: {e}")
+
+    # 14. Timing Path
+    try:
+        from trace.timing_path import TimingPathExtractor
+        tpe = TimingPathExtractor(_create_text_parser(source))
+        timing_paths = []
+        for info in tpe.analyze():
+            timing_paths.append({
+                'module': info.module,
+                'paths': [
+                    {'start': p.start, 'end': p.end, 'depth': p.depth}
+                    for p in info.paths[:5]  # 限制5条
+                ],
+                'max_depth': info.max_depth
+            })
+        schema.data['timing_paths'] = timing_paths
+    except Exception as e:
+        print(f"Timing path error: {e}")
+
 
     return schema
 

@@ -45,6 +45,21 @@ class BoundaryResult:
         return '\n'.join(lines)
 
 
+    def extract_from_text(source: str):
+        """从源码文本提取datapath边界"""
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+                    self.compilation = tree
+            
+            return DataPathBoundaryAnalyzer(TextParser(tree))
+        except Exception as e:
+            print(f"DataPath error: {e}")
+            return None
+
 class DataPathBoundaryAnalyzer:
     """Data Path 边界分析"""
     

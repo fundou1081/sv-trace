@@ -24,6 +24,21 @@ class TimingInfo:
     critical: str = ""
 
 
+    def extract_from_text(source: str):
+        """从源码文本提取timing路径"""
+        try:
+            tree = pyslang.SyntaxTree.fromText(source)
+            
+            class TextParser:
+                def __init__(self, tree):
+                    self.trees = {"input.sv": tree}
+                    self.compilation = tree
+            
+            return TimingPathExtractor(TextParser(tree))
+        except Exception as e:
+            print(f"Timing path error: {e}")
+            return None
+
 class TimingPathExtractor:
     """工作版本"""
     
