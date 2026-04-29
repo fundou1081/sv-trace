@@ -193,63 +193,51 @@ __all__ = ['ClassExtractor', 'ClassMember', 'ClassMethod', 'ClassConstraint']
 # === pyslang 版本方法 (2026-04-29) ===
 
 def extract_classes_from_text(code: str) -> List[dict]:
-    """从源码文本提取 (使用 pyslang AST)"""
     import pyslang
     from pyslang import SyntaxKind
     
     results = []
+    class_nodes = []
+    
+    def collect(node):
+        if node.kind == SyntaxKind.ClassDeclaration:
+            class_nodes.append(node)
+        return pyslang.VisitAction.Advance
     
     try:
         tree = pyslang.SyntaxTree.fromText(code)
-        root = tree.root
+        tree.root.visit(collect)
         
-        # 获取所有类
-        all_classes = []
-        if root.kind == SyntaxKind.ClassDeclaration:
-            all_classes = [root]
-        else:
-            for c in root:
-                if hasattr(c, 'kind') and c.kind == SyntaxKind.ClassDeclaration:
-                    all_classes.append(c)
-        
-        for cls in all_classes:
-            name = str(cls.name) if hasattr(cls, 'name') else 'unknown'
-            
+        for cls in class_nodes:
+            name = str(cls.name).strip() if hasattr(cls, 'name') else 'unknown'
             info = {'name': name, 'members': [], 'methods': [], 'constraints': []}
             
-            # 遍历items
-            items = getattr(cls, 'items', [])
-            for item in items:
+            for item in getattr(cls, 'items', []):
                 if not item:
                     continue
+                kind_name = item.kind.name
                 
-                kind = item.kind
-                kind_str = str(kind)
+                if 'Property' in kind_name or 'Rand' in kind_name:
+                    m = _extract_member(item)
+                    if m:
+                        info['members'].append(m)
                 
-                # Property 
-                if 'Property' in kind.name or 'Rand' in kind.name:
-                    member = _extract_member(item)
-                    if member:
-                        info['members'].append(member)
+                if 'Method' in kind_name and 'Declaration' in kind_name:
+                    m = _extract_method(item)
+                    if m:
+                        info['methods'].append(m)
                 
-                # Method
-                if 'Method' in kind.name:
-                    method = _extract_method(item)
-                    if method:
-                        info['methods'].append(method)
-                
-                # Constraint
-                if 'Constraint' in kind_str:
-                    constraint = _extract_constraint(item)
-                    if constraint:
-                        info['constraints'].append(constraint)
+                if 'Constraint' in kind_name:
+                    c = _extract_constraint(item)
+                    if c:
+                        info['constraints'].append(c)
             
             results.append(info)
-            
     except Exception as e:
-        print(f"Class extract error: {e}")
+        print(f'Class extract error: {e}')
     
     return results
+
 
 
 def _extract_member(item):
