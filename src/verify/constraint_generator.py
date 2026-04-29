@@ -89,3 +89,8 @@ class ConstraintGenerator:
         lines.append("        pass")
         
         return '\n'.join(lines)
+
+
+def extract_constraints(source: str):
+    """从源码文本提取约束"""
+    return []

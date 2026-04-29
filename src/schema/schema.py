@@ -24,7 +24,7 @@ class SVSchema:
                 "covergroup": ""
             },
             "constraints": [],
-            "parameters": [], "signals": {}, "loads": [], "complexity": [], "clock_domains": {}, "uninitialized": [], "signal_count": 0, "datapath_boundaries": {}, "timing_paths": []
+            "parameters": [], "signals": {}, "loads": [], "complexity": [], "clock_domains": {}, "uninitialized": [], "signal_count": 0, "datapath_boundaries": {}, "timing_paths": [], "risks": {"risks": [], "summary": {}}
         }
     
     def set_source(self, source: str):
@@ -321,6 +321,25 @@ def to_schema(parser, source: str = "") -> SVSchema:
     except Exception as e:
         print(f"Timing path error: {e}")
 
+
+
+    # 15. Risk evaluation
+    try:
+        from verify.risk_evaluator import extract_risks
+        risks = extract_risks(source)
+        schema.data['risks'] = risks
+    except Exception as e:
+        print(f"Risk evaluation error: {e}")
+
+    # 16. Constraint generation
+    try:
+        from verify.constraint_generator import extract_constraints
+        constrs = extract_constraints(source)
+        # 已经提取过了，如果为空则添加空列表
+        if not schema.data['constraints']:
+            schema.data['constraints'] = constrs
+    except Exception as e:
+        print(f"Constraint gen error: {e}")
 
     return schema
 

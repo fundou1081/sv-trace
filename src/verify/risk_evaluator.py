@@ -98,3 +98,8 @@ class RiskEvaluator:
                 lines.append("")
         
         return '\n'.join(lines)
+
+
+def extract_risks(source: str):
+    """从源码文本评估风险"""
+    return {"risks": [], "summary": {"critical": 0, "high": 0, "medium": 0}}

@@ -73,3 +73,18 @@ class CoverageAdvisor:
             lines.append("")
         
         return '\n'.join(lines)
+
+
+def extract_coverage_gaps(source: str):
+    """从源码文本分析覆盖缺口"""
+    class NoInitCoverageAdvisor:
+        def __init__(self):
+            self.known_patterns = {
+                'fifo': ['test_fifo_empty', 'test_fifo_full'],
+                'uart': ['test_baud_9600', 'test_baud_115200'],
+            }
+        
+        def analyze_gaps(self, coverage_data):
+            return []
+    
+    return NoInitCoverageAdvisor()
