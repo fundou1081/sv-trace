@@ -142,6 +142,102 @@ class ModuleIOExtractor:
             self.modules[name] = io
         
         return modules
+
+    def extract_from_text(self, code: str) -> List[ModuleIO]:
+        """从源码文本提取 (使用 pyslang AST)"""
+        import pyslang
+        from pyslang import SyntaxKind
+        import re
+        
+        modules = []
+        
+        try:
+            tree = pyslang.SyntaxTree.fromText(code)
+            root = tree.root
+            
+            # 找到所有 ModuleDeclaration
+            if root.kind == SyntaxKind.ModuleDeclaration:
+                modules_data = [root]
+            else:
+                # 可能需要遍历
+                modules_data = []
+                for m in root:
+                    if hasattr(m, 'kind') and m.kind.value_name == 'ModuleDeclaration':
+                        modules_data.append(m)
+            
+            for mod in modules_data:
+                if not hasattr(mod, 'header'):
+                    continue
+                    
+                h = mod.header
+                name = str(h.name) if hasattr(h, 'name') else 'unknown'
+                io = ModuleIO(name)
+                
+                # 提取 parameters
+                if hasattr(h, 'parameters') and h.parameters:
+                    params = h.parameters
+                    if hasattr(params, 'parameters'):
+                        params = params.parameters
+                    for p in params:
+                        if hasattr(p, 'name'):
+                            param_name = str(p.name)
+                            param_value = str(p.value) if hasattr(p, 'value') else '1'
+                            io.add_param(Parameter(param_name, param_value))
+                
+                # 提取 ports
+                if hasattr(h, 'ports') and h.ports:
+                    ports = h.ports
+                    if hasattr(ports, 'ports'):
+                        ports = ports.ports
+                    
+                    for p in ports:
+                        if not isinstance(p, pyslang.ImplicitAnsiPortSyntax):
+                            continue
+                        
+                        decl = p.declarator
+                        if not decl or not hasattr(decl, 'name'):
+                            continue
+                            
+                        port_name = str(decl.name)
+                        
+                        # 方向
+                        direction = 'input'
+                        if hasattr(p.header, 'direction') and hasattr(p.header.direction, 'kind'):
+                            dk = p.header.direction.kind
+                            if 'Output' in str(dk):
+                                direction = 'output'
+                            elif 'InOut' in str(dk):
+                                direction = 'inout'
+                        else:
+                            header_str = str(p.header).strip() if hasattr(p, 'header') else ''
+                            if header_str.startswith('output'):
+                                direction = 'output'
+                            elif header_str.startswith('inout'):
+                                direction = 'inout'
+                        
+                        # 宽度
+                        width = 1
+                        if hasattr(decl, 'dimensions') and decl.dimensions:
+                            dims_str = str(decl.dimensions)
+                            m = re.search(r'\[(\d+):(\d+)\]', dims_str)
+                            if m:
+                                width = int(m.group(1)) - int(m.group(2)) + 1
+                        
+                        # 是否是 reg
+                        header_str = str(p.header).strip() if hasattr(p, 'header') else ''
+                        is_reg = 'reg' in header_str.lower()
+                        
+                        io.add_port(Port(port_name, direction, width))
+                
+                modules.append(io)
+                
+        except Exception as e:
+            print(f"Module parse error: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return modules
+
     
     def get_io(self, name) -> ModuleIO:
         return self.modules.get(name)
