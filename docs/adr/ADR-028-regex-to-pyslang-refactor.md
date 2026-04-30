@@ -427,3 +427,50 @@ d797c91 Add Package/Program/Generate
 ---
 
 **最后更新**: 2026-04-30 16:11
+
+---
+
+## 后续更新 (2026-04-30 17:00-19:00)
+
+### 修复的问题
+
+1. **Python 语法错误** - package.py, generate.py
+   - 问题：`elif` 块缺少内容
+   - 修复：添加 `pass` 语句
+
+2. **拼写错误** - 多个文件
+   - 问题：`Advancee` → `Advance`
+   - 修复：批量替换 (15+ 文件)
+
+3. **SyntaxTree 处理**
+   - 问题：`tree.root.visit` 无法处理 SyntaxTree
+   - 修复：`(tree.root if hasattr(tree, 'root') else tree)`
+
+4. **变量名冲突** - class_utils.py 等
+   - 问题：参数名 `tree` 与内部变量冲突
+   - 修复：`tree` → `root`
+
+5. **DriverTracer always_comb**
+   - 问题：无法识别简单 always_comb 语句
+   - 修复：添加 ExpressionStatement 处理
+
+### 测试统计
+
+| 模块 | 测试数 | 通过 |
+|------|--------|------|
+| SVParser | 55 | ✅ |
+| DriverTracer | 8 | ✅ |
+| LoadTracer | 3 | ✅ |
+| ParameterResolver | 4 | ✅ |
+| SignalQuery | 2 | ✅ |
+| ClassExtractor | 3 | ✅ |
+| 其他 | 15 | ✅ |
+
+### 提交记录 (2026-04-30 evening)
+
+```
+5e4f0db Fix module variable naming: tree->root
+b68cb97 Fix DriverTracer: always_comb simple expression
+4d8c3c3 Fix parse modules: tree.root.visit
+707ccbd Add test_all.py runner
+```
