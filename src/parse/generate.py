@@ -1,7 +1,7 @@
 """
 Generate 解析器 - 使用 pyslang AST
 
-Generate 块提取 (不使用正则)
+Generate 块提取 (if/for/case)
 """
 import sys
 import os
@@ -18,6 +18,7 @@ class GenerateItem:
     """generate item: if/case/for"""
     kind: str = ""
     condition: str = ""
+    label: str = ""
     body: List[str] = field(default_factory=list)
 
 
@@ -26,15 +27,6 @@ class GenerateBlock:
     """generate 块"""
     name: str = ""
     items: List[GenerateItem] = field(default_factory=list)
-
-
-def _collect_nodes(node):
-    nodes = []
-    def collect(n):
-        nodes.append(n)
-        return pyslang.VisitAction.Advance
-    node.visit(collect)
-    return nodes
 
 
 class GenerateExtractor:
@@ -51,9 +43,9 @@ class GenerateExtractor:
     
     def _extract_from_tree(self, tree):
         def collect(node):
-            kn = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            kn = node.kind.name
             
-            if kn in ['IfGenerate', 'LoopGenerate', 'CaseGenerate', 'GenerateRegion', 'GenerateBlock']:
+            if kn in ['IfGenerate', 'LoopGenerate', 'CaseGenerate']:
                 self._extract_gen_item(node)
             
             return pyslang.VisitAction.Advance
@@ -64,41 +56,34 @@ class GenerateExtractor:
         item = GenerateItem()
         item.kind = node.kind.name
         
-        all_nodes = _collect_nodes(node)
+        # condition - 使用 pyslang AST
+        if hasattr(node, 'condition') and node.condition:
+            item.condition = str(node.condition).strip()
         
-        # 条件/表达式 - 从字符串提取
-        str_repr = str(node).strip()
+        # label - block.begin
+        if hasattr(node, 'block') and node.block:
+            if hasattr(node.block, 'begin') and node.block.begin:
+                item.label = str(node.block.begin).strip()
         
-        if item.kind == 'IfGenerate':
-            import re
-            m = re.search(r'if\s*\(([^)]+)\)', str_repr)
-            if m:
-                item.condition = m.group(1)
+        # body - 从 members 或 block 获取
+        if hasattr(node, 'members') and node.members:
+            for m in node.members:
+                if m:
+                    decl = str(m).strip().rstrip(';')
+                    if decl:
+                        item.body.append(decl)
         
-        elif item.kind == 'LoopGenerate':
-            import re
-            m = re.search(r'for\s*\(([^)]+)\)', str_repr)
-            if m:
-                item.condition = m.group(1)
+        # 如果 body 为空，尝试从 block 获取
+        if not item.body and hasattr(node, 'block') and node.block:
+            if hasattr(node.block, 'members') and node.block.members:
+                for m in node.block.members:
+                    if m:
+                        decl = str(m).strip().rstrip(';')
+                        if decl:
+                            item.body.append(decl)
         
-        elif item.kind == 'CaseGenerate':
-            import re
-            m = re.search(r'case\s*\(([^)]+)\)', str_repr)
-            if m:
-                item.condition = m.group(1)
-        
-        # body - 提取内部声明
-        for m in node.members if hasattr(node, 'members') else []:
-            if m and hasattr(m, 'kind') and 'Declaration' in m.kind.name:
-                decl = str(m).strip()
-                if decl:
-                    item.body.append(decl)
-        
-        # GenerateBlock 有 label
-        if hasattr(node, 'begin') and node.begin:
-            item.condition = str(node.begin).strip()
-        
-        self.blocks.append(GenerateBlock(items=[item]))
+        if item.kind:
+            self.blocks.append(GenerateBlock(items=[item]))
     
     def get_blocks(self):
         return self.blocks
@@ -131,12 +116,13 @@ if __name__ == "__main__":
 endmodule'''
     
     result = extract_generates(test_code)
-    print("=== Generate 提取测试 ===")
-    print(f"Found {len(result)} blocks")
+    print("=== Generate ===")
     for blk in result:
         for item in blk.items:
-            print(f"  {item.kind}")
+            print(f"\n{item.kind}")
             if item.condition:
-                print(f"    condition: {item.condition}")
+                print(f"  condition: {item.condition}")
+            if item.label:
+                print(f"  label: {item.label}")
             for b in item.body[:3]:
-                print(f"    {b}")
+                print(f"  body: {b}")
