@@ -143,7 +143,8 @@ class DriverCollector:
             # always_comb with case (no begin...end): statement 是 CaseStatement
             # always_comb with if (no begin...end): statement 是 ConditionalStatement
             # always_ff/always_latch: statement 是 TimingControlStatement
-            elif 'TimingControl' in stmt_kind or 'CaseStatement' in stmt_kind or 'ConditionalStatement' in stmt_kind:
+            # simple always_comb: statement 是 ExpressionStatement (如 always_comb r = a & b;)
+            elif 'TimingControl' in stmt_kind or 'CaseStatement' in stmt_kind or 'ConditionalStatement' in stmt_kind or 'ExpressionStatement' in stmt_kind:
                 self._walk_statement(stmt, kind, module_name, "")
                     
         except Exception as e:
