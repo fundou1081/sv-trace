@@ -1,39 +1,143 @@
-import sys, os, tempfile
-sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
+#!/usr/bin/env python3
+"""
+Test runner for sv-trace project
+Runs all unit tests and parse module tests
+"""
+import sys
+import os
+import unittest
 
-from parse import SVParser
-from trace.driver import DriverTracer
+# Add src to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-tests = [
-    ("Simple Assign", '''module t; logic a, b; assign b = a; endmodule''', 'b'),
-    ("If/Else", '''module t; logic a, b, r; always_comb begin if (a) r = b; else r = 0; end endmodule''', 'r'),
-    ("Case", '''module t; logic [1:0] s; logic a, b, r; always_comb case(s) 0: r=a; 1: r=b; endcase endmodule''', 'r'),
-    ("For Loop", '''module t; logic [31:0] sum; always_comb begin sum=0; for(int i=0;i<4;i++) sum=sum+i; end endmodule''', 'sum'),
-    ("While Loop", '''module t; logic [31:0] cnt; always_comb begin cnt=0; while(cnt<10) cnt=cnt+1; end endmodule''', 'cnt'),
-    ("Foreach", '''module t; logic [31:0] arr [3:0], sum; always_comb begin sum=0; foreach(arr[i]) sum=sum+arr[i]; end endmodule''', 'sum'),
-    ("Always_ff", '''module t; logic clk, d, q; always_ff @(posedge clk) q <= d; endmodule''', 'q'),
-]
 
-all_passed = True
-for name, code, signal in tests:
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-        f.write(code)
-        tmp = f.name
+def run_tests():
+    """Run all tests"""
+    print("=" * 60)
+    print("sv-trace Test Runner")
+    print("=" * 60)
+    print()
     
-    try:
-        parser = SVParser()
-        parser.parse_file(tmp)
-        drv = DriverTracer(parser)
-        drivers = drv.find_driver(signal)
-        status = "✅" if drivers else "❌"
-        print(f"{status} {name}: {len(drivers)} drivers")
-        if not drivers:
-            all_passed = False
-    except Exception as e:
-        print(f"❌ {name}: ERROR - {e}")
-        all_passed = False
-    finally:
-        os.unlink(tmp)
+    # Discover and run unit tests
+    loader = unittest.TestLoader()
+    start_dir = 'tests/unit'
+    
+    if os.path.exists(start_dir):
+        suite = loader.discover(start_dir, pattern='test_*.py')
+        
+        runner = unittest.TextTestRunner(verbosity=2)
+        result = runner.run(suite)
+        
+        # Print summary
+        print()
+        print("=" * 60)
+        print("SUMMARY")
+        print("=" * 60)
+        print(f"Tests run: {result.testsRun}")
+        print(f"Failures: {len(result.failures)}")
+        print(f"Errors: {len(result.errors)}")
+        
+        if result.wasSuccessful():
+            print("\n✅ ALL TESTS PASSED")
+            return 0
+        else:
+            print("\n❌ SOME TESTS FAILED")
+            return 1
+    else:
+        print(f"Tests directory '{start_dir}' not found")
+        return 1
 
-print()
-print("All tests passed!" if all_passed else "SOME TESTS FAILED!")
+
+def test_parse_module():
+    """Test parse module directly"""
+    print()
+    print("=" * 60)
+    print("Testing Parse Module")
+    print("=" * 60)
+    print()
+    
+    # Test imports
+    tests_passed = 0
+    tests_failed = 0
+    
+    # Test 1: Core parsers
+    try:
+        from parse import SVParser, ModuleExtractor
+        print("✅ Core parsers import OK")
+        tests_passed += 1
+    except Exception as e:
+        print(f"❌ Core parsers: {e}")
+        tests_failed += 1
+    
+    # Test 2: SV Syntax parsers
+    try:
+        from parse import (
+            InterfaceExtractor,
+            PackageExtractor,
+            GenerateExtractor,
+        )
+        print("✅ SV Syntax parsers import OK")
+        tests_passed += 1
+    except Exception as e:
+        print(f"❌ SV Syntax parsers: {e}")
+        tests_failed += 1
+    
+    # Test 3: Verification parsers
+    try:
+        from parse import (
+            VerificationSyntaxExtractor,
+            AdvancedVerificationExtractor,
+        )
+        print("✅ Verification parsers import OK")
+        tests_passed += 1
+    except Exception as e:
+        print(f"❌ Verification parsers: {e}")
+        tests_failed += 1
+    
+    # Test 4: Other parsers
+    try:
+        from parse import (
+            ClassExtractor,
+            ConstraintExtractor,
+            CovergroupExtractor,
+            AssertionExtractor,
+        )
+        print("✅ Other parsers import OK")
+        tests_passed += 1
+    except Exception as e:
+        print(f"❌ Other parsers: {e}")
+        tests_failed += 1
+    
+    # Test 5: Run actual parsing
+    try:
+        import pyslang
+        from parse.interface import InterfaceExtractor
+        
+        code = '''interface i; modport m(input a); endinterface'''
+        ext = InterfaceExtractor(None)
+        ext._extract_from_tree(pyslang.SyntaxTree.fromText(code).root)
+        
+        if 'i' in ext.interfaces:
+            print("✅ InterfaceExtractor functional test OK")
+            tests_passed += 1
+        else:
+            print("⚠️ InterfaceExtractor: no interfaces found")
+            tests_failed += 1
+    except Exception as e:
+        print(f"❌ Functional test: {e}")
+        tests_failed += 1
+    
+    print()
+    print(f"Parse module tests: {tests_passed} passed, {tests_failed} failed")
+    
+    return 0 if tests_failed == 0 else 1
+
+
+if __name__ == '__main__':
+    # Run parse module tests first (faster)
+    exit_code = test_parse_module()
+    
+    # Then run full test suite
+    exit_code = max(exit_code, run_tests())
+    
+    sys.exit(exit_code)
