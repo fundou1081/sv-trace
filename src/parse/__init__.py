@@ -1,5 +1,5 @@
 """
-Parse 模块 - 解析 SystemVerilog 代码
+Parse 模块 - SystemVerilog 代码解析
 """
 from .parser import SVParser, get_source_safe, GlobalParseCache, parse_file_cached
 from .extractors import (
@@ -13,10 +13,10 @@ from .constraint import ConstraintExtractor
 from .covergroup import CovergroupExtractor
 from .assertion import AssertionExtractor
 
-# 新增 - SystemVerilog 独有语法
+# 新增 - SV 独有语法
 from .interface import InterfaceExtractor, InterfaceDef, ModportDef, ClockingDef
-from .package import PackageExtractor, PackageDef, ProgramDef
-from .generate import GenerateExtractor, GenerateBlock
+from .package import PackageExtractor, PackageDef, ProgramDef, PackageItem
+from .generate import GenerateExtractor, GenerateBlock, GenerateItem
 
 __all__ = [
     # Core
@@ -32,7 +32,7 @@ __all__ = [
     "get_source_safe",
     "GlobalParseCache",
     "parse_file_cached",
-    # 新增 SV 语法
+    # SV 独有语法
     "InterfaceExtractor",
     "InterfaceDef",
     "ModportDef", 
@@ -40,6 +40,8 @@ __all__ = [
     "PackageExtractor",
     "PackageDef",
     "ProgramDef",
+    "PackageItem",
     "GenerateExtractor",
     "GenerateBlock",
+    "GenerateItem",
 ]

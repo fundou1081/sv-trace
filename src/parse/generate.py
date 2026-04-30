@@ -1,38 +1,46 @@
 """
-Generate 解析器 - generate 块提取
+Generate 解析器 - 使用 pyslang AST
 
-SystemVerilog 条件编译:
-- generate...endgenerate
-- if-gen, case-gen, for-gen
+Generate 块提取 (不使用正则)
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from typing import Dict, List
+from typing import List
 from dataclasses import dataclass, field
 import pyslang
-from pyslang import SyntaxKind
+from pyslang import SyntaxKind, TokenKind
 
 
 @dataclass
 class GenerateItem:
+    """generate item: if/case/for"""
     kind: str = ""
     condition: str = ""
     body: List[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass  
 class GenerateBlock:
+    """generate 块"""
     name: str = ""
     items: List[GenerateItem] = field(default_factory=list)
+
+
+def _collect_nodes(node):
+    nodes = []
+    def collect(n):
+        nodes.append(n)
+        return pyslang.VisitAction.Advance
+    node.visit(collect)
+    return nodes
 
 
 class GenerateExtractor:
     def __init__(self, parser=None):
         self.parser = parser
-        self.blocks: List[GenerateBlock] = []
-        
+        self.blocks = []
         if parser:
             self._extract_all()
     
@@ -45,46 +53,58 @@ class GenerateExtractor:
         def collect(node):
             kn = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
             
-            if kn in ['IfGenerate', 'LoopGenerate', 'CaseGenerate', 'IfGenerateRegion', 'CaseGenerateRegion', 'GenerateRegion']:
-                self._extract_generate(node)
+            if kn in ['IfGenerate', 'LoopGenerate', 'CaseGenerate', 'GenerateRegion', 'GenerateBlock']:
+                self._extract_gen_item(node)
             
             return pyslang.VisitAction.Advance
         
         tree.root.visit(collect)
     
-    def _extract_generate(self, node):
+    def _extract_gen_item(self, node):
         item = GenerateItem()
-        item.kind = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+        item.kind = node.kind.name
         
-        # condition
-        if hasattr(node, 'condition') and node.condition:
-            item.condition = str(node.condition).strip()
-        elif hasattr(node, 'expression') and node.expression:
-            item.condition = str(node.expression).strip()
+        all_nodes = _collect_nodes(node)
         
-        # body - members 或 block
-        members = None
-        if hasattr(node, 'members'):
-            members = node.members
-        elif hasattr(node, 'block'):
-            members = node.block
+        # 条件/表达式 - 从字符串提取
+        str_repr = str(node).strip()
         
-        if members:
-            for child in members:
-                if not child:
-                    continue
-                decl = str(child).strip().rstrip(';')
+        if item.kind == 'IfGenerate':
+            import re
+            m = re.search(r'if\s*\(([^)]+)\)', str_repr)
+            if m:
+                item.condition = m.group(1)
+        
+        elif item.kind == 'LoopGenerate':
+            import re
+            m = re.search(r'for\s*\(([^)]+)\)', str_repr)
+            if m:
+                item.condition = m.group(1)
+        
+        elif item.kind == 'CaseGenerate':
+            import re
+            m = re.search(r'case\s*\(([^)]+)\)', str_repr)
+            if m:
+                item.condition = m.group(1)
+        
+        # body - 提取内部声明
+        for m in node.members if hasattr(node, 'members') else []:
+            if m and hasattr(m, 'kind') and 'Declaration' in m.kind.name:
+                decl = str(m).strip()
                 if decl:
                     item.body.append(decl)
         
-        if item.kind or item.body:
-            self.blocks.append(GenerateBlock(items=[item]))
+        # GenerateBlock 有 label
+        if hasattr(node, 'begin') and node.begin:
+            item.condition = str(node.begin).strip()
+        
+        self.blocks.append(GenerateBlock(items=[item]))
     
-    def get_blocks(self) -> List[GenerateBlock]:
+    def get_blocks(self):
         return self.blocks
 
 
-def extract_generates(code: str) -> List[GenerateBlock]:
+def extract_generates(code):
     tree = pyslang.SyntaxTree.fromText(code)
     extractor = GenerateExtractor(None)
     extractor._extract_from_tree(tree)
@@ -92,8 +112,7 @@ def extract_generates(code: str) -> List[GenerateBlock]:
 
 
 if __name__ == "__main__":
-    test_code = '''
-module tb;
+    test_code = '''module tb;
     generate
         if (1) begin : GEN_IF
             logic [7:0] data;
@@ -104,17 +123,16 @@ module tb;
         logic [i:0] bits;
     end
     
-    case (1)
+    case (sel)
         1: begin
             logic a;
         end
     endcase
-endmodule
-'''
+endmodule'''
     
     result = extract_generates(test_code)
     print("=== Generate 提取测试 ===")
-    print(f"Found {len(result)} items")
+    print(f"Found {len(result)} blocks")
     for blk in result:
         for item in blk.items:
             print(f"  {item.kind}")
