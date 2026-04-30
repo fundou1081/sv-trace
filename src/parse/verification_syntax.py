@@ -3,7 +3,7 @@
 
 核心验证语法提取:
 - sequence / property
-- expect property (作为 PropertyDeclaration 顶层语句)
+- assert property / expect property / cover property
 - wait_order  
 - virtual function/task
 """
@@ -31,7 +31,8 @@ class PropertyDef:
 
 
 @dataclass
-class ExpectProperty:
+class AssertProperty:
+    kind: str = ""  # assert / expect / cover
     expr: str = ""
 
 
@@ -53,12 +54,9 @@ class VerificationSyntaxExtractor:
         self.parser = parser
         self.sequences = []
         self.properties = []
-        self.expects = []
+        self.assertions = []
         self.virtual_methods = []
         self.wait_orders = []
-        
-        # 用于跟踪上下文
-        self._in_class = False
         
         if parser:
             self._extract_all()
@@ -78,7 +76,7 @@ class VerificationSyntaxExtractor:
     def _process_node(self, node):
         kn = node.kind.name
         
-        # SequenceDeclaration ✅
+        # SequenceDeclaration
         if kn == 'SequenceDeclaration':
             seq = SequenceDef()
             if hasattr(node, 'name') and node.name:
@@ -89,34 +87,54 @@ class VerificationSyntaxExtractor:
             if seq.name:
                 self.sequences.append(seq)
         
-        # PropertyDeclaration - 区分定义 vs expect 语句
+        # PropertyDeclaration - 属性定义
         elif kn == 'PropertyDeclaration':
-            # 检查是否在 class 里面 (class 内的 Property)
-            # 如果是顶层module 的就是定义，如果parent是class的就是定义
+            # 检查是否在断言语句中
+            if hasattr(node, 'parent') and node.parent:
+                parent_str = str(node.parent)
+                if 'assert' in parent_str or 'expect' in parent_str or 'cover' in parent_str:
+                    return  # Skip assertions
             
-            # 检查是否在 class 上下文中
-            is_inside_class = hasattr(node, 'parent') and node.parent and 'Class' in str(node.parent)
-            
-            # 直接包含 expect 的就是 expect 语句
-            node_str = str(node).strip()
-            is_expect_statement = 'expect' in node_str.lower() or node_str.startswith('expect')
-            
-            if is_expect_statement:
-                # 这是	expect property 语句
-                exp = ExpectProperty()
-                exp.expr = node_str
-                self.expects.append(exp)
-            elif not is_inside_class:
-                # 这是属性定义 (不是 expect 语句)
-                prop = PropertyDef()
-                if hasattr(node, 'name') and node.name:
-                    prop.name = str(node.name).strip()
-                if hasattr(node, 'propertySpec') and node.propertySpec:
-                    prop.expr = str(node.propertySpec).strip()
-                if prop.name:
-                    self.properties.append(prop)
+            # 这是属性定义
+            prop = PropertyDef()
+            if hasattr(node, 'name') and node.name:
+                prop.name = str(node.name).strip()
+            if hasattr(node, 'propertySpec') and node.propertySpec:
+                prop.expr = str(node.propertySpec).strip()
+            if prop.name:
+                self.properties.append(prop)
         
-        # HierarchyInstantiation - check for wait order ✅
+        # AssertPropertyStatement ✅
+        elif kn == 'AssertPropertyStatement':
+            stmt = str(node).strip()
+            
+            assertion_kind = 'assert'
+            if stmt.startswith('expect'):
+                assertion_kind = 'expect'
+            elif stmt.startswith('cover'):
+                assertion_kind = 'cover'
+            
+            prop_expr = ''
+            if hasattr(node, 'propertySpec') and node.propertySpec:
+                prop_expr = str(node.propertySpec).strip()
+            elif hasattr(node, 'expression') and node.expression:
+                prop_expr = str(node.expression).strip()
+            
+            if prop_expr:
+                self.assertions.append(AssertProperty(kind=assertion_kind, expr=prop_expr))
+        
+        # CoverPropertyStatement ✅
+        elif kn == 'CoverPropertyStatement':
+            stmt = str(node).strip()
+            prop_expr = ''
+            
+            if hasattr(node, 'propertySpec') and node.propertySpec:
+                prop_expr = str(node.propertySpec).strip()
+            
+            if prop_expr:
+                self.assertions.append(AssertProperty(kind='cover', expr=prop_expr))
+        
+        # HierarchyInstantiation - wait order ✅
         elif kn == 'HierarchyInstantiation':
             call_str = str(node)
             if 'order' in call_str.lower() and '(' in call_str:
@@ -161,7 +179,7 @@ class VerificationSyntaxExtractor:
         return {
             'sequences': self.sequences,
             'properties': self.properties,
-            'expects': self.expects,
+            'assertions': self.assertions,
             'virtual_methods': self.virtual_methods,
             'wait_orders': self.wait_orders,
         }
@@ -178,7 +196,12 @@ if __name__ == "__main__":
     test_code = '''module m;
     sequence s; data ##1 v; endsequence
     property p; req |-> resp; endproperty
+    
+    // 断言语句
     expect property (req |-> resp);
+    assert property (a |-> b) else $display("fail");
+    cover property (c |-> d);
+    
     wait order (a, b, c);
     
     class test;
@@ -190,14 +213,17 @@ endmodule'''
     result = extract_verification_syntax(test_code)
     
     print("=== 验证语法 (P0-P1) ===")
-    print(f"✅ Sequences: {len(result['sequences'])} - {[s.name for s in result['sequences']]}")
+    print(f"\n✅ Sequences: {len(result['sequences'])} - {[s.name for s in result['sequences']]}")
     print(f"✅ Properties: {len(result['properties'])} - {[p.name for p in result['properties']]}")
-    print(f"✅ ExpectProperty: {len(result['expects'])}")
-    for e in result['expects']:
-        print(f"   {e.expr[:30]}")
-    print(f"✅ Wait Orders: {len(result['wait_orders'])}")
-    if result['wait_orders']:
-        print(f"   {result['wait_orders'][0].names}")
-    print(f"✅ Virtual Methods: {len(result['virtual_methods'])}")
+    
+    print(f"\n✅ Assertions ({len(result['assertions'])}):")
+    for a in result['assertions']:
+        print(f"   {a.kind}: {a.expr}")
+    
+    print(f"\n✅ Wait Orders: {len(result['wait_orders'])}")
+    for w in result['wait_orders']:
+        print(f"   {w.names}")
+    
+    print(f"\n✅ Virtual Methods: {len(result['virtual_methods'])}")
     for m in result['virtual_methods']:
         print(f"   {m.qualifiers} {m.kind} {m.name}")
