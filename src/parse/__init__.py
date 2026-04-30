@@ -13,7 +13,13 @@ from .constraint import ConstraintExtractor
 from .covergroup import CovergroupExtractor
 from .assertion import AssertionExtractor
 
+# 新增 - SystemVerilog 独有语法
+from .interface import InterfaceExtractor, InterfaceDef, ModportDef, ClockingDef
+from .package import PackageExtractor, PackageDef, ProgramDef
+from .generate import GenerateExtractor, GenerateBlock
+
 __all__ = [
+    # Core
     "SVParser",
     "ModuleExtractor", 
     "SignalExtractor",
@@ -23,8 +29,17 @@ __all__ = [
     "ConstraintExtractor",
     "CovergroupExtractor",
     "AssertionExtractor",
-    # 新增
     "get_source_safe",
     "GlobalParseCache",
     "parse_file_cached",
+    # 新增 SV 语法
+    "InterfaceExtractor",
+    "InterfaceDef",
+    "ModportDef", 
+    "ClockingDef",
+    "PackageExtractor",
+    "PackageDef",
+    "ProgramDef",
+    "GenerateExtractor",
+    "GenerateBlock",
 ]
