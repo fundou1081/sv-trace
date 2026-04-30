@@ -97,3 +97,53 @@ def dump_ast(node, depth=0):
 ---
 
 **最后更新**: 2026-04-30
+
+## AST 提取限制说明
+
+### pyslang AST 覆盖情况
+
+| 语法 | 是否支持 SyntaxKind | 提取方式 |
+|------|---------------------|---------|
+| ModuleDeclaration | ✅ | node.members 遍历 |
+| InterfaceDeclaration | ✅ | node.members 遍历 |
+| ClassDeclaration | ✅ | node.items 遍历 |
+| CovergroupDeclaration | ✅ | node.items 遍历 |
+| ConstraintDeclaration | ✅ | node.block 遍历 |
+| PackageDeclaration | ✅ | node.members 遍历 |
+| ModportDeclaration | ✅ | visit() 遍历 |
+| ClockingDeclaration | ✅ | node.event 遍历 |
+| **Fork/Join** | ❌ 标记 | 特殊处理 |
+| **#<time> 延迟** | ❌ 标记 | 特殊处理 |
+| **$system 函数** | ❌ 标记 | 特殊处理 |
+| **DPI Import** | ✅ | DPIImport |
+
+### 未能直接 AST 化的语法
+
+有些 SystemVerilog 语法**没有专门的 SyntaxKind**，需要通过以下方式处理：
+
+1. **字符串遍历**：使用 `visit()` 遍历提取
+2. **混合提取**：AST + 字符串解析组合
+3. **完全字符串**：从节点 `str(node)` 提取
+
+```python
+# 混合提取示例 (special_syntax.py)
+def _extract_system_call(node):
+    # 1. 检查 Kind
+    if 'FunctionCall' in node.kind.name:
+        # 2. 获取完整字符串
+        func_str = str(node)
+        # 3. 解析函数名
+        if '$' in func_str:
+            # 提取 $name
+            pass
+```
+
+### 最佳实践
+
+1. **优先使用 AST**：`node.kind.name`, `node.members`, `node.items`
+2. **字符串提取备选**：`str(node)` + 正则解析
+3. **混合方案**：先 AST 判断结构，后字符串提取细节
+
+---
+
+**最后更新**: 2026-04-30
