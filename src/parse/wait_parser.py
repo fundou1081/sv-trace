@@ -53,7 +53,10 @@ class WaitParser:
     
     def _extract_from_tree(self, root):
         def collect(node):
-            kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            try:
+                kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            except:
+                return pyslang.VisitAction.Advance
             
             if kind_name == 'WaitStatement':
                 self._extract_wait(node)

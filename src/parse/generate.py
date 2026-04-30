@@ -38,14 +38,14 @@ class GenerateExtractor:
     
     def _extract_all(self):
         for key, tree in getattr(self.parser, 'trees', {}).items():
-            if tree and hasattr(tree, 'root') and tree.root:
+            if tree and hasattr(root, 'root') and root.root:
                 self._extract_from_tree(tree)
     
-    def _extract_from_tree(self, tree):
+    def _extract_from_tree(self, root):
         # 支持传入 tree 或 root
-        if hasattr(tree, 'root') and not hasattr(tree, 'visit'):
-            tree = tree.root
-        elif not hasattr(tree, 'visit'):
+        if hasattr(root, 'root') and not hasattr(root, 'visit'):
+            tree = root.root
+        elif not hasattr(root, 'visit'):
             pass  # 已经是 root
         
         def collect(node):
@@ -56,7 +56,7 @@ class GenerateExtractor:
             
             return pyslang.VisitAction.Advance
         
-        (tree.root if hasattr(tree, "root") else tree).visit(collect)
+        (root.root if hasattr(root, "root") else tree).visit(collect)
     
     def _extract_gen_item(self, node):
         item = GenerateItem()

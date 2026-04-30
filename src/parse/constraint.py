@@ -29,19 +29,19 @@ class ConstraintExtractor:
     
     def _extract_all(self):
         for key, tree in getattr(self.parser, 'trees', {}).items():
-            if tree and hasattr(tree, 'root') and tree.root:
+            if tree and hasattr(root, 'root') and root.root:
                 self._extract_from_tree(tree)
     
-    def _extract_from_tree(self, tree):
+    def _extract_from_tree(self, root):
         # 支持 SyntaxTree 或 CompilationUnitSyntax
-        root = tree.root if hasattr(tree, 'root') else tree
+        root = root.root if hasattr(root, 'root') else tree
         
         def collect(node):
             if node.kind == SyntaxKind.ConstraintDeclaration:
                 self._extract_constraint(node)
             return pyslang.VisitAction.Advance
         
-        (tree.root if hasattr(tree, "root") else tree).visit(collect)
+        (root.root if hasattr(root, "root") else tree).visit(collect)
     
     def _extract_constraint(self, node):
         # name
