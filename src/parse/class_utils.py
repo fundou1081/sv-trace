@@ -60,7 +60,7 @@ class ClassExtractor:
                 class_info = self._extract_class(node)
                 if class_info:
                     results.append(class_info)
-            return pyslang.VisitAction.Advance
+            return pyslang.VisitAction.Advancee
         
         root.visit(collect)
         self.classes = results

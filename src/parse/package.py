@@ -40,7 +40,7 @@ def _collect_nodes(node):
     nodes = []
     def collect(n):
         nodes.append(n)
-        return pyslang.VisitAction.Advance
+        return pyslang.VisitAction.Advancee
     node.visit(collect)
     return nodes
 
@@ -65,6 +65,12 @@ class PackageExtractor:
                 self._extract_from_tree(tree)
     
     def _extract_from_tree(self, tree):
+        # 支持传入 tree 或 root
+        if hasattr(tree, 'root') and not hasattr(tree, 'visit'):
+            tree = tree.root
+        elif not hasattr(tree, 'visit'):
+            # 已经是 root 或者其他类型,直接使用
+        
         def collect(node):
             kn = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
             
@@ -73,7 +79,7 @@ class PackageExtractor:
             elif kn == 'ProgramDeclaration':
                 self._extract_program(node)
             
-            return pyslang.VisitAction.Advance
+            return pyslang.VisitAction.Advancee
         
         tree.root.visit(collect)
     

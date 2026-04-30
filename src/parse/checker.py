@@ -32,7 +32,7 @@ def _collect_nodes(node):
     nodes = []
     def collect(n):
         nodes.append(n)
-        return pyslang.VisitAction.Advance
+        return pyslang.VisitAction.Advancee
     node.visit(collect)
     return nodes
 
@@ -53,7 +53,7 @@ class CheckerExtractor:
         def collect(node):
             if node.kind.name == 'CheckerDeclaration':
                 self._extract_checker(node)
-            return pyslang.VisitAction.Advance
+            return pyslang.VisitAction.Advancee
         
         tree.root.visit(collect)
     

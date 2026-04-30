@@ -69,7 +69,7 @@ class VerificationSyntaxExtractor:
     def _extract_from_tree(self, root):
         def collect(node):
             self._process_node(node)
-            return pyslang.VisitAction.Advance
+            return pyslang.VisitAction.Advancee
         
         root.visit(collect)
     

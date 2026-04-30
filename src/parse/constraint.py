@@ -36,7 +36,7 @@ class ConstraintExtractor:
         def collect(node):
             if node.kind == SyntaxKind.ConstraintDeclaration:
                 self._extract_constraint(node)
-            return pyslang.VisitAction.Advance
+            return pyslang.VisitAction.Advancee
         
         tree.root.visit(collect)
     

@@ -159,7 +159,7 @@ def extract_assertions_from_text(code: str) -> List[dict]:
                 'expr': expr
             })
         
-        return pyslang.VisitAction.Advance
+        return pyslang.VisitAction.Advancee
     
     try:
         tree = pyslang.SyntaxTree.fromText(code)

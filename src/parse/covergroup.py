@@ -42,7 +42,7 @@ class CovergroupExtractor:
         def collect(node):
             if node.kind == SyntaxKind.CovergroupDeclaration:
                 self._extract_covergroup(node)
-            return pyslang.VisitAction.Advance
+            return pyslang.VisitAction.Advancee
         
         tree.root.visit(collect)
     

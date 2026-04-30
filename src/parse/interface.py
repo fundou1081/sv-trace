@@ -51,7 +51,7 @@ def _collect_all_nodes(node):
     nodes = []
     def collect(n):
         nodes.append(n)
-        return pyslang.VisitAction.Advance
+        return pyslang.VisitAction.Advanceee
     node.visit(collect)
     return nodes
 
@@ -79,7 +79,7 @@ class InterfaceExtractor:
         def collect(node):
             if node.kind == SyntaxKind.InterfaceDeclaration:
                 self._extract_interface(node)
-            return pyslang.VisitAction.Advance
+            return pyslang.VisitAction.Advanceee
         tree.root.visit(collect)
     
     def _extract_interface(self, node):

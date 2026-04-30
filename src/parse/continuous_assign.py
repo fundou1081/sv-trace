@@ -42,7 +42,7 @@ class AssignExtractor:
             elif kn == 'NetDeclaration' or kn == 'VariableDeclaration':
                 self._extract_decl_assign(node)
             
-            return pyslang.VisitAction.Advance
+            return pyslang.VisitAction.Advancee
         
         tree.root.visit(collect)
     

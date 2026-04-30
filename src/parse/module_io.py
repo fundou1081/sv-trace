@@ -161,7 +161,7 @@ class ModuleIOExtractor:
             def collect_module(node):
                 if node.kind.name == 'ModuleDeclaration':
                     modules_data.append(node)
-                return pyslang.VisitAction.Advance
+                return pyslang.VisitAction.Advancee
             
             tree.root.visit(collect_module)
             
