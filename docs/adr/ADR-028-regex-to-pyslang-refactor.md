@@ -314,3 +314,116 @@ tests/sv_cases/open_source/
 ├── opentitan_rv_dm.sv
 └── opentitan_aes_pkg.sv
 ```
+
+---
+
+## 实现总结 (2026-04-30)
+
+### 今天完成的工作
+
+#### 1. 新增的 SystemVerilog 语法解析器
+
+| 文件 | 语法 | SyntaxKind | 状态 |
+|------|------|-------------|------|
+| interface.py | Interface/Modport/Clocking | InterfaceDeclaration | ✅ |
+| package.py | Package/Program | PackageDeclaration | ✅ |
+| generate.py | Generate (if/for/case) | IfGenerate/LoopGenerate | ✅ |
+| continuous_assign.py | assign/wire 赋值 | ContinuousAssign | ✅ |
+| special_syntax.py | fork/join, #delay, DPI, $ | - (AST遍历+字符串) | ✅ |
+| verification_syntax.py | sequence/property/expect | SequenceDeclaration | ✅ |
+| advanced_verification.py | P2-P6 高级语法 | 多 | ✅ |
+
+#### 2. pyslang-spec 文档更新
+
+- `docs/pyslang-spec/ast_structure.md` - AST 结构参考
+- `docs/pyslang-spec/SV_UNIQUE.md` - SV 独有语法总结
+- `docs/pyslang-spec/ast_structure.md` (更新) - pyslang AST 覆盖说明
+
+#### 3. 使用方法
+
+```python
+from parse import (
+    InterfaceExtractor,
+    PackageExtractor,
+    GenerateExtractor,
+    VerificationSyntaxExtractor,
+    extract_verification_syntax,
+    extract_advanced_verification,
+)
+
+# 提取 SV 语法
+result = extract_verification_syntax(code)
+# result['sequences'], result['properties'], etc.
+
+result2 = extract_advanced_verification(code)  
+# result2['enums'], result2['dpi_exports'], etc.
+```
+
+#### 4. 代码统计
+
+| 指标 | 数量 |
+|------|------|
+| 新增 Python 文件 | 7 个 |
+| 更新文件 | 3 个 |
+| docs/pyslang-spec 文档 | 3 个 |
+
+### 解析器列表 (15个)
+
+```
+src/parse/
+├── __init__.py
+├── parser.py
+├── assertion.py
+├── checker.py
+├── class_utils.py (修复)
+├── constraint.py (修复)
+├── continuous_assign.py (新增)
+├── covergroup.py (修复)
+├── extractors.py
+├── generate.py (新增)
+├── interface.py (新增)
+├── module_io.py
+├── package.py (新增)
+├── params.py
+├── special_syntax.py (新增)
+└── verification_syntax.py (新增)   # P0-P1
+└── advanced_verification.py (新增) # P2-P6
+```
+
+### 验证语法支持状态
+
+| 类别 | 语法 | 状态 |
+|------|------|------|
+| **P0** | sequence, property, virtual function | ✅ |
+| **P0** | expect property, super/this | ✅ |
+| **P1** | wait_order | ✅ |
+| **P2** | enum, string, queue, mailbox, semaphore | ✅ |
+| **P3** | wildcard/illegal/ignore bins | ✅ |
+| **P4** | solve before/after, unique, soft constraint | ✅ |
+| **P5** | DPI export, pure function | ✅ |
+| **P6** | process::self(), wait fork, disable fork | ✅ |
+
+### 提交记录 (2026-04-30)
+
+```
+473b90a Fix special_syntax: use direct code analysis
+585db5a Add P2-P6 advanced verification syntax parser
+0087311 Fix verification parser
+0ddcb38 Add P0-P1 verification syntax parser
+a42faa0 Enhance Package/Generate
+267451c Add pyslang AST structure doc
+a6eb369 interface.py: use pyslang AST
+9c277e3 Fix covergroup/constraint
+d797c91 Add Package/Program/Generate
+172e3e4 Add continuous assign parser
+```
+
+### 后续计划
+
+1. 继续完善 expect property 的 AST 提取
+2. 添加更多单元测试
+3. 集成到 CLI 工具
+
+---
+
+**最后更新**: 2026-04-30 16:11
