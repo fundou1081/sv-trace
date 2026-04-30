@@ -86,7 +86,7 @@ class CovergroupExtractor:
                 self._extract_covergroup(node)
             return pyslang.VisitAction.Advance
         
-        tree.visit(collect)
+        (tree.root if hasattr(tree, "root") else tree).visit(collect)
     
     def _extract_covergroup(self, node):
         cg = CovergroupDef()

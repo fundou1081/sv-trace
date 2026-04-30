@@ -46,7 +46,7 @@ class GenerateExtractor:
         if hasattr(tree, 'root') and not hasattr(tree, 'visit'):
             tree = tree.root
         elif not hasattr(tree, 'visit'):
-            # 已经是 root 或者其他类型,直接使用
+            pass  # 已经是 root
         
         def collect(node):
             kn = node.kind.name
@@ -54,9 +54,9 @@ class GenerateExtractor:
             if kn in ['IfGenerate', 'LoopGenerate', 'CaseGenerate']:
                 self._extract_gen_item(node)
             
-            return pyslang.VisitAction.Advancee
+            return pyslang.VisitAction.Advance
         
-        tree.root.visit(collect)
+        (tree.root if hasattr(tree, "root") else tree).visit(collect)
     
     def _extract_gen_item(self, node):
         item = GenerateItem()

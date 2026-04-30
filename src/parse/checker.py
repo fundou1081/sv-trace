@@ -32,7 +32,7 @@ def _collect_nodes(node):
     nodes = []
     def collect(n):
         nodes.append(n)
-        return pyslang.VisitAction.Advancee
+        return pyslang.VisitAction.Advance
     node.visit(collect)
     return nodes
 
@@ -50,12 +50,15 @@ class CheckerExtractor:
                 self._extract_from_tree(tree)
     
     def _extract_from_tree(self, tree):
+        # 支持 SyntaxTree 或 CompilationUnitSyntax
+        root = tree.root if hasattr(tree, 'root') else tree
+        
         def collect(node):
             if node.kind.name == 'CheckerDeclaration':
                 self._extract_checker(node)
-            return pyslang.VisitAction.Advancee
+            return pyslang.VisitAction.Advance
         
-        tree.root.visit(collect)
+        (tree.root if hasattr(tree, "root") else tree).visit(collect)
     
     def _extract_checker(self, node):
         checker = CheckerDef()

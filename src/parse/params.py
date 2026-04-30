@@ -29,7 +29,7 @@ class ParameterResolver:
             def visitor(node):
                 if node.kind == pyslang.SyntaxKind.ModuleDeclaration:
                     modules.append(node)
-                return pyslang.VisitAction.Advancee
+                return pyslang.VisitAction.Advance
             
             root.visit(visitor)
             

@@ -159,11 +159,11 @@ def extract_assertions_from_text(code: str) -> List[dict]:
                 'expr': expr
             })
         
-        return pyslang.VisitAction.Advancee
+        return pyslang.VisitAction.Advance
     
     try:
         tree = pyslang.SyntaxTree.fromText(code)
-        tree.root.visit(collect)
+        (tree.root if hasattr(tree, "root") else tree).visit(collect)
     except Exception as e:
         pass
     

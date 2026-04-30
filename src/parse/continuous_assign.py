@@ -34,6 +34,9 @@ class AssignExtractor:
                 self._extract_from_tree(tree)
     
     def _extract_from_tree(self, tree):
+        # 支持 SyntaxTree 或 CompilationUnitSyntax
+        root = tree.root if hasattr(tree, 'root') else tree
+        
         def collect(node):
             kn = node.kind.name
             
@@ -42,9 +45,9 @@ class AssignExtractor:
             elif kn == 'NetDeclaration' or kn == 'VariableDeclaration':
                 self._extract_decl_assign(node)
             
-            return pyslang.VisitAction.Advancee
+            return pyslang.VisitAction.Advance
         
-        tree.root.visit(collect)
+        (tree.root if hasattr(tree, "root") else tree).visit(collect)
     
     def _extract_continuous_assign(self, node):
         full = str(node).strip()

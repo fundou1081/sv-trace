@@ -33,12 +33,15 @@ class ConstraintExtractor:
                 self._extract_from_tree(tree)
     
     def _extract_from_tree(self, tree):
+        # 支持 SyntaxTree 或 CompilationUnitSyntax
+        root = tree.root if hasattr(tree, 'root') else tree
+        
         def collect(node):
             if node.kind == SyntaxKind.ConstraintDeclaration:
                 self._extract_constraint(node)
-            return pyslang.VisitAction.Advancee
+            return pyslang.VisitAction.Advance
         
-        tree.root.visit(collect)
+        (tree.root if hasattr(tree, "root") else tree).visit(collect)
     
     def _extract_constraint(self, node):
         # name

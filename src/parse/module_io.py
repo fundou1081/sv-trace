@@ -161,9 +161,9 @@ class ModuleIOExtractor:
             def collect_module(node):
                 if node.kind.name == 'ModuleDeclaration':
                     modules_data.append(node)
-                return pyslang.VisitAction.Advancee
+                return pyslang.VisitAction.Advance
             
-            tree.root.visit(collect_module)
+            root.visit(collect_module)
             
             for mod in modules_data:
                 if not hasattr(mod, 'header'):

@@ -60,9 +60,9 @@ class ClassExtractor:
                 class_info = self._extract_class(node)
                 if class_info:
                     results.append(class_info)
-            return pyslang.VisitAction.Advancee
+            return pyslang.VisitAction.Advance
         
-        root.visit(collect)
+        (tree.root if hasattr(tree, "root") else tree).visit(collect)
         self.classes = results
         return results
     
