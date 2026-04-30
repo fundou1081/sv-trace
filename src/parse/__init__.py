@@ -54,3 +54,26 @@ __all__ = [
     # 验证语法
     "VerificationSyntaxExtractor",
 ]
+
+# 新增解析器 (2026-04-30)
+from .clocking import ClockingExtractor, ClockingDef, ClockingItem
+from .checker import CheckerExtractor, CheckerDef, CheckerProperty
+from .rand_extractor import RandExtractor, RandClass, RandVariable
+from .time_region import TimeRegionExtractor, TimeUnit, TimeRegion, ForkItem
+
+__all__ += [
+    # 新增解析器
+    "ClockingExtractor",
+    "ClockingDef",
+    "ClockingItem",
+    "CheckerExtractor", 
+    "CheckerDef",
+    "CheckerProperty",
+    "RandExtractor",
+    "RandClass",
+    "RandVariable",
+    "TimeRegionExtractor",
+    "TimeUnit",
+    "TimeRegion",
+    "ForkItem",
+]

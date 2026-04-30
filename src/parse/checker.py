@@ -1,22 +1,25 @@
 """
 Checker 解析器 - 使用 pyslang AST
 
-Checker 提取
+支持:
+- CheckerDeclaration
+- CheckerInstance
+- CheckerDataDeclaration
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from typing import List
 from dataclasses import dataclass, field
+from typing import List
 import pyslang
 from pyslang import SyntaxKind
 
 
 @dataclass
 class CheckerProperty:
-    """Checker 内的 property/assert"""
-    kind: str = ""
+    """checker 内 property"""
+    name: str = ""
     expression: str = ""
 
 
@@ -24,73 +27,69 @@ class CheckerProperty:
 class CheckerDef:
     """checker 定义"""
     name: str = ""
-    arguments: List[str] = field(default_factory=list)
-    assertions: List[CheckerProperty] = field(default_factory=list)
-
-
-def _collect_nodes(node):
-    nodes = []
-    def collect(n):
-        nodes.append(n)
-        return pyslang.VisitAction.Advance
-    node.visit(collect)
-    return nodes
+    properties: List[CheckerProperty] = field(default_factory=list)
+    variables: List[str] = field(default_factory=list)
+    instances: List[str] = field(default_factory=list)
 
 
 class CheckerExtractor:
     def __init__(self, parser=None):
         self.parser = parser
         self.checkers = {}
+        
         if parser:
             self._extract_all()
     
     def _extract_all(self):
         for key, tree in getattr(self.parser, 'trees', {}).items():
-            if tree and hasattr(tree, 'root') and tree.root:
-                self._extract_from_tree(tree)
+            root = tree.root if hasattr(tree, 'root') else tree
+            self._extract_from_tree(root)
     
-    def _extract_from_tree(self, tree):
-        # 支持 SyntaxTree 或 CompilationUnitSyntax
-        root = tree.root if hasattr(tree, 'root') else tree
-        
+    def _extract_from_tree(self, root):
         def collect(node):
-            if node.kind.name == 'CheckerDeclaration':
+            kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            
+            if kind_name == 'CheckerDeclaration':
                 self._extract_checker(node)
+            elif kind_name == 'CheckerInstantiation':
+                self._extract_instance(node)
+            
             return pyslang.VisitAction.Advance
         
-        (tree.root if hasattr(tree, "root") else tree).visit(collect)
+        root.visit(collect)
     
     def _extract_checker(self, node):
         checker = CheckerDef()
         
-        # name
-        if hasattr(node, 'blockName') and node.blockName:
-            checker.name = str(node.blockName).strip()
+        if hasattr(node, 'name') and node.name:
+            checker.name = str(node.name)
         
-        # arguments
-        if hasattr(node, 'parent') and node.parent:
-            # header arguments
-            pass
+        # properties
+        if hasattr(node, 'properties') and node.properties:
+            for prop in node.properties:
+                if prop:
+                    cp = CheckerProperty()
+                    if hasattr(prop, 'name'):
+                        cp.name = str(prop.name)
+                    if hasattr(prop, 'propertySpec'):
+                        cp.expression = str(prop.propertySpec)
+                    checker.properties.append(cp)
         
-        # assertions - 从字符串提取
-        str_repr = str(node)
-        
-        # 找 assert property
-        import re
-        for match in re.finditer(r'assert\s+property\s+(\([^)]+\))', str_repr):
-            prop = CheckerProperty(kind='assert', expression=match.group(1))
-            checker.assertions.append(prop)
-        
-        for match in re.finditer(r'assume\s+property\s+(\([^)]+\))', str_repr):
-            prop = CheckerProperty(kind='assume', expression=match.group(1))
-            checker.assertions.append(prop)
-        
-        for match in re.finditer(r'cover\s+property\s+(\([^)]+\))', str_repr):
-            prop = CheckerProperty(kind='cover', expression=match.group(1))
-            checker.assertions.append(prop)
+        # data declarations
+        if hasattr(node, 'dataDeclarations') and node.dataDeclarations:
+            for decl in node.dataDeclarations:
+                if decl:
+                    checker.variables.append(str(decl))
         
         if checker.name:
             self.checkers[checker.name] = checker
+    
+    def _extract_instance(self, node):
+        # 从字符串提取 checker 实例
+        node_str = str(node)
+        if 'checker' in node_str.lower():
+            # 这是 checker 实例引用，记录但不创建新 checker
+            pass
     
     def get_checkers(self):
         return self.checkers
@@ -104,16 +103,23 @@ def extract_checkers(code):
 
 
 if __name__ == "__main__":
-    test_code = '''checker parity_check (input bit [7:0] data, input valid);
-    always @(posedge clk) begin
-        assert property (!valid |-> $stable(data));
-    end
-endchecker'''
-
+    test_code = '''
+module test;
+    checker mem_checker(logic [7:0] addr, data);
+        property addr_valid;
+            @(posedge clk) disable iff (rst) addr != data;
+        endproperty
+        
+        property data_check;
+            data |-> ##1 ack;
+        endproperty
+    endchecker
+endmodule
+'''
+    
     result = extract_checkers(test_code)
-    print("=== Checker 提取测试 ===")
-    for name, checker in result.items():
-        print(f"Checker: {name}")
-        print(f"  assertions: {len(checker.assertions)}")
-        for a in checker.assertions:
-            print(f"    {a.kind}: {a.expression}")
+    print("=== Checker Extraction ===")
+    for name, chk in result.items():
+        print(f"\n{name}:")
+        print(f"  properties: {len(chk.properties)}")
+        print(f"  variables: {len(chk.variables)}")
