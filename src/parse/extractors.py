@@ -26,7 +26,7 @@ class ModuleExtractor:
                         return result
             return []
         
-        for member in find_modules(tree.root):
+        for member in find_modules(root.root):
             modules.append(ModuleExtractor._extract_module(member))
         
         return modules
@@ -59,7 +59,7 @@ class SignalExtractor:
                         result.extend(find_signals(m))
             return result
         
-        for decl in find_signals(tree.root):
+        for decl in find_signals(root.root):
             sig = {"name": "", "type": "logic", "width": 1}
             
             if hasattr(decl, 'declarators') and decl.declarators:

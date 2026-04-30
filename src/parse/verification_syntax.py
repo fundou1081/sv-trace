@@ -71,7 +71,7 @@ class VerificationSyntaxExtractor:
             self._process_node(node)
             return pyslang.VisitAction.Advance
         
-        (tree.root if hasattr(tree, "root") else tree).visit(collect)
+        (root.root if hasattr(root, "root") else root).visit(collect)
     
     def _process_node(self, node):
         kn = node.kind.name

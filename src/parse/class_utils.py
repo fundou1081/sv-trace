@@ -62,7 +62,7 @@ class ClassExtractor:
                     results.append(class_info)
             return pyslang.VisitAction.Advance
         
-        (tree.root if hasattr(tree, "root") else tree).visit(collect)
+        (root if hasattr(root, "root") else root).visit(collect)
         self.classes = results
         return results
     
