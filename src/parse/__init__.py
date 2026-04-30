@@ -19,6 +19,9 @@ from .package import PackageExtractor, PackageDef, ProgramDef, PackageItem
 from .generate import GenerateExtractor, GenerateBlock, GenerateItem
 from .continuous_assign import AssignExtractor, ContinuousAssign
 
+# 验证语法 (2026-04-30 新增)
+from .verification_syntax import VerificationSyntaxExtractor
+
 __all__ = [
     # Core
     "SVParser",
@@ -48,4 +51,6 @@ __all__ = [
     # 连续赋值
     "AssignExtractor",
     "ContinuousAssign",
+    # 验证语法
+    "VerificationSyntaxExtractor",
 ]
