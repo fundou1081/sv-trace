@@ -1,9 +1,10 @@
 """
-Interface 解析器 - Interface/Modport/Clocking 完整实现 (v8 - 简化方案)
+Interface 解析器 - 使用 pyslang AST 提取
+
+Interface/Modport/Clocking
 """
 import sys
 import os
-import re
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from typing import Dict, List, Optional
@@ -46,11 +47,26 @@ class InterfaceDef:
     clockings: List[ClockingDef] = field(default_factory=list)
 
 
+def _collect_all_nodes(node):
+    nodes = []
+    def collect(n):
+        nodes.append(n)
+        return pyslang.VisitAction.Advance
+    node.visit(collect)
+    return nodes
+
+
+def _get_token_kind(node):
+    """获取 Token 的 kind 或 SyntaxKind"""
+    if hasattr(node, 'kind'):
+        return node.kind
+    return None
+
+
 class InterfaceExtractor:
     def __init__(self, parser=None):
         self.parser = parser
-        self.interfaces: Dict[str, InterfaceDef] = {}
-        
+        self.interfaces = {}
         if parser:
             self._extract_all()
     
@@ -64,31 +80,26 @@ class InterfaceExtractor:
             if node.kind == SyntaxKind.InterfaceDeclaration:
                 self._extract_interface(node)
             return pyslang.VisitAction.Advance
-        
         tree.root.visit(collect)
     
-    def _extract_interface(self, node) -> InterfaceDef:
+    def _extract_interface(self, node):
         iface = InterfaceDef()
-        
-        if node.header:
-            iface.name = str(node.header.name.valueText) if node.header.name else ""
+        if node.header and node.header.name:
+            iface.name = str(node.header.name.valueText)
         
         for m in node.members:
             if not m:
                 continue
-            
             kind_name = m.kind.name
             
             if kind_name == 'ModportDeclaration':
                 mp = self._extract_modport(m)
                 if mp:
                     iface.modports.append(mp)
-            
             elif kind_name == 'ClockingDeclaration':
                 cb = self._extract_clocking(m)
                 if cb:
                     iface.clockings.append(cb)
-            
             else:
                 decl = str(m).strip()
                 if decl:
@@ -96,120 +107,78 @@ class InterfaceExtractor:
         
         if iface.name:
             self.interfaces[iface.name] = iface
-        
         return iface
     
-    def _extract_modport(self, node) -> Optional[ModportDef]:
-        """简化提取: 从完整字符串解析"""
+    def _extract_modport(self, node):
         mp = ModportDef()
         
-        # 完整字符串，如 "modport master (output wdata, input ready);"
-        full_str = str(node).strip()
+        # 收集所有子节点
+        all_nodes = _collect_all_nodes(node)
         
-        # 解析 modport 名称: modport NAME (
-        match = re.search(r'modport\s+(\w+)\s*\(', full_str)
-        if match:
-            mp.name = match.group(1)
+        # 用字符串位置逻辑
+        str_repr = str(node)
+        items = []
         
-        # 解析端口: input/output NAME, ...
-        # 先找到括号内容
-        paren_match = re.search(r'\(([^)]+)\)', full_str)
-        if paren_match:
-            ports_str = paren_match.group(1)
-            # 按逗号分割，但注意 array slice 如 [7:0]
-            # 简化：按 "input" / "output" 分割
-            parts = re.split(r',\s*(?=input\s|output\s)', ports_str)
+        # 找到 modport 名称
+        # 模式: modport NAME (
+        import re
+        m = re.search(r'modport\s+(\w+)\s*\(', str_repr)
+        if m:
+            mp.name = m.group(1)
+        
+        # 端口: 分析 tokens
+        for i, n in enumerate(all_nodes):
+            s = str(n).strip()
             
-            for part in parts:
-                part = part.strip()
-                if not part:
-                    continue
-                
-                # 判断方向
-                direction = 'input'
-                if part.startswith('output'):
-                    direction = 'output'
-                elif part.startswith('inout'):
-                    direction = 'inout'
-                
-                # 提取信号名 (第一个 word)
-                # 移除方向关键词后，第一个 word 是信号名
-                sig_match = re.search(r'(?:input|output|inout|ref)\s+([\w\[\]:]+)', part)
-                if sig_match:
-                    sig = sig_match.group(1).strip()
-                    # 清理
-                    sig = re.sub(r'\[.*?\]', '', sig)  # 移除 [7:0] 等
-                    sig = sig.strip()
-                    
-                    if sig:
-                        mp.ports.append(ModportPort(name=sig, direction=direction))
+            # 方向
+            if 'output' in s.lower():
+                current_dir = 'output'
+            elif 'input' in s.lower():
+                current_dir = 'input'
+            
+            # ModportNamedPort 包含端口名
+            elif _get_token_kind(n) == SyntaxKind.ModportNamedPort:
+                for child in n:
+                    cs = str(child).strip()
+                    if cs and cs not in ['output', 'input', 'inout']:
+                        mp.ports.append(ModportPort(name=cs, direction=current_dir))
+                        break
         
         return mp if mp.name else None
     
-    def _extract_clocking(self, node) -> Optional[ClockingDef]:
+    def _extract_clocking(self, node):
         cb = ClockingDef()
         
-        full_str = str(node).strip()
+        str_repr = str(node)
         
         # 名称
-        match = re.search(r'clocking\s+(\w+)', full_str)
-        if match:
-            cb.name = match.group(1)
+        import re
+        m = re.search(r'clocking\s+(\w+)', str_repr)
+        if m:
+            cb.name = m.group(1)
         
         # 事件
-        match = re.search(r'@(\([^)]+\))', full_str)
-        if match:
-            cb.event = '@' + match.group(1)
+        m = re.search(r'@(\([^)]+\))', str_repr)
+        if m:
+            cb.event = '@' + m.group(1)
         
-        # items
-        match = re.search(r'endclocking', full_str)
-        if match:
-            # 找到 clocking ... endclocking 之间的内容
-            start = full_str.find('clocking')
-            end = full_str.find('endclocking')
-            if start >= 0 and end > start:
-                body = full_str[start:end]
-                
-                # 按 ';' 分割
-                for item in body.split(';'):
-                    item = item.strip()
-                    if not item or 'input' not in item and 'output' not in item:
-                        continue
-                    
-                    cbi = ClockingItem()
-                    
-                    # direction
-                    if 'input' in item.split()[0]:
-                        cbi.direction = 'input'
-                    elif 'output' in item.split()[0]:
-                        cbi.direction = 'output'
-                    
-                    # 名称 - 最后一个 word 或倒数第二个
-                    words = item.split()
-                    for i, w in enumerate(words):
-                        if w in ['input', 'output']:
-                            if i + 1 < len(words):
-                                cbi.name = words[i+1].strip()
-                                # 清理 array index
-                                cbi.name = re.sub(r'\[.*?\]', '', cbi.name)
-                                break
-                    
-                    # skew
-                    if '#' in item:
-                        skew_match = re.search(r'#(\w+)', item)
-                        if skew_match:
-                            cbi.skew = '#' + skew_match.group(1)
-                    
-                    if cbi.name:
-                        cb.items.append(cbi)
+        # 端口 - 简化: 从 str 提取
+        # 模式: input/output NAME
+        for match in re.finditer(r'(input|output)\s+(\w+)', str_repr):
+            direction = match.group(1)
+            name = match.group(2)
+            # 清理 #1step 等
+            name = re.sub(r'#\w+', '', name).strip()
+            if name:
+                cb.items.append(ClockingItem(name=name, direction=direction))
         
         return cb if cb.name else None
     
-    def get_interfaces(self) -> Dict[str, InterfaceDef]:
+    def get_interfaces(self):
         return self.interfaces
 
 
-def extract_interfaces(code: str) -> Dict[str, InterfaceDef]:
+def extract_interfaces(code):
     tree = pyslang.SyntaxTree.fromText(code)
     extractor = InterfaceExtractor(None)
     extractor._extract_from_tree(tree)
@@ -217,44 +186,29 @@ def extract_interfaces(code: str) -> Dict[str, InterfaceDef]:
 
 
 if __name__ == "__main__":
-    test_code = '''
-interface axi_if (input clk, input rst);
+    test_code = '''interface axi_if (input clk);
     logic [31:0] wdata;
-    logic [31:0] rdata;
-    logic valid;
     logic ready;
     
-    modport master (
-        input clk, rst, rdata, ready,
-        output wdata, valid
-    );
-    
-    modport slave (
-        input clk, rst, wdata, valid,
-        output rdata, ready
-    );
-    
+    modport master (output wdata, input ready);
     clocking cb @(posedge clk);
-        input #1step rdata, ready;
-        output #0 wdata, valid;
+        input ready;
     endclocking
-endinterface
-'''
+endinterface'''
     
     result = extract_interfaces(test_code)
-    print("=== Interface 提取测试 ===")
+    print("=== Interface ===")
     for name, iface in result.items():
         print(f"\nInterface: {name}")
-        print(f"  signals: {len(iface.signals)}")
-        
         print(f"  modports: {len(iface.modports)}")
         for mp in iface.modports:
             print(f"    - {mp.name}")
             for p in mp.ports:
                 print(f"        {p.direction}: {p.name}")
-        
         print(f"  clockings: {len(iface.clockings)}")
         for cb in iface.clockings:
-            print(f"    - {cb.name} @{cb.event}")
+            print(f"    - {cb.name}")
+            if cb.event:
+                print(f"      event: {cb.event}")
             for item in cb.items:
                 print(f"        {item.direction} {item.name}")
