@@ -13,10 +13,11 @@ from .constraint import ConstraintExtractor
 from .covergroup import CovergroupExtractor
 from .assertion import AssertionExtractor
 
-# 新增 - SV 独有语法
+# SV 独有语法
 from .interface import InterfaceExtractor, InterfaceDef, ModportDef, ClockingDef
 from .package import PackageExtractor, PackageDef, ProgramDef, PackageItem
 from .generate import GenerateExtractor, GenerateBlock, GenerateItem
+from .continuous_assign import AssignExtractor, ContinuousAssign
 
 __all__ = [
     # Core
@@ -44,4 +45,7 @@ __all__ = [
     "GenerateExtractor",
     "GenerateBlock",
     "GenerateItem",
+    # 连续赋值
+    "AssignExtractor",
+    "ContinuousAssign",
 ]
