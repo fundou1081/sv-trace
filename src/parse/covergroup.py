@@ -1,168 +1,122 @@
 """
-Covergroup 解析器 - covergroup 提取
+Covergroup 解析器 - 使用 pyslang AST
 """
 import sys
 import os
 import re
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from typing import Dict, List, Optional
-from dataclasses import dataclass
+from typing import Dict, List
+from dataclasses import dataclass, field
+import pyslang
+from pyslang import SyntaxKind
 
 
 @dataclass
 class Coverpoint:
-    """coverpoint"""
     name: str = ""
-    bins: List[str] = None
-    
-    def __init__(self):
-        self.bins = []
+    bins: List[str] = field(default_factory=list)
 
 
 @dataclass
 class CovergroupDef:
-    """covergroup 定义"""
     name: str = ""
-    coverpoints: List[Coverpoint] = None
-    cross: List[str] = None
-    
-    def __init__(self):
-        self.coverpoints = []
-        self.cross = []
+    coverpoints: List[Coverpoint] = field(default_factory=list)
+    cross: List[str] = field(default_factory=list)
 
 
 class CovergroupExtractor:
-    """Covergroup 提取器"""
-    
-    def __init__(self, parser):
+    def __init__(self, parser=None):
         self.parser = parser
-        self.covergroups: Dict[str, CovergroupDef] = {}
-        self._extract_all_covergroups()
+        self.covergroups = {}
+        
+        if parser:
+            self._extract_all()
     
-    def _extract_all_covergroups(self):
-        for key, tree in self.parser.trees.items():
-            if not tree or not hasattr(tree, 'root') or not tree.root:
-                continue
-            
-            root = tree.root
-            
-            if 'CovergroupDeclaration' in str(type(root)):
-                self._extract_covergroup(root)
-            
-            if hasattr(root, 'members') and root.members:
-                for m in root.members:
-                    self._find_covergroup_in_member(m)
+    def _extract_all(self):
+        for key, tree in getattr(self.parser, 'trees', {}).items():
+            if tree and hasattr(tree, 'root') and tree.root:
+                self._extract_from_tree(tree)
     
-    def _find_covergroup_in_member(self, member):
-        type_name = str(type(member))
+    def _extract_from_tree(self, tree):
+        def collect(node):
+            if node.kind == SyntaxKind.CovergroupDeclaration:
+                self._extract_covergroup(node)
+            return pyslang.VisitAction.Advance
         
-        if 'CovergroupDeclaration' in type_name:
-            self._extract_covergroup(member)
-        
-        for attr in ['members', 'body', 'items']:
-            if hasattr(member, attr):
-                child = getattr(member, attr)
-                if child:
-                    if isinstance(child, list):
-                        for c in child:
-                            self._find_covergroup_in_member(c)
-                    else:
-                        self._find_covergroup_in_member(child)
+        tree.root.visit(collect)
     
-    def _extract_covergroup(self, cg):
-        name = ""
-        coverpoints = []
-        cross = []
+    def _extract_covergroup(self, node):
+        cg = CovergroupDef()
         
-        if hasattr(cg, 'name') and cg.name:
-            name = cg.name.value if hasattr(cg.name, 'value') else str(cg.name)
+        # name
+        if node.name:
+            cg.name = str(node.name)
         
-        # 从 members 提取
-        members = getattr(cg, 'members', [])
+        # coverpoints - 从 members
+        if node.members:
+            for m in node.members:
+                if not m:
+                    continue
+                
+                if m.kind == SyntaxKind.Coverpoint:
+                    # 名称
+                    cp = Coverpoint()
+                    if hasattr(m, 'identifier') and m.identifier:
+                        cp.name = str(m.identifier)
+                    
+                    # bins
+                    for child in m:
+                        if 'Bin' in child.kind.name or child.kind.name == 'Coverpoint':
+                            for c in child:
+                                sb = str(c).strip()
+                                if sb:
+                                    cp.bins.append(sb)
+                    
+                    if cp.name:
+                        cg.coverpoints.append(cp)
+                
+                # CoverCross
+                elif m.kind == SyntaxKind.CoverCross:
+                    cross_name = str(m).strip()
+                    if cross_name:
+                        cg.cross.append(cross_name)
         
-        for item in members:
-            item_str = str(item)
-            type_name = str(type(item))
-            
-            # Coverpoint
-            if 'Coverpoint' in type_name:
-                cp = self._parse_coverpoint(item_str)
-                if cp:
-                    coverpoints.append(cp)
-            
-            # Cross
-            elif 'Cross' in type_name:
-                cross.append(item_str)
+        # 从字符串提取备选
+        if not cg.coverpoints and not cg.cross:
+            str_repr = str(node)
+            for match in re.finditer(r'coverpoint\s+(\w+)', str_repr):
+                cg.coverpoints.append(Coverpoint(name=match.group(1)))
+            for match in re.finditer(r'cross\s+([\w,\s]+)', str_repr):
+                cg.cross.append(match.group(1).strip())
         
-        if name:
-            cg_def = CovergroupDef()
-            cg_def.name = name
-            cg_def.coverpoints = coverpoints
-            cg_def.cross = cross
-            self.covergroups[name] = cg_def
+        if cg.name:
+            self.covergroups[cg.name] = cg
     
-    def _parse_coverpoint(self, item_str: str) -> Optional[Coverpoint]:
-        cp = Coverpoint()
-        
-        # 匹配 coverpoint 名称
-        match = re.search(r'coverpoint\s+(\w+)', item_str)
-        if match:
-            cp.name = match.group(1)
-        elif 'coverpoint' not in item_str:
-            # 可能是 inline coverpoint
-            match = re.search(r'(\w+)\s*\{', item_str)
-            if match:
-                cp.name = match.group(1)
-        
-        # 提取 bins
-        bins_match = re.findall(r'bins\s+(\w+)\s*=', item_str)
-        for b in bins_match:
-            cp.bins.append(b)
-        
-        return cp if cp.name else None
-    
-    def find_covergroup(self, name: str) -> Optional[CovergroupDef]:
-        return self.covergroups.get(name)
-    
-    def get_all_covergroups(self) -> Dict[str, CovergroupDef]:
+    def get_covergroups(self):
         return self.covergroups
 
 
-def extract_covergroups_from_text(code: str) -> List[dict]:
-    """从源码文本提取 covergroup (使用 pyslang)"""
-    import pyslang
-    from pyslang import SyntaxKind
-    
-    results = []
-    
-    # covergroup 相关类型
-    target_kinds = {
-        'CovergroupDeclaration',
-        'CoverpointDeclaration',
-        'CovercrossDeclaration',
-    }
-    
-    def collect(node):
-        kind_name = node.kind.name
-        
-        if kind_name in target_kinds:
-            name = str(getattr(node, 'name', '')).strip()
-            expr = str(node)[:80].replace('\n', ' ').strip()
-            
-            results.append({
-                'name': name,
-                'kind': kind_name,
-                'expr': expr
-            })
-        
-        return pyslang.VisitAction.Advance
-    
-    try:
-        tree = pyslang.SyntaxTree.fromText(code)
-        tree.root.visit(collect)
-    except Exception as e:
-        pass
-    
-    return results
+def extract_covergroups(code):
+    tree = pyslang.SyntaxTree.fromText(code)
+    extractor = CovergroupExtractor(None)
+    extractor._extract_from_tree(tree)
+    return extractor.covergroups
+
+
+if __name__ == "__main__":
+    test_code = '''class test;
+    covergroup cg with function sample(bit [7:0] data);
+        coverpoint data { bins zero = {0}; bins one = {1}; }
+        cross data, valid;
+    endgroup
+endclass'''
+
+    result = extract_covergroups(test_code)
+    print("=== Covergroup ===")
+    for name, cg in result.items():
+        print(f"\n{name}:")
+        for cp in cg.coverpoints:
+            print(f"  coverpoint: {cp.name}")
+        for cr in cg.cross:
+            print(f"  cross: {cr}")
