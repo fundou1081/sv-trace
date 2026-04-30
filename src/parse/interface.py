@@ -72,18 +72,18 @@ class InterfaceExtractor:
     
     def _extract_all(self):
         for key, tree in getattr(self.parser, 'trees', {}).items():
-            if tree and hasattr(root, 'root') and root.root:
+            if tree and hasattr(tree, 'root') and tree.root:
                 self._extract_from_tree(tree)
     
-    def _extract_from_tree(self, root):
+    def _extract_from_tree(self, tree):
         # 支持 SyntaxTree 或 CompilationUnitSyntax
-        root = root.root if hasattr(root, 'root') else tree
+        root = tree.root if hasattr(tree, 'root') else root
         
         def collect(node):
             if node.kind == SyntaxKind.InterfaceDeclaration:
                 self._extract_interface(node)
             return pyslang.VisitAction.Advance
-        (root.root if hasattr(root, "root") else tree).visit(collect)
+        root.visit(collect)
     
     def _extract_interface(self, node):
         iface = InterfaceDef()

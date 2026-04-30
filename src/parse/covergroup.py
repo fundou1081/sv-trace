@@ -73,20 +73,22 @@ class CovergroupExtractor:
     
     def _extract_all(self):
         for key, tree in getattr(self.parser, 'trees', {}).items():
-            if tree and hasattr(root, 'root') and root.root:
+            if tree and hasattr(tree, 'root') and tree.root:
                 self._extract_from_tree(tree)
     
-    def _extract_from_tree(self, root):
+    def _extract_from_tree(self, tree):
         # 支持传入 tree 或 root
-        if hasattr(root, 'root'):
-            tree = root.root
+        if hasattr(tree, 'root'):
+            tree = tree.root
+        
+        root = tree.root if hasattr(tree, "root") else tree
         
         def collect(node):
             if node.kind == SyntaxKind.CovergroupDeclaration:
                 self._extract_covergroup(node)
             return pyslang.VisitAction.Advance
         
-        (root.root if hasattr(root, "root") else tree).visit(collect)
+        root.visit(collect)
     
     def _extract_covergroup(self, node):
         cg = CovergroupDef()
