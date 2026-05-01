@@ -110,3 +110,56 @@ def test_driver_extended():
 
 if __name__ == '__main__':
     test_driver_extended()
+
+
+def is_instantiation_template(code):
+    """检测文件是否为实例化模板 (非实际硬件)"""
+    # 检查是否包含 instantiation template 标记
+    if 'INSTANTIATION TEMPLATE' in code:
+        return True
+    
+    # 检查是否有实际的 always_ff/always_comb/assign 语句
+    has_hw = any([
+        'always_ff' in code,
+        'always_comb' in code,
+        'always_latch' in code,
+        'assign ' in code,
+    ])
+    
+    return not has_hw
+
+
+# 添加文件类型检测测试
+def test_detect_file_types():
+    """测试文件类型检测"""
+    print("\n文件类型检测:")
+    print("-" * 40)
+    
+    import os
+    base = '/Users/fundou/my_dv_proj/basic_verilog'
+    
+    files_to_check = [
+        'cdc_data.sv',
+        'pdm_modulator.sv', 
+        'adder_tree.sv',
+        'fifo_combiner.sv',
+    ]
+    
+    for f in files_to_check:
+        path = os.path.join(base, f)
+        if not os.path.exists(path):
+            continue
+            
+        with open(path) as fp:
+            code = fp.read()
+        
+        is_template = is_instantiation_template(code)
+        is_empty = True if 'always_ff' in code or 'always_comb' in code else False
+        
+        print(f"{f}: template={is_template}, has_hw={is_empty}")
+
+    return True
+
+
+if __name__ == '__main__':
+    test_detect_file_types()
