@@ -543,3 +543,190 @@ def extract_module_io(code):
 
 **最后更新**: 2026-04-29
 **版本**: 1.0
+
+# 可运行的示例代码
+
+以下示例均经过测试验证，可以直接运行:
+
+## 1. 基本解析 (parse 模块)
+
+```python
+from parse import SVParser
+
+code = "module test(input clk, output[7:0] out); endmodule"
+p = SVParser()
+tree = p.parse_text(code)
+print("Parse complete")
+```
+
+## 2. 类提取 (class_utils)
+
+```python
+from parse.class_utils import ClassExtractor
+
+code = """
+class packet;
+    rand bit [7:0] addr;
+    constraint c { addr < 10; }
+endclass
+"""
+ce = ClassExtractor(None, verbose=False)
+classes = ce.extract_from_text(code)
+print(f"Found {len(classes)} classes")
+for c in classes:
+    print(f"  - {c.name}")
+```
+
+## 3. VCD解析 (vcd_analyzer)
+
+```python
+from trace.vcd_analyzer import VCDAnalyzer
+
+vcd_code = """
+$timescale 1ns $end
+$scope module tb $end
+$var wire 1 ! clk $end
+$var wire 8 " data $end
+$upscope $end
+$enddefinitions $end
+#0
+b0 !
+b00000000 "
+#10
+b1 !
+#20
+b10101010 "
+"""
+
+va = VCDAnalyzer(verbose=False)
+waveforms = va.parse_vcd_text(vcd_code)
+print(f"Found {len(waveforms)} signals")
+for name, wave in waveforms.items():
+    print(f"  - {name}: {len(wave.values)} changes")
+```
+
+## 4. 驱动追踪 (driver)
+
+```python
+from parse import SVParser
+from trace.driver import DriverCollector
+
+code = """
+module counter(
+    input clk, rst_n,
+    output [7:0] count
+);
+    logic [7:0] cnt;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) cnt <= 0;
+        else cnt <= cnt + 1;
+    end
+    assign count = cnt;
+endmodule
+"""
+
+p = SVParser()
+p.parse_text(code)
+dc = DriverCollector(p, verbose=False)
+drivers = dc.get_drivers('*')
+print(f"Found {len(drivers)} drivers")
+for d in drivers:
+    print(f"  - {d.signal}: kind={d.kind}")
+```
+
+## 5. 连接追踪 (connection)
+
+```python
+from parse import SVParser
+from trace.connection import ConnectionTracer
+
+code = """
+module sub(output [7:0] out);
+    assign out = 8'hFF;
+endmodule
+module top(output [7:0] result);
+    wire [7:0] tmp;
+    sub u1(.out(tmp));
+    assign result = tmp;
+endmodule
+"""
+
+p = SVParser()
+p.parse_text(code)
+ct = ConnectionTracer(p, verbose=False)
+instances = ct.get_all_instances()
+print(f"Found {len(instances)} instances")
+for i in instances:
+    print(f"  - {i.name}: {i.module_type}")
+```
+
+## 6. 接口提取 (interface)
+
+```python
+from parse.interface import extract_interfaces
+
+code = """
+interface simple_bus(input clk);
+    logic [31:0] data;
+    logic valid;
+    modport master (input data, valid, output ready);
+    modport slave (output data, valid, input ready);
+endinterface
+"""
+
+interfaces = extract_interfaces(code)
+print(f"Found {len(interfaces)} interfaces")
+```
+
+## 7. 数据路径分析 (datapath)
+
+```python
+from parse import SVParser
+from trace.datapath import DataPathAnalyzer
+
+code = """
+module pipeline(input clk, input[7:0] din, output[7:0] dout);
+    logic [7:0] stage1, stage2;
+    always_ff @(posedge clk) begin
+        stage1 <= din;
+        stage2 <= stage1;
+    end
+    assign dout = stage2;
+endmodule
+"""
+
+p = SVParser()
+p.parse_text(code)
+dp = DataPathAnalyzer(p, verbose=False)
+paths = dp.get_paths()
+print(f"Data paths: {len(paths)}")
+```
+
+## 8. 控制流分析 (controlflow)
+
+```python
+from parse import SVParser
+from trace.controlflow import ControlFlowTracer
+
+code = """
+module fsm(input clk, input go, output done);
+    typedef enum {IDLE, RUN, DONE} state_t;
+    state_t state;
+    always_ff @(posedge clk) begin
+        case (state)
+            IDLE: if (go) state <= RUN;
+            RUN: state <= DONE;
+            DONE: state <= IDLE;
+        endcase
+    end
+    assign done = (state == DONE);
+endmodule
+"""
+
+p = SVParser()
+p.parse_text(code)
+cf = ControlFlowTracer(p, verbose=False)
+flows = cf.get_all_flows()
+print(f"Control flows: {len(flows)}")
+```
+
