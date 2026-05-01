@@ -1,6 +1,8 @@
 """
 ResourceEstimation - 资源利用率估算器
 基于静态分析估算硬件资源消耗 (LUT, FF, DSP, BRAM 等)
+
+增强版: 添加解析警告，显式打印不支持的语法结构
 """
 import sys
 import os
@@ -12,6 +14,15 @@ from dataclasses import dataclass, field
 from typing import List, Set, Dict, Optional
 from collections import defaultdict
 import pyslang
+
+# 导入解析警告模块
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from trace.parse_warn import (
+    ParseWarningHandler,
+    warn_unsupported,
+    warn_error,
+    WarningLevel
+)
 
 
 # =============================================================================
@@ -72,8 +83,63 @@ class ModuleResource:
 
 
 class ResourceEstimation:
-    def __init__(self, parser):
+    """资源估算器
+    
+    增强: 添加解析警告
+    """
+    
+    # 不支持的语法类型
+    UNSUPPORTED_TYPES = {
+        'CovergroupDeclaration': 'covergroup不影响资源估算',
+        'PropertyDeclaration': 'property声明无资源',
+        'SequenceDeclaration': 'sequence声明无资源',
+        'ClassDeclaration': 'class内部资源估算可能不完整',
+        'InterfaceDeclaration': 'interface内部资源估算可能不完整',
+        'PackageDeclaration': 'package无资源',
+        'ProgramDeclaration': 'program块资源估算可能不完整',
+        'ClockingBlock': 'clocking block资源估算有限',
+    }
+    
+    def __init__(self, parser, verbose: bool = True):
         self.parser = parser
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="ResourceEstimation"
+        )
+        self._unsupported_encountered = set()
+    
+    def _check_unsupported_syntax(self, tree, source: str = ""):
+        """检查不支持的语法"""
+        if not tree or not hasattr(tree, 'root'):
+            return
+        
+        root = tree.root
+        if hasattr(root, 'members') and root.members:
+            try:
+                members = list(root.members) if hasattr(root.members, '__iter__') else [root.members]
+                for member in members:
+                    if member is None:
+                        continue
+                    kind_name = str(member.kind) if hasattr(member, 'kind') else type(member).__name__
+                    
+                    if kind_name in self.UNSUPPORTED_TYPES:
+                        if kind_name not in self._unsupported_encountered:
+                            self.warn_handler.warn_unsupported(
+                                kind_name,
+                                context=source,
+                                suggestion=self.UNSUPPORTED_TYPES[kind_name],
+                                component="ResourceEstimation"
+                            )
+                            self._unsupported_encountered.add(kind_name)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "UnsupportedSyntaxCheck",
+                    e,
+                    context=f"file={source}",
+                    component="ResourceEstimation"
+                )
     
     def analyze_module(self, module_name: str = None) -> ModuleResource:
         modules = self._get_all_modules()
@@ -86,7 +152,23 @@ class ResourceEstimation:
         result = ModuleResource(name=target)
         
         # 解析代码统计运算符
-        stats = self._analyze_code(target)
+        try:
+            stats = self._analyze_code(target)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "CodeAnalysis",
+                e,
+                context=f"module={target}",
+                component="ResourceEstimation"
+            )
+            stats = {
+                'operators': defaultdict(lambda: {'count': 0, 'bit_width': 8}),
+                'muxes': {'if_else': 0, 'case': 0, 'ternary': 0},
+                'ff_count': 0,
+                'reg_bits': 0,
+                'dsp_count': 0,
+                'pipeline_depth': 0,
+            }
         
         # 计算资源
         result.lut_as_logic = self._calculate_lut(stats)
@@ -117,6 +199,10 @@ class ResourceEstimation:
         for fname, tree in self.parser.trees.items():
             if not tree or not hasattr(tree, 'root'):
                 continue
+            
+            # 检查不支持的语法
+            self._check_unsupported_syntax(tree, fname)
+            
             members = list(tree.root.members) if hasattr(tree.root, 'members') else []
             for m in members:
                 if m.kind == pyslang.SyntaxKind.ModuleDeclaration:
@@ -146,60 +232,68 @@ class ResourceEstimation:
                 source = ""
             
             if not source:
-                # 读取文件
                 try:
                     with open(fname) as f:
                         source = f.read()
                 except:
                     continue
             
-            # 1. 统计模块中的 always_ff 块数量 (FF 估算)
-            lines = source.split('\n')
-            in_always_ff = False
-            in_module = False
-            
-            for line in lines:
-                stripped = line.strip()
+            try:
+                # 1. 统计模块中的 always_ff 块数量 (FF 估算)
+                lines = source.split('\n')
+                in_always_ff = False
+                in_module = False
                 
-                # 检查模块边界
-                if stripped.startswith('module '):
-                    in_module = module_name in stripped
-                    continue
-                elif stripped.startswith('endmodule'):
-                    in_module = False
-                    continue
-                
-                if not in_module:
-                    continue
-                
-                # always_ff 块 -> FF
-                if 'always_ff' in stripped:
-                    in_always_ff = True
-                    stats['ff_count'] += 1
-                
-                # 运算符统计
-                for op in ['*', '/', '+', '-']:
-                    if op in stripped:
-                        stats['operators'][op]['count'] += stripped.count(op)
-                
-                # 比较运算符
-                for op in ['==', '!=', '<', '>', '<=', '>=']:
-                    if op in stripped:
-                        stats['operators'][op]['count'] += stripped.count(op)
-                
-                # MUX 结构
-                if stripped.startswith('if') or 'if (' in stripped:
-                    stats['muxes']['if_else'] += 1
-                if stripped.startswith('case'):
-                    stats['muxes']['case'] += 1
-                if '?' in stripped and ':' in stripped:
-                    stats['muxes']['ternary'] += 1
-                
-                # 估算位宽
-                width = self._extract_width(stripped)
-                if width > 0:
-                    for op in stats['operators']:
-                        stats['operators'][op]['bit_width'] = max(stats['operators'][op]['bit_width'], width)
+                for line in lines:
+                    stripped = line.strip()
+                    
+                    # 检查模块边界
+                    if stripped.startswith('module '):
+                        in_module = module_name in stripped
+                        continue
+                    elif stripped.startswith('endmodule'):
+                        in_module = False
+                        continue
+                    
+                    if not in_module:
+                        continue
+                    
+                    # always_ff 块 -> FF
+                    if 'always_ff' in stripped:
+                        in_always_ff = True
+                        stats['ff_count'] += 1
+                    
+                    # 运算符统计
+                    for op in ['*', '/', '+', '-']:
+                        if op in stripped:
+                            stats['operators'][op]['count'] += stripped.count(op)
+                    
+                    # 比较运算符
+                    for op in ['==', '!=', '<', '>', '<=', '>=']:
+                        if op in stripped:
+                            stats['operators'][op]['count'] += stripped.count(op)
+                    
+                    # MUX 结构
+                    if stripped.startswith('if') or 'if (' in stripped:
+                        stats['muxes']['if_else'] += 1
+                    if stripped.startswith('case'):
+                        stats['muxes']['case'] += 1
+                    if '?' in stripped and ':' in stripped:
+                        stats['muxes']['ternary'] += 1
+                    
+                    # 估算位宽
+                    width = self._extract_width(stripped)
+                    if width > 0:
+                        for op in stats['operators']:
+                            stats['operators'][op]['bit_width'] = max(stats['operators'][op]['bit_width'], width)
+                            
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "LineAnalysis",
+                    e,
+                    context=f"file={fname}",
+                    component="ResourceEstimation"
+                )
         
         return stats
     
@@ -234,8 +328,16 @@ class ResourceEstimation:
             total += muxes['case'] * MUX_LUT_PER_INPUT * 4
         
         return max(1, int(total))
+    
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
+    
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()
 
 
-def estimate_resource(parser, module_name: str = None) -> ModuleResource:
-    est = ResourceEstimation(parser)
+def estimate_resource(parser, module_name: str = None, verbose: bool = True) -> ModuleResource:
+    est = ResourceEstimation(parser, verbose=verbose)
     return est.analyze_module(module_name)

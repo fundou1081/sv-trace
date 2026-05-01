@@ -1,34 +1,158 @@
 """
 SystemVerilog 解析器
+
+增强版: 添加解析警告，显式打印不支持的语法结构和解析异常
 """
 import pyslang
+import os
 from typing import Optional, List, Dict, Any
+
+# 导入解析警告模块
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+try:
+    from trace.parse_warn import (
+        ParseWarningHandler,
+        warn_unsupported,
+        warn_error,
+        WarningLevel
+    )
+except ImportError:
+    # 备用方案
+    class ParseWarningHandler:
+        def __init__(self, verbose=True, component="SVParser"):
+            self.verbose = verbose
+            self.component = component
+        def warn_unsupported(self, node_kind, context="", suggestion="", component=None):
+            if self.verbose:
+                print(f"⚠️ [WARN][{component or self.component}] <{node_kind}> {suggestion} @ {context}")
+        def warn_error(self, operation, exc, context="", component=None):
+            if self.verbose:
+                print(f"❌ [ERROR][{component or self.component}] {operation}: {exc} @ {context}")
+        def get_report(self):
+            return ""
 
 
 class SVParser:
-    """SystemVerilog 解析器"""
+    """SystemVerilog 解析器
     
-    def __init__(self):
+    增强版: 添加解析警告，显式打印不支持的语法结构和解析异常
+    """
+    
+    # 不支持的语法类型
+    UNSUPPORTED_TYPES = {
+        'CovergroupDeclaration': '覆盖率group不支持',
+        'PropertyDeclaration': 'property声明不支持',
+        'SequenceDeclaration': 'sequence声明不支持',
+        'ClassDeclaration': 'class声明建议使用pyslang_helper提取',
+        'InterfaceDeclaration': 'interface声明不支持',
+        'PackageDeclaration': 'package声明不支持',
+        'ProgramDeclaration': 'program块不支持',
+        'ClockingBlock': 'clocking block不支持',
+        'ModportItem': 'modport不支持',
+        'RandSequenceExpression': 'rand sequence不支持',
+    }
+    
+    def __init__(self, verbose: bool = True):
         self.compilation = pyslang.Compilation()
         self.trees: Dict[str, pyslang.SyntaxTree] = {}
         self.sources: Dict[str, str] = {}  # 保存源代码
         self._parse_cache: Dict[str, Any] = {}
         self._module_cache: Dict[str, Any] = {}  # 模块缓存
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="SVParser"
+        )
+        self._unsupported_encountered = set()
     
     def parse_file(self, filepath: str) -> pyslang.SyntaxTree:
         """解析单个文件"""
         if filepath in self.trees:
             return self.trees[filepath]
         
-        # Read and save source
-        with open(filepath) as f:
-            source = f.read()
+        try:
+            # Read and save source
+            with open(filepath) as f:
+                source = f.read()
+            
+            try:
+                tree = pyslang.SyntaxTree.fromFile(filepath)
+                self.compilation.addSyntaxTree(tree)
+                self.trees[filepath] = tree
+                self.sources[filepath] = source
+                
+                # 检查不支持的语法
+                self._check_unsupported_syntax(tree, filepath)
+                
+                return tree
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "FileParsing",
+                    e,
+                    context=filepath,
+                    component="SVParser"
+                )
+                raise
         
-        tree = pyslang.SyntaxTree.fromFile(filepath)
-        self.compilation.addSyntaxTree(tree)
-        self.trees[filepath] = tree
-        self.sources[filepath] = source
-        return tree
+        except FileNotFoundError:
+            self.warn_handler.warn_error(
+                "FileNotFound",
+                FileNotFoundError(f"File not found: {filepath}"),
+                context=filepath,
+                component="SVParser"
+            )
+            raise
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "FileRead",
+                e,
+                context=filepath,
+                component="SVParser"
+            )
+            raise
+    
+    def _check_unsupported_syntax(self, tree, source: str = ""):
+        """检查不支持的语法"""
+        if not tree or not hasattr(tree, 'root'):
+            return
+        
+        root = tree.root
+        if hasattr(root, 'members') and root.members:
+            try:
+                members = list(root.members) if hasattr(root.members, '__iter__') else [root.members]
+                for member in members:
+                    if member is None:
+                        continue
+                    kind_name = str(member.kind) if hasattr(member, 'kind') else type(member).__name__
+                    
+                    if kind_name in self.UNSUPPORTED_TYPES:
+                        if kind_name not in self._unsupported_encountered:
+                            self.warn_handler.warn_unsupported(
+                                kind_name,
+                                context=source,
+                                suggestion=self.UNSUPPORTED_TYPES[kind_name],
+                                component="SVParser"
+                            )
+                            self._unsupported_encountered.add(kind_name)
+                    elif 'Declaration' in kind_name or 'Block' in kind_name:
+                        # 记录其他声明类型
+                        if kind_name not in self._unsupported_encountered and kind_name not in ['ModuleDeclaration', 'CompilationUnit']:
+                            self.warn_handler.warn_unsupported(
+                                kind_name,
+                                context=source,
+                                suggestion="可能影响解析完整性",
+                                component="SVParser"
+                            )
+                            self._unsupported_encountered.add(kind_name)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "UnsupportedSyntaxCheck",
+                    e,
+                    context=f"file={source}",
+                    component="SVParser"
+                )
     
     def get_source(self, filepath: str) -> str:
         """Get saved source code"""
@@ -44,32 +168,64 @@ class SVParser:
         if key in self._parse_cache:
             return self._parse_cache[key]
         
-        tree = pyslang.SyntaxTree.fromText(code, filename)
-        self.compilation.addSyntaxTree(tree)
-        
-        # 保存以便后续查询
-        self.trees[key] = tree
-        self._parse_cache[key] = tree
-        
-        return tree
+        try:
+            tree = pyslang.SyntaxTree.fromText(code, filename)
+            self.compilation.addSyntaxTree(tree)
+            
+            # 保存以便后续查询
+            self.trees[key] = tree
+            self._parse_cache[key] = tree
+            
+            # 检查不支持的语法
+            self._check_unsupported_syntax(tree, filename)
+            
+            return tree
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "TextParsing",
+                e,
+                context=filename,
+                component="SVParser"
+            )
+            raise
     
     def parse_files(self, filepaths: List[str]) -> Dict[str, pyslang.SyntaxTree]:
         """批量解析文件"""
         result = {}
         for fp in filepaths:
-            result[fp] = self.parse_file(fp)
+            try:
+                result[fp] = self.parse_file(fp)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "BatchFileParsing",
+                    e,
+                    context=fp,
+                    component="SVParser"
+                )
         return result
     
     def get_diagnostics(self, filepath: str = None) -> List[str]:
         """获取诊断信息"""
-        self.compilation.getAllDiagnostics()
+        diags = []
+        try:
+            all_diags = self.compilation.getAllDiagnostics()
+            for d in all_diags:
+                diag_str = str(d)
+                if filepath:
+                    # 尝试过滤特定文件的诊断
+                    if filepath in diag_str or '<text>' in diag_str:
+                        diags.append(diag_str)
+                else:
+                    diags.append(diag_str)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "DiagnosticsRetrieval",
+                e,
+                context=filepath or "all",
+                component="SVParser"
+            )
         
-        if filepath:
-            tree = self.trees.get(filepath)
-            if tree:
-                return [str(d) for d in tree.diagnostics]
-        
-        return []
+        return diags
     
     def has_errors(self, filepath: str = None) -> bool:
         """检查是否有解析错误"""
@@ -89,11 +245,19 @@ class SVParser:
             if not tree:
                 continue
             
-            # 检查 root 是否是模块
-            if hasattr(tree, 'root') and tree.root:
-                type_name = str(type(tree.root))
-                if 'Module' in type_name:
-                    modules.append(tree.root)
+            try:
+                # 检查 root 是否是模块
+                if hasattr(tree, 'root') and tree.root:
+                    type_name = str(type(tree.root))
+                    if 'Module' in type_name:
+                        modules.append(tree.root)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "ModuleRetrieval",
+                    e,
+                    context=f"file={filepath}",
+                    component="SVParser"
+                )
         
         return modules
     
@@ -101,10 +265,18 @@ class SVParser:
         """根据名称查找模块"""
         modules = self.get_modules(filepath)
         for mod in modules:
-            if hasattr(mod, 'header') and mod.header:
-                if hasattr(mod.header, 'name') and mod.header.name:
-                    if mod.header.name.value == name:
-                        return mod
+            try:
+                if hasattr(mod, 'header') and mod.header:
+                    if hasattr(mod.header, 'name') and mod.header.name:
+                        if mod.header.name.value == name:
+                            return mod
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "ModuleNameSearch",
+                    e,
+                    context=f"name={name}",
+                    component="SVParser"
+                )
         return None
     
     def get_root(self) -> Any:
@@ -115,7 +287,16 @@ class SVParser:
         """清除缓存"""
         self.trees.clear()
         self._parse_cache.clear()
+        self._module_cache.clear()
         self.compilation = pyslang.Compilation()
+    
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
+    
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()
 
 
 # =============================================================================

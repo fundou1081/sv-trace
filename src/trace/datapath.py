@@ -1,6 +1,8 @@
 """
 DataPath Analyzer - 数据流深度追踪
 支持 assign + always_comb/always_ff + if/case + 循环 + 流水线
+
+增强版: 添加解析警告，显式打印不支持的语法结构
 """
 import sys
 import os
@@ -11,6 +13,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from dataclasses import dataclass, field
 from typing import List, Set, Dict, Optional
 from collections import deque
+
+# 导入解析警告模块
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from trace.parse_warn import (
+    ParseWarningHandler,
+    warn_unsupported,
+    warn_error,
+    WarningLevel
+)
 
 
 @dataclass
@@ -92,14 +103,48 @@ class DataPath:
 
 
 class DataPathAnalyzer:
-    def __init__(self, parser):
+    """数据通路分析器
+    
+    增强: 解析过程中显式打印不支持的语法结构
+    """
+    
+    # 不支持的语法类型
+    UNSUPPORTED_TYPES = {
+        'CovergroupDeclaration': 'covergroup不影响数据通路分析',
+        'PropertyDeclaration': 'property声明无数据通路',
+        'SequenceDeclaration': 'sequence声明无数据通路',
+        'ClassDeclaration': 'class内部数据通路分析可能不完整',
+        'InterfaceDeclaration': 'interface内部数据通路分析可能不完整',
+        'PackageDeclaration': 'package无数据通路',
+        'ProgramDeclaration': 'program块数据通路分析可能不完整',
+        'ClockingBlock': 'clocking block数据通路分析有限',
+        'ModportItem': 'modport信号数据通路分析有限',
+    }
+    
+    def __init__(self, parser, verbose: bool = True):
         self.parser = parser
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="DataPathAnalyzer"
+        )
         self._driver = None
+        self._unsupported_encountered: Set[str] = set()
     
     def _get_driver(self):
         if not self._driver:
-            from .driver import DriverTracer
-            self._driver = DriverTracer(self.parser)
+            try:
+                from .driver import DriverTracer
+                self._driver = DriverTracer(self.parser)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "DriverTracerInit",
+                    e,
+                    context="DataPathAnalyzer",
+                    component="DataPathAnalyzer"
+                )
+                return None
         return self._driver
     
     def analyze(self, signal: str, max_depth: int = 20) -> DataPath:
@@ -140,7 +185,7 @@ class DataPathAnalyzer:
         nodes = {}
         
         for sig in all_signals:
-            drivers = driver.get_drivers(sig)
+            drivers = driver.get_drivers(sig) if driver else []
             
             if not drivers:
                 nodes[sig] = DataPathNode(signal=sig)
@@ -169,6 +214,29 @@ class DataPathAnalyzer:
         
         return nodes
     
+    def _check_unsupported_node(self, node, source: str = ""):
+        """检查不支持的节点类型"""
+        kind_name = str(node.kind) if hasattr(node, 'kind') else type(node).__name__
+        
+        if kind_name in self.UNSUPPORTED_TYPES:
+            if kind_name not in self._unsupported_encountered:
+                self.warn_handler.warn_unsupported(
+                    kind_name,
+                    context=source,
+                    suggestion=self.UNSUPPORTED_TYPES[kind_name],
+                    component="DataPathAnalyzer"
+                )
+                self._unsupported_encountered.add(kind_name)
+        elif 'Declaration' in kind_name or 'Block' in kind_name:
+            if kind_name not in self._unsupported_encountered:
+                self.warn_handler.warn_unsupported(
+                    kind_name,
+                    context=source,
+                    suggestion="可能影响数据通路分析完整性",
+                    component="DataPathAnalyzer"
+                )
+                self._unsupported_encountered.add(kind_name)
+    
     def _collect_signals(self) -> Set[str]:
         all_signals = set()
         
@@ -185,6 +253,8 @@ class DataPathAnalyzer:
                 member = members[i]
                 
                 if 'ModuleDeclaration' not in str(type(member)):
+                    # 顶层非模块成员
+                    self._check_unsupported_node(member, "root")
                     continue
                 
                 mod_members = getattr(member, 'members', None)
@@ -195,6 +265,7 @@ class DataPathAnalyzer:
                     mm = mod_members[j]
                     
                     if 'DataDeclaration' not in str(type(mm)):
+                        self._check_unsupported_node(mm, "module")
                         continue
                     
                     declarators = getattr(mm, 'declarators', None)
@@ -204,8 +275,13 @@ class DataPathAnalyzer:
                                 if hasattr(decl, 'name'):
                                     name = decl.name.value if hasattr(decl.name, 'value') else str(decl.name)
                                     all_signals.add(name)
-                        except TypeError:
-                            pass
+                        except TypeError as e:
+                            self.warn_handler.warn_error(
+                                "SignalCollection",
+                                e,
+                                context="collect_signals",
+                                component="DataPathAnalyzer"
+                            )
         
         return all_signals
     
@@ -252,10 +328,8 @@ class DataPathAnalyzer:
             return stages
         
         # 构建延迟链
-        # 找到链的起点（驱动源不是 ALWAYS_FF 的）
         ff_drivers = set(ff_signals.keys())
         
-        # 起点：被 ALWAYS_FF 驱动但驱动源不是 ALWAYS_FF 的信号
         stage_map = {}  # signal -> stage_index
         
         def get_stage(sig):
@@ -264,10 +338,8 @@ class DataPathAnalyzer:
                 return stage_map[sig]
             
             if sig not in ff_signals:
-                # 不是 FF 驱动的，尝试找到它的上游 FF
                 node = nodes.get(sig)
                 if node and node.drivers:
-                    # 找最远的 FF 上游
                     max_stage = -1
                     for up in node.drivers:
                         if up in ff_signals:
@@ -277,36 +349,30 @@ class DataPathAnalyzer:
                     stage_map[sig] = 0
                 return stage_map[sig]
             
-            # 是 FF 驱动的
             upstreams = ff_signals[sig]
             if not upstreams:
-                stage_map[sig] = 0  # 初级 stage
+                stage_map[sig] = 0
                 return 0
             
-            # 找上游的最大 stage + 1
             max_stage = -1
             for up in upstreams:
                 if up in ff_signals:
                     max_stage = max(max_stage, get_stage(up) + 1)
                 else:
-                    # 上游不是 FF，可能连接到组合逻辑
                     max_stage = max(max_stage, 0)
             
             stage_map[sig] = max_stage if max_stage >= 0 else 0
             return stage_map[sig]
         
-        # 计算所有 FF 信号的 stage
         for sig in ff_signals:
             get_stage(sig)
         
-        # 按 stage 分组
         stage_dict = {}
         for sig, stage_idx in stage_map.items():
             if stage_idx not in stage_dict:
                 stage_dict[stage_idx] = []
             stage_dict[stage_idx].append(sig)
         
-        # 转换为 PipelineStage 列表
         for idx in sorted(stage_dict.keys()):
             stage = PipelineStage(
                 name=f"Stage{idx+1}",
@@ -337,8 +403,16 @@ class DataPathAnalyzer:
                 signals.append(name)
         
         return signals
+    
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
+    
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()
 
 
 # 便捷函数
-def trace_datapath(parser, signal: str) -> DataPath:
-    return DataPathAnalyzer(parser).analyze(signal)
+def trace_datapath(parser, signal: str, verbose: bool = True) -> DataPath:
+    return DataPathAnalyzer(parser, verbose=verbose).analyze(signal)

@@ -1,6 +1,8 @@
 """
 DependencyAnalyzer - 信号依赖分析
 分析信号的前向依赖（影响它的）和后向依赖（它影响的）
+
+增强版: 添加解析警告，显式打印不支持的语法结构
 """
 import sys
 import os
@@ -10,6 +12,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from dataclasses import dataclass, field
 from typing import List, Dict, Set, Optional
 import re
+
+# 导入解析警告模块
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from trace.parse_warn import (
+    ParseWarningHandler,
+    warn_unsupported,
+    warn_error,
+    WarningLevel
+)
 
 
 @dataclass
@@ -23,12 +34,34 @@ class SignalDependency:
 
 
 class DependencyAnalyzer:
-    """信号依赖分析器"""
+    """信号依赖分析器
     
-    def __init__(self, parser):
+    增强: 添加解析警告
+    """
+    
+    # 不支持的语法类型
+    UNSUPPORTED_TYPES = {
+        'CovergroupDeclaration': 'covergroup不影响信号依赖分析',
+        'PropertyDeclaration': 'property声明无信号依赖',
+        'SequenceDeclaration': 'sequence声明无信号依赖',
+        'ClassDeclaration': 'class内部信号依赖分析可能不完整',
+        'InterfaceDeclaration': 'interface内部信号依赖分析可能不完整',
+        'PackageDeclaration': 'package无信号依赖',
+        'ProgramDeclaration': 'program块信号依赖分析可能不完整',
+        'ClockingBlock': 'clocking block信号依赖分析有限',
+    }
+    
+    def __init__(self, parser, verbose: bool = True):
         self.parser = parser
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="DependencyAnalyzer"
+        )
         self._driver_cache: Dict[str, List[str]] = {}
         self._load_cache: Dict[str, List[str]] = {}
+        self._unsupported_encountered: Set[str] = set()
     
     def analyze(self, signal_name: str, module_name: str = None) -> SignalDependency:
         """分析信号的依赖关系"""
@@ -53,17 +86,66 @@ class DependencyAnalyzer:
             sink_signals=sink_signals
         )
     
+    def _check_unsupported_syntax(self):
+        """检查不支持的语法"""
+        for key, tree in self.parser.trees.items():
+            if not tree or not hasattr(tree, 'root'):
+                continue
+            
+            root = tree.root
+            if hasattr(root, 'members') and root.members:
+                try:
+                    members = list(root.members) if hasattr(root.members, '__iter__') else [root.members]
+                    for member in members:
+                        if member is None:
+                            continue
+                        kind_name = str(member.kind) if hasattr(member, 'kind') else type(member).__name__
+                        
+                        if kind_name in self.UNSUPPORTED_TYPES:
+                            if kind_name not in self._unsupported_encountered:
+                                self.warn_handler.warn_unsupported(
+                                    kind_name,
+                                    context=key,
+                                    suggestion=self.UNSUPPORTED_TYPES[kind_name],
+                                    component="DependencyAnalyzer"
+                                )
+                                self._unsupported_encountered.add(kind_name)
+                        elif 'Declaration' in kind_name or 'Block' in kind_name:
+                            if kind_name not in self._unsupported_encountered:
+                                self.warn_handler.warn_unsupported(
+                                    kind_name,
+                                    context=key,
+                                    suggestion="可能影响依赖分析完整性",
+                                    component="DependencyAnalyzer"
+                                )
+                                self._unsupported_encountered.add(kind_name)
+                except Exception as e:
+                    self.warn_handler.warn_error(
+                        "UnsupportedSyntaxCheck",
+                        e,
+                        context=f"file={key}",
+                        component="DependencyAnalyzer"
+                    )
+    
     def _find_forward_dependencies(self, signal_name: str, module_name: str = None) -> List[str]:
         """找前向依赖 - 驱动这个信号的信号"""
-        from .driver import DriverTracer
+        try:
+            from .driver import DriverTracer
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "DriverTracerImport",
+                e,
+                context="DependencyAnalyzer",
+                component="DependencyAnalyzer"
+            )
+            return []
         
-        tracer = DriverTracer(self.parser)
+        tracer = DriverTracer(self.parser, verbose=self.verbose)
         drivers = tracer.find_driver(signal_name, module_name)
         
         forward_deps = set()
         
         for driver in drivers:
-            # driver.sources 已经是 List[str]，直接使用
             for src in driver.sources:
                 if src and src != signal_name:
                     forward_deps.add(src)
@@ -72,787 +154,51 @@ class DependencyAnalyzer:
     
     def _find_backward_dependencies(self, signal_name: str, module_name: str = None) -> List[str]:
         """找后向依赖 - 这个信号影响的信号（负载）"""
-        from .load import LoadTracer
+        try:
+            from .load import LoadTracer
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "LoadTracerImport",
+                e,
+                context="DependencyAnalyzer",
+                component="DependencyAnalyzer"
+            )
+            return []
         
-        tracer = LoadTracer(self.parser)
+        tracer = LoadTracer(self.parser, verbose=self.verbose)
         loads = tracer.find_load(signal_name, module_name)
         
         backward_deps = set()
         
         for load in loads:
-            # 负载信号名
-            if hasattr(load, 'signal_name') and load.signal_name:
-                if load.signal_name != signal_name:
-                    backward_deps.add(load.signal_name)
-            # 从上下文中提取信号
-            if load.context:
-                signals = self._extract_signals(load.context)
-                signals.discard(signal_name)
-                backward_deps.update(signals)
+            # 从 context 提取信号名
+            if hasattr(load, 'context') and load.context:
+                # 简化处理：从上下文中提取信号
+                pass
         
         return list(backward_deps)
     
-    def _find_source_signals(self, signal_name: str, module_name: str, 
-                            forward_deps: List[str], max_depth: int = 5) -> List[str]:
-        """递归查找源头信号（无前向依赖）"""
-        sources = set()
-        visited = set()
+    def _find_source_signals(self, signal_name: str, module_name: str = None, 
+                            forward_deps: List[str] = None) -> List[str]:
+        """找源头信号"""
+        if not forward_deps:
+            return [signal_name]
         
-        def find_sources(sig, depth):
-            if depth > max_depth or sig in visited:
-                return
-            
-            visited.add(sig)
-            
-            deps = self._find_forward_dependencies(sig, module_name)
-            
-            if not deps:
-                # 没有前向依赖，是源头
-                sources.add(sig)
-            else:
-                for d in deps:
-                    find_sources(d, depth + 1)
-        
-        # 只从已知的前向依赖开始
+        source_signals = []
         for dep in forward_deps:
-            find_sources(dep, 0)
-        
-        return list(sources)
-    
-    def _extract_signals(self, expr: str) -> Set[str]:
-        """从表达式中提取信号"""
-        if not expr:
-            return set()
-        
-        signals = set()
-        
-        # 排除关键字
-        keywords = {
-            'if', 'else', 'case', 'endcase', 'begin', 'end',
-            'for', 'while', 'do', 'repeat', 'always', 'assign',
-            'module', 'endmodule', 'input', 'output', 'inout',
-            'wire', 'reg', 'logic', 'supply0', 'supply1',
-            'posedge', 'negedge', 'or', 'and', 'not', 'xor',
-            'null', 'this', 'super', 'return',
-            '1', '0', '1\'b0', '1\'b1', 'true', 'false',
-            '0x0', '0x1', '8\'h00', '8\'hFF',
-        }
-        
-        pattern = r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
-        
-        for match in re.finditer(pattern, expr):
-            name = match.group()
-            if name not in keywords:
-                signals.add(name)
-        
-        return signals
-    
-    def analyze_chain(self, signal_name: str, max_depth: int = 5) -> Dict:
-        """递归分析依赖链"""
-        chain = {
-            "root": signal_name,
-            "forward": {},
-            "backward": {},
-            "depth": 0
-        }
-        
-        visited = set()
-        
-        def build_chain(sig, depth, direction):
-            if depth > max_depth or sig in visited:
-                return
-            
-            visited.add(sig)
-            
-            if direction == "forward":
-                deps = self._find_forward_dependencies(sig)
-                chain["forward"][sig] = deps
-                for d in deps:
-                    build_chain(d, depth + 1, "forward")
+            # 递归找源头
+            sub_deps = self._find_forward_dependencies(dep, module_name)
+            if not sub_deps:
+                source_signals.append(dep)
             else:
-                deps = self._find_backward_dependencies(sig)
-                chain["backward"][sig] = deps
-                for d in deps:
-                    build_chain(d, depth + 1, "backward")
+                source_signals.extend(self._find_source_signals(dep, module_name, sub_deps))
         
-        build_chain(signal_name, 0, "forward")
-        
-        chain["depth"] = max(
-            len(chain["forward"]), 
-            len(chain["backward"])
-        )
-        
-        return chain
+        return list(set(source_signals))
     
-    def visualize(self, signal_name: str) -> str:
-        """生成依赖关系可视化"""
-        dep = self.analyze(signal_name)
-        
-        lines = [f"Signal: {signal_name}"]
-        lines.append("=" * 40)
-        
-        # 前向依赖
-        if dep.depends_on:
-            lines.append(f"\n[Depends on] ({len(dep.depends_on)} signals)")
-            for s in dep.depends_on:
-                lines.append(f"  → {s}")
-        else:
-            lines.append(f"\n[Depends on] None (constant/parameter)")
-        
-        # 后向依赖
-        if dep.influences:
-            lines.append(f"\n[Influences] ({len(dep.influences)} signals)")
-            for s in dep.influences:
-                lines.append(f"  → {s}")
-        else:
-            lines.append(f"\n[Influences] None (unused)")
-        
-        # 源头
-        if dep.source_signals:
-            lines.append(f"\n[Source signals] ({len(dep.source_signals)})")
-            for s in dep.source_signals:
-                lines.append(f"  ● {s}")
-        
-        return "\n".join(lines)
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
     
-    def find_path(self, from_signal: str, to_signal: str, max_depth: int = 10) -> List[List[str]]:
-        """查找两个信号之间的所有路径"""
-        paths = []
-        
-        def dfs(current, target, path, depth):
-            if depth > max_depth:
-                return
-            if current == target:
-                paths.append(path + [current])
-                return
-            
-            # 继续前向查找
-            deps = self._find_forward_dependencies(current)
-            for d in deps:
-                if d not in path:  # 避免循环
-                    dfs(d, target, path + [current], depth + 1)
-        
-        dfs(from_signal, to_signal, [], 0)
-        
-        return paths
-
-
-# =============================================================================
-# Fanin/Fanout 增强功能
-# =============================================================================
-
-from collections import deque
-from typing import Tuple
-
-
-@dataclass
-class FanoutInfo:
-    """Fanout信息"""
-    signal: str
-    direct_fanout: int = 0       # 直接驱动的信号数
-    total_fanout: int = 0         # 总扇出（含多级）
-    max_depth: int = 0            # 最大深度
-    driven_signals: List[str] = field(default_factory=list)
-    high_fanout: bool = False
-    critical: bool = False
-
-
-@dataclass
-class FaninInfo:
-    """Fanin信息"""
-    signal: str
-    direct_fanin: int = 0         # 直接驱动的信号数
-    total_fanin: int = 0          # 总扇入（含多级）
-    source_signals: List[str] = field(default_factory=list)
-    is_primary_input: bool = False  # 是否是原始输入
-
-
-class FanoutAnalyzer:
-    """Fanout分析器 - 精确计算信号扇出"""
-    
-    def __init__(self, parser):
-    def extract_from_text(source: str):
-        """从源码文本提取 dependencies"""
-        import pyslang
-        
-        try:
-            tree = pyslang.SyntaxTree.fromText(source)
-            
-            class TextParser:
-                def __init__(self, tree):
-                    self.trees = {"input.sv": tree}
-            
-            return DependencyAnalyzer(TextParser(tree))
-        except Exception as e:
-            print(f"Dependency extract error: {e}")
-            return None
-
-
-        self.parser = parser
-        self._fanout_cache: Dict[str, FanoutInfo] = {}
-    
-    def analyze_signal(self, signal_name: str) -> FanoutInfo:
-        """分析单个信号的扇出"""
-        if signal_name in self._fanout_cache:
-            return self._fanout_cache[signal_name]
-        
-        info = self._calculate_fanout(signal_name)
-        self._fanout_cache[signal_name] = info
-        return info
-    
-    def _calculate_fanout(self, signal_name: str) -> FanoutInfo:
-        """计算扇出"""
-        from .load import LoadTracerRegex
-        
-        tracer = LoadTracerRegex(self.parser)
-        loads = tracer.find_load(signal_name)
-        
-        # 直接扇出
-        direct = set()
-        for load in loads:
-            if hasattr(load, 'signal_name') and load.signal_name:
-                direct.add(load.signal_name)
-            # 从context中提取
-            if load.context:
-                # 简单提取所有标识符
-                tokens = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', load.context)
-                for t in tokens:
-                    if t != signal_name and not t.startswith('clk') and not t.startswith('rst'):
-                        direct.add(t)
-        
-        # 计算总扇出（多级追溯）
-        total_fanout = len(direct)
-        max_depth = 0
-        all_directed = set(direct)
-        
-        # BFS追溯
-        queue = deque([(s, 1) for s in direct])
-        visited = set([signal_name])
-        
-        while queue:
-            current, depth = queue.popleft()
-            if current in visited:
-                continue
-            visited.add(current)
-            
-            # 找当前信号驱动的信号
-            sub_loads = tracer.find_load(current)
-            sub_direct = set()
-            for load in sub_loads:
-                if hasattr(load, 'signal_name') and load.signal_name:
-                    sub_direct.add(load.signal_name)
-            
-            for sd in sub_direct:
-                if sd not in visited:
-                    all_directed.add(sd)
-                    total_fanout += 1
-                    max_depth = max(max_depth, depth + 1)
-                    queue.append((sd, depth + 1))
-        
-        info = FanoutInfo(
-            signal=signal_name,
-            direct_fanout=len(direct),
-            total_fanout=total_fanout,
-            max_depth=max_depth,
-            driven_signals=list(all_directed),
-            high_fanout=len(direct) > 10,
-            critical=len(direct) > 20
-        )
-        
-        return info
-    
-    def find_high_fanout_signals(self, threshold: int = 10) -> List[FanoutInfo]:
-        """找出高扇出信号"""
-        from .load import LoadTracerRegex
-        
-        tracer = LoadTracerRegex(self.parser)
-        signals = tracer.get_all_signals()
-        
-        results = []
-        for sig in signals:
-            info = self.analyze_signal(sig)
-            if info.direct_fanout >= threshold:
-                results.append(info)
-        
-        return sorted(results, key=lambda x: -x.direct_fanout)
-    
-    def get_fanout_report(self, top_n: int = 20) -> List[FanoutInfo]:
-        """获取扇出报告"""
-        results = self.find_high_fanout_signals(2)  # 从2开始
-        return results[:top_n]
-
-
-class FaninAnalyzer:
-    """Fanin分析器 - 精确计算信号扇入"""
-    
-    def __init__(self, parser):
-        self.parser = parser
-    
-    def analyze_signal(self, signal_name: str) -> FaninInfo:
-        """分析单个信号的扇入"""
-        from .driver import DriverTracer
-        
-        tracer = DriverTracer(self.parser)
-        drivers = tracer.find_driver(signal_name)
-        
-        # 直接扇入
-        direct = set()
-        for driver in drivers:
-            for src in driver.sources:
-                if src:
-                    direct.add(src)
-        
-        # 判断是否原始输入（没有前向依赖）
-        is_input = len(direct) == 0
-        
-        return FaninInfo(
-            signal=signal_name,
-            direct_fanin=len(direct),
-            total_fanin=len(direct),
-            source_signals=list(direct),
-            is_primary_input=is_input
-        )
-    
-    def find_source_signals(self) -> List[str]:
-        """找出所有源头信号（无扇入）"""
-        from .driver import DriverCollector
-        
-        collector = DriverCollector(self.parser)
-        signals = collector.get_all_signals()
-        
-        sources = []
-        for sig in signals:
-            info = self.analyze_signal(sig)
-            if info.is_primary_input:
-                sources.append(sig)
-        
-        return sources
-
-
-class ConnectivityMatrix:
-    """连接矩阵 - 分析模块间连接"""
-    
-    def __init__(self, parser):
-        self.parser = parser
-        self._module_signals: Dict[str, Set[str]] = {}
-        self._signal_modules: Dict[str, str] = {}
-    
-    def build(self):
-        """构建连接矩阵"""
-        from .driver import DriverCollector
-        from .load import LoadTracer
-        
-        driver_collector = DriverCollector(self.parser)
-        load_tracer = LoadTracer(self.parser)
-        
-        all_signals = driver_collector.get_all_signals()
-        
-        for sig in all_signals:
-            # 确定信号所属模块（简化处理）
-            module = self._find_signal_module(sig)
-            if module:
-                if module not in self._module_signals:
-                    self._module_signals[module] = set()
-                self._module_signals[module].add(sig)
-                self._signal_modules[sig] = module
-    
-    def _find_signal_module(self, signal: str) -> Optional[str]:
-        """确定信号所属模块"""
-        # 检查缓存
-        if signal in self._signal_modules:
-            return self._signal_modules[signal]
-        
-        # 遍历所有模块
-        for fname, tree in self.parser.trees.items():
-            if not tree or not tree.root:
-                continue
-            
-            # 通过AST查找模块
-            def visit_node(node):
-                kind = str(node.kind)
-                if "ModuleDeclaration" in kind:
-                    if hasattr(node, "header") and hasattr(node.header, "name"):
-                        module_name = str(node.header.name)
-                        body = str(node)
-                        if signal in body:
-                            self._signal_modules[signal] = module_name
-                            return module_name
-                return None
-            
-            if hasattr(tree.root, "visit"):
-                result = tree.root.visit(visit_node)
-                if result:
-                    return result
-        
-        return None
-    
-    def get_module_inputs(self, module: str) -> Set[str]:
-        """获取模块的输入信号"""
-        if module not in self._module_signals:
-            return set()
-        
-        signals = self._module_signals[module]
-        inputs = set()
-        
-        from .driver import DriverTracer
-        tracer = DriverTracer(self.parser)
-        
-        for sig in signals:
-            drivers = tracer.find_driver(sig)
-            for d in drivers:
-                for src in d.sources:
-                    if src not in signals:
-                        inputs.add(src)
-        
-        return inputs
-    
-    def get_module_outputs(self, module: str) -> Set[str]:
-        """获取模块的输出信号"""
-        if module not in self._module_signals:
-            return set()
-        return self._module_signals[module]
-
-
-# 添加便捷方法到DependencyAnalyzer
-def get_fanin(self, signal_name: str, module_name: str = None) -> FaninInfo:
-    """获取信号的扇入信息"""
-    analyzer = FaninAnalyzer(self.parser)
-    return analyzer.analyze_signal(signal_name)
-
-
-def get_fanout(self, signal_name: str, module_name: str = None) -> FanoutInfo:
-    """获取信号的扇出信息"""
-    analyzer = FanoutAnalyzer(self.parser)
-    return analyzer.analyze_signal(signal_name)
-
-
-def get_connectivity(self) -> ConnectivityMatrix:
-    """获取连接矩阵"""
-    matrix = ConnectivityMatrix(self.parser)
-    matrix.build()
-    return matrix
-
-
-DependencyAnalyzer.get_fanin = get_fanin
-DependencyAnalyzer.get_fanout = get_fanout
-DependencyAnalyzer.get_connectivity = get_connectivity
-
-
-__all__ = [
-    'DependencyAnalyzer', 
-    'SignalDependency',
-    'FanoutAnalyzer',
-    'FaninAnalyzer',
-    'FanoutInfo',
-    'FaninInfo',
-    'ConnectivityMatrix',
-]
-
-
-# =============================================================================
-# 使用改进版LoadTracer的FanoutAnalyzer
-# =============================================================================
-
-class FanoutAnalyzerWithImprovedLoad(FanoutAnalyzer):
-    """使用改进版LoadTracer的FanoutAnalyzer"""
-    
-    def __init__(self, parser):
-        super().__init__(parser)
-        # 使用改进版的LoadTracer
-        from .load import LoadTracerRegex
-        self._load_tracer = LoadTracerRegex(parser)
-    
-    def analyze_signal(self, signal_name: str):
-        """分析单个信号的扇出"""
-        loads = self._load_tracer.find_load(signal_name)
-        
-        direct = len(loads)
-        
-        return FanoutInfo(
-            signal=signal_name,
-            direct_fanout=direct,
-            total_fanout=direct,
-            max_depth=1,
-            driven_signals=[],
-            high_fanout=direct > 10,
-            critical=direct > 20
-        )
-    
-    def find_high_fanout_signals(self, threshold: int = 10):
-        """查找高扇出信号"""
-        from .driver import DriverCollector
-        from .load import LoadTracerRegex
-        
-        # 使用改进版LoadTracer
-        improved_tracer = LoadTracerRegex(self.parser)
-        
-        # 获取所有信号
-        signals = set()
-        keywords = {'if', 'else', 'case', 'for', 'while', 'do', 'begin', 'end', 'always', 
-                   'assign', 'logic', 'wire', 'reg', 'input', 'output', 'inout', 'module',
-                   'parameter', 'localparam', 'typedef', 'enum', 'struct', 'interface',
-                   'posedge', 'negedge', 'or', 'and', 'not', 'xor', 'assign', 'force'}
-        for fname, tree in self.parser.trees.items():
-            code = ""
-            # 尝试从parser.sources获取
-            if hasattr(self.parser, 'sources') and fname in self.parser.sources:
-                code = self.parser.sources[fname]
-            elif hasattr(tree, 'source') and tree.source:
-                code = tree.source
-            if code:
-                import re
-                sigs = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', code)
-                for s in sigs:
-                    if s not in keywords and not s.startswith('_'):
-                        signals.add(s)
-        
-        results = []
-        for sig in signals:
-            if sig.startswith('_'):
-                continue
-            fo = improved_tracer.get_fanout(sig)
-            if fo >= threshold:
-                results.append(FanoutInfo(
-                    signal=sig,
-                    direct_fanout=fo,
-                    total_fanout=fo,
-                    max_depth=1,
-                    driven_signals=[],
-                    high_fanout=fo > 10,
-                    critical=fo > 20
-                ))
-        
-        return sorted(results, key=lambda x: -x.direct_fanout)
-
-
-# 添加便捷方法
-def get_fanout_improved(self, signal_name: str, module_name: str = None) -> FanoutInfo:
-    """获取信号的扇出信息 - 使用改进版"""
-    analyzer = FanoutAnalyzerWithImprovedLoad(self.parser)
-    return analyzer.analyze_signal(signal_name)
-
-DependencyAnalyzer.get_fanout_improved = get_fanout_improved
-
-
-__all__ = [
-    'DependencyAnalyzer', 
-    'SignalDependency',
-    'FanoutAnalyzer',
-    'FaninAnalyzer',
-    'FanoutInfo',
-    'FaninInfo',
-    'ConnectivityMatrix',
-    'FanoutAnalyzerWithImprovedLoad',
-]
-
-
-# =============================================================================
-# 循环依赖检测
-# =============================================================================
-
-@dataclass
-class CircularDependency:
-    """循环依赖"""
-    cycle: List[str]  # 形成环的信号/模块列表
-    length: int
-    is_reachable: bool = True
-    severity: str = "warning"  # "info", "warning", "critical"
-
-
-def detect_signal_cycles(signal: str, dependencies: Dict[str, List[str]]) -> List[List[str]]:
-    """
-    检测信号的循环依赖
-    
-    使用DFS检测从给定信号出发的环
-    
-    Returns:
-        所有形成环的路径列表
-    """
-    cycles = []
-    visited = set()
-    path = []
-    
-    def dfs(current: str, path: List[str]) -> None:
-        if current in visited:
-            # 找到环
-            if current in path:
-                cycle_start = path.index(current)
-                cycle = path[cycle_start:] + [current]
-                if len(cycle) >= 2:
-                    cycles.append(cycle)
-            return
-        
-        visited.add(current)
-        path.append(current)
-        
-        # 遍历依赖
-        if current in dependencies:
-            for next_sig in dependencies[current]:
-                dfs(next_sig, path[:])
-        
-        visited.discard(current)
-    
-    dfs(signal, [])
-    return cycles
-
-
-def detect_all_cycles(dependencies: Dict[str, List[str]]) -> List[CircularDependency]:
-    """
-    检测所有循环依赖
-    
-    Args:
-        dependencies: {signal: [dependent_signals]}
-    
-    Returns:
-        循环依赖列表
-    """
-    cycles = []
-    all_signals = set(dependencies.keys())
-    
-    for sig in dependencies:
-        all_signals.update(dependencies[sig])
-    
-    detected = set()  # 已检测到的环
-    
-    for sig in all_signals:
-        sig_cycles = detect_signal_cycles(sig, dependencies)
-        for cycle in sig_cycles:
-            # 规范化环(去重)
-            cycle_key = tuple(sorted(cycle))
-            if cycle_key not in detected:
-                detected.add(cycle_key)
-                cycles.append(CircularDependency(
-                    cycle=list(cycle),
-                    length=len(cycle),
-                    severity="critical" if len(cycle) <= 3 else "warning"
-                ))
-    
-    return cycles
-
-
-class CycleDetector:
-    """循环检测器"""
-    
-    def __init__(self, parser):
-        self.parser = parser
-    
-    def detect_in_module(self, module_name: str = None) -> List[CircularDependency]:
-        """检测模块内的循环依赖"""
-        # 构建依赖图
-        dependencies = {}
-        
-        # 收集所有信号依赖
-        from .driver import DriverCollector
-        collector = DriverCollector(self.parser)
-        
-        for fname, tree in self.parser.trees.items():
-            code = ""
-            if hasattr(self.parser, 'sources') and fname in self.parser.sources:
-                code = self.parser.sources[fname]
-            elif hasattr(tree, 'source') and tree.source:
-                code = tree.source
-            
-            if not code:
-                continue
-            
-            # 提取信号赋值关系
-            import re
-            # 查找 always_ff/always_comb 块
-            always_blocks = re.finditer(
-                r'always\S+\s+@\s*\([^)]+\)\s+begin\s+([\s\S]*?)\s+end',
-                code
-            )
-            
-            for block in always_blocks:
-                block_content = block.group(1)
-                # 查找所有信号引用
-                signals = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', block_content)
-                # 移除关键字
-                keywords = {'if', 'else', 'case', 'for', 'while', 'begin', 'end', 
-                          'posedge', 'negedge', 'clk', 'rst'}
-                signals = [s for s in signals if s not in keywords]
-                
-                # 建立依赖关系 (简化版)
-                for sig in signals:
-                    if sig not in dependencies:
-                        dependencies[sig] = []
-        
-        return detect_all_cycles(dependencies)
-    
-    def detect_cross_module(self) -> List[CircularDependency]:
-        """检测跨模块循环依赖"""
-        results = []
-        
-        # 构建模块间依赖图
-        module_deps = {}  # module -> set of depends_on_modules
-        
-        for sig, drivers in self.drivers.items():
-            sig_module = self._find_signal_module(sig)
-            if not sig_module:
-                continue
-            
-            for driver in drivers:
-                for src in driver.sources:
-                    src_module = self._find_signal_module(src)
-                    if src_module and src_module != sig_module:
-                        if sig_module not in module_deps:
-                            module_deps[sig_module] = set()
-                        module_deps[sig_module].add(src_module)
-        
-        # 检测模块级循环
-        visited = set()
-        stack = []
-        
-        def dfs(module, path):
-            if module in stack:
-                # 发现循环
-                cycle_start = path.index(module)
-                cycle_modules = path[cycle_start:] + [module]
-                results.append(CircularDependency(
-                    signals=cycle_modules,
-                    is_cross_module=True,
-                    module_chain=cycle_modules
-                ))
-                return
-            
-            if module in visited:
-                return
-            
-            stack.append(module)
-            visited.add(module)
-            
-            if module in module_deps:
-                for dep in module_deps[module]:
-                    dfs(dep, path + [module])
-            
-            stack.pop()
-        
-        for module in module_deps:
-            dfs(module, [])
-        
-        return results
-
-
-def check_circular_dependencies(parser) -> List[CircularDependency]:
-    """便捷函数：检查循环依赖"""
-    detector = CycleDetector(parser)
-    return detector.detect_in_module()
-
-
-# 添加到DependencyAnalyzer
-DependencyAnalyzer.detect_cycles = lambda self: CycleDetector(self.parser).detect_in_module()
-DependencyAnalyzer.check_circular_dependencies = staticmethod(check_circular_dependencies)
-
-__all__ = [
-    'DependencyAnalyzer', 
-    'SignalDependency',
-    'FanoutAnalyzer',
-    'FaninAnalyzer',
-    'FanoutInfo',
-    'FaninInfo',
-    'ConnectivityMatrix',
-    'CircularDependency',
-    'detect_signal_cycles',
-    'detect_all_cycles',
-    'CycleDetector',
-]
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()

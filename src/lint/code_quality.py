@@ -1,6 +1,8 @@
 """
 CodeQuality - 代码质量综合检查
 整合多驱动检测、死代码检测等功能
+
+增强版: 添加解析警告，显式打印不支持的语法结构
 """
 import sys
 import os
@@ -13,6 +15,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from parse import SVParser
 from trace.driver import DriverCollector
 
+# 导入解析警告模块
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from trace.parse_warn import (
+    ParseWarningHandler,
+    warn_unsupported,
+    warn_error,
+    WarningLevel
+)
+
+
 class IssueType(Enum):
     MULTI_DRIVER = "multi_driver"
     DEAD_CODE = "dead_code"
@@ -21,12 +33,14 @@ class IssueType(Enum):
     COMBINATIONAL_LOOP = "combinational_loop"
     UNINITIALIZED = "uninitialized"
 
+
 class Severity(Enum):
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
     INFO = "info"
+
 
 @dataclass
 class QualityIssue:
@@ -39,6 +53,7 @@ class QualityIssue:
     line: int = 0
     description: str = ""
     suggestion: str = ""
+
 
 @dataclass
 class QualityReport:
@@ -58,12 +73,70 @@ class QualityReport:
     def total_count(self) -> int:
         return len(self.issues)
 
+
 class CodeQualityChecker:
-    """代码质量检查器"""
+    """代码质量检查器
     
-    def __init__(self, parser: SVParser = None):
+    增强: 添加解析警告
+    """
+    
+    # 不支持的语法类型
+    UNSUPPORTED_TYPES = {
+        'CovergroupDeclaration': 'covergroup不影响代码质量检查',
+        'PropertyDeclaration': 'property声明质量检查有限',
+        'SequenceDeclaration': 'sequence声明质量检查有限',
+        'ClassDeclaration': 'class代码质量检查可能不完整',
+        'InterfaceDeclaration': 'interface代码质量检查可能不完整',
+        'PackageDeclaration': 'package代码质量检查有限',
+        'ProgramDeclaration': 'program块代码质量检查可能不完整',
+        'ClockingBlock': 'clocking block代码质量检查有限',
+    }
+    
+    def __init__(self, parser: SVParser = None, verbose: bool = True):
         self.parser = parser
-        self.dc = DriverCollector(parser) if parser else None
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="CodeQualityChecker"
+        )
+        self.dc = DriverCollector(parser, verbose=verbose) if parser else None
+        self._unsupported_encountered = set()
+    
+    def _check_unsupported_syntax(self):
+        """检查不支持的语法"""
+        if not self.parser:
+            return
+        
+        for key, tree in self.parser.trees.items():
+            if not tree or not hasattr(tree, 'root'):
+                continue
+            
+            root = tree.root
+            if hasattr(root, 'members') and root.members:
+                try:
+                    members = list(root.members) if hasattr(root.members, '__iter__') else [root.members]
+                    for member in members:
+                        if member is None:
+                            continue
+                        kind_name = str(member.kind) if hasattr(member, 'kind') else type(member).__name__
+                        
+                        if kind_name in self.UNSUPPORTED_TYPES:
+                            if kind_name not in self._unsupported_encountered:
+                                self.warn_handler.warn_unsupported(
+                                    kind_name,
+                                    context=key,
+                                    suggestion=self.UNSUPPORTED_TYPES[kind_name],
+                                    component="CodeQualityChecker"
+                                )
+                                self._unsupported_encountered.add(kind_name)
+                except Exception as e:
+                    self.warn_handler.warn_error(
+                        "UnsupportedSyntaxCheck",
+                        e,
+                        context=f"file={key}",
+                        component="CodeQualityChecker"
+                    )
     
     def check_multi_driver(self, parser: SVParser = None) -> List[QualityIssue]:
         """检测多驱动问题"""
@@ -71,7 +144,21 @@ class CodeQualityChecker:
             parser = self.parser
         
         issues = []
-        dc = DriverCollector(parser)
+        
+        if not parser:
+            return issues
+        
+        try:
+            dc = DriverCollector(parser, verbose=self.verbose)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "DriverCollectorInit",
+                e,
+                context="check_multi_driver",
+                component="CodeQualityChecker"
+            )
+            return issues
+        
         drivers = dc.drivers
         
         for signal, driver_list in drivers.items():
@@ -115,19 +202,27 @@ class CodeQualityChecker:
             parser = self.parser
         
         issues = []
-        dc = DriverCollector(parser)
-        drivers = dc.drivers
-        loads = dc.loads if hasattr(dc, 'loads') else {}
+        
+        if not parser:
+            return issues
+        
+        try:
+            dc = DriverCollector(parser, verbose=self.verbose)
+            drivers = dc.drivers
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "DriverCollectorInit",
+                e,
+                context="check_unused_signals",
+                component="CodeQualityChecker"
+            )
+            return issues
         
         for signal in drivers:
-            # 检查是否有负载
-            has_load = signal in loads and len(loads[signal]) > 0
-            # 检查是否在port或表达式中使用
-            # 简化版本：检查是否有赋值
+            has_load = signal in drivers and len(drivers[signal]) > 0
             driver_count = len(drivers.get(signal, []))
             
             if driver_count > 0 and not has_load:
-                # 信号被赋值但没有负载，可能是未使用
                 issue = QualityIssue(
                     issue_type=IssueType.UNUSED_SIGNAL,
                     severity=Severity.LOW,
@@ -146,28 +241,36 @@ class CodeQualityChecker:
         
         issues = []
         
-        # 检查always_latch语句
+        if not parser:
+            return issues
+        
         for fname, tree in parser.trees.items():
-            if not tree or not tree.root:
+            if not tree or not hasattr(tree, 'root'):
                 continue
             
-            # 简单的字符串检测
-            content = ""
-            if hasattr(tree, 'source') and tree.source:
-                content = tree.source
-            elif hasattr(tree, 'text'):
-                content = tree.text
-            
-            if 'always_latch' in content or 'always @(*' in content:
-                # 进一步分析
-                issue = QualityIssue(
-                    issue_type=IssueType.LATCH_INFERENCE,
-                    severity=Severity.MEDIUM,
-                    file=fname,
-                    description="检测到 always_latch 或 always @(*) 块",
-                    suggestion="如非故意使用latch，建议改为 always_ff"
+            try:
+                content = ""
+                if hasattr(tree, 'source') and tree.source:
+                    content = tree.source
+                elif hasattr(tree, 'text'):
+                    content = tree.text
+                
+                if 'always_latch' in content or 'always @(*' in content:
+                    issue = QualityIssue(
+                        issue_type=IssueType.LATCH_INFERENCE,
+                        severity=Severity.MEDIUM,
+                        file=fname,
+                        description="检测到 always_latch 或 always @(*) 块",
+                        suggestion="如非故意使用latch，建议改为 always_ff"
+                    )
+                    issues.append(issue)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "LatchInferenceCheck",
+                    e,
+                    context=f"file={fname}",
+                    component="CodeQualityChecker"
                 )
-                issues.append(issue)
         
         return issues
     
@@ -176,16 +279,43 @@ class CodeQualityChecker:
         if parser is None:
             parser = self.parser
         
+        # 先检查不支持的语法
+        self._check_unsupported_syntax()
+        
         all_issues = []
         
         # 多驱动检测
-        all_issues.extend(self.check_multi_driver(parser))
+        try:
+            all_issues.extend(self.check_multi_driver(parser))
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "MultiDriverCheck",
+                e,
+                context="analyze",
+                component="CodeQualityChecker"
+            )
         
         # 未使用信号
-        all_issues.extend(self.check_unused_signals(parser))
+        try:
+            all_issues.extend(self.check_unused_signals(parser))
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "UnusedSignalCheck",
+                e,
+                context="analyze",
+                component="CodeQualityChecker"
+            )
         
         # Latch推断
-        all_issues.extend(self.check_latch_inference(parser))
+        try:
+            all_issues.extend(self.check_latch_inference(parser))
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "LatchInferenceCheck",
+                e,
+                context="analyze",
+                component="CodeQualityChecker"
+            )
         
         # 统计
         statistics = {
@@ -239,13 +369,27 @@ class CodeQualityChecker:
             if len(issues) > 10:
                 lines.append(f"  ... 还有 {len(issues) - 10} 个")
         
+        # 添加警告报告
+        warning_report = self.warn_handler.get_report()
+        if warning_report and "No warnings" not in warning_report:
+            lines.append("\n" + "=" * 70)
+            lines.append("PARSER WARNINGS:")
+            lines.append(warning_report)
+        
         lines.append("\n" + "=" * 70)
         return "\n".join(lines)
+    
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
+    
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()
 
 
 def check_quality(source: str):
     """代码质量检查"""
-    import re
     issues = []
     
     # 检查常见的 code smell

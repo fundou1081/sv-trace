@@ -1,5 +1,7 @@
 """
 SignalFlowAnalyzer - 统一信号流分析器 + 代码召回
+
+增强版: 添加解析警告，显式打印不支持的语法结构
 """
 import sys
 import os
@@ -7,8 +9,17 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from dataclasses import dataclass, field
-from typing import List, Set
+from typing import List, Set, Dict
 import re
+
+# 导入解析警告模块
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from trace.parse_warn import (
+    ParseWarningHandler,
+    warn_unsupported,
+    warn_error,
+    WarningLevel
+)
 
 
 @dataclass
@@ -39,15 +50,38 @@ def offset_to_line(content: str, offset: int) -> int:
 
 
 class ScopeExtractor:
-    """Scope 代码召回器"""
+    """Scope 代码召回器
+    
+    增强: 解析过程中显式打印不支持的语法结构
+    """
     MAX_LINES = 40
     SCOPE_STARTS: Set[str] = {
         'always_ff', 'always_comb', 'always_latch',
         'function', 'task', 'module', 'interface', 'program', 'generate',
     }
     
-    def __init__(self, parser):
+    # 不支持的语法类型
+    UNSUPPORTED_TYPES = {
+        'CovergroupDeclaration': 'covergroup不影响信号流分析',
+        'PropertyDeclaration': 'property声明无信号流',
+        'SequenceDeclaration': 'sequence声明无信号流',
+        'ClassDeclaration': 'class内部信号流分析可能不完整',
+        'InterfaceDeclaration': 'interface内部信号流分析可能不完整',
+        'PackageDeclaration': 'package无信号流',
+        'ProgramDeclaration': 'program块信号流分析可能不完整',
+        'ClockingBlock': 'clocking block信号流分析有限',
+        'ModportItem': 'modport信号流分析有限',
+    }
+    
+    def __init__(self, parser, verbose: bool = True):
         self.parser = parser
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="ScopeExtractor"
+        )
+        self._unsupported_encountered: Set[str] = set()
     
     def extract_with_scope(self, signal_name: str, max_lines: int = None) -> List[dict]:
         if max_lines is None:
@@ -57,6 +91,10 @@ class ScopeExtractor:
         
         for file_path, tree in self.parser.trees.items():
             if not tree or not hasattr(tree, 'root'):
+                self.warn_handler.warn_info(
+                    f"文件 {file_path} 解析树为空",
+                    context="SignalFlowAnalysis"
+                )
                 continue
             
             root = tree.root
@@ -64,28 +102,64 @@ class ScopeExtractor:
             try:
                 with open(file_path, 'r') as f:
                     content = f.read()
-            except:
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "FileRead",
+                    e,
+                    context=f"file={file_path}",
+                    component="ScopeExtractor"
+                )
                 continue
             
             # 信号定义
-            info = self._find_signal_location(root, signal_name, file_path, content)
-            if info:
-                snippet = self._extract_scope_code(
-                    file_path, info['line'], signal_name, max_lines
+            try:
+                info = self._find_signal_location(root, signal_name, file_path, content)
+                if info:
+                    snippet = self._extract_scope_code(
+                        file_path, info['line'], signal_name, max_lines
+                    )
+                    if snippet:
+                        snippets.append(snippet)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "SignalLocationSearch",
+                    e,
+                    context=f"signal={signal_name}",
+                    component="ScopeExtractor"
                 )
-                if snippet:
-                    snippets.append(snippet)
             
             # 信号赋值
-            usage_lines = self._find_signal_usage(root, signal_name, content)
-            for line in usage_lines:
-                snippet = self._extract_scope_code(
-                    file_path, line, signal_name, max_lines
+            try:
+                usage_lines = self._find_signal_usage(root, signal_name, content)
+                for line in usage_lines:
+                    snippet = self._extract_scope_code(
+                        file_path, line, signal_name, max_lines
+                    )
+                    if snippet and not any(s['target_line'] == line for s in snippets):
+                        snippets.append(snippet)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "SignalUsageSearch",
+                    e,
+                    context=f"signal={signal_name}",
+                    component="ScopeExtractor"
                 )
-                if snippet and not any(s['target_line'] == line for s in snippets):
-                    snippets.append(snippet)
         
         return snippets
+    
+    def _check_unsupported_node(self, node, source: str = ""):
+        """检查不支持的节点类型"""
+        kind_name = str(node.kind) if hasattr(node, 'kind') else type(node).__name__
+        
+        if kind_name in self.UNSUPPORTED_TYPES:
+            if kind_name not in self._unsupported_encountered:
+                self.warn_handler.warn_unsupported(
+                    kind_name,
+                    context=source,
+                    suggestion=self.UNSUPPORTED_TYPES[kind_name],
+                    component="ScopeExtractor"
+                )
+                self._unsupported_encountered.add(kind_name)
     
     def _find_signal_location(self, root, signal_name: str, file_path: str, content: str) -> dict:
         members = getattr(root, 'members', None)
@@ -113,6 +187,12 @@ class ScopeExtractor:
                             offset = rng.start.offset
                             line = offset_to_line(content, offset)
                             return {'file': file_path, 'line': line, 'offset': offset}
+                    else:
+                        # 检查不支持的类型
+                        self._check_unsupported_node(mm, file_path)
+            else:
+                # 顶层成员
+                self._check_unsupported_node(member, file_path)
         
         return None
     
@@ -125,28 +205,31 @@ class ScopeExtractor:
             if not node:
                 return
             
-            if 'AssignmentExpression' in str(type(node)):
-                left = getattr(node, 'left', None)
-                if left:
-                    try:
-                        left_str = str(left).strip()
-                        if signal_name == left_str or (left_str.startswith(signal_name + '[') and signal_name in left_str):
-                            rng = getattr(node, 'sourceRange', None)
-                            if rng:
-                                lines.append(offset_to_line(content, rng.start.offset))
-                    except:
-                        pass
-            
-            for attr in ['members', 'body', 'statements', 'items', 'left', 'right', 
-                       'expression', 'expressions', 'predicate', 'condition']:
-                if hasattr(node, attr):
-                    child = getattr(node, attr)
-                    if child:
-                        if isinstance(child, list):
-                            for c in child:
-                                visit(c, depth+1)
-                        else:
-                            visit(child, depth+1)
+            try:
+                if 'AssignmentExpression' in str(type(node)):
+                    left = getattr(node, 'left', None)
+                    if left:
+                        try:
+                            left_str = str(left).strip()
+                            if signal_name == left_str or (left_str.startswith(signal_name + '[') and signal_name in left_str):
+                                rng = getattr(node, 'sourceRange', None)
+                                if rng:
+                                    lines.append(offset_to_line(content, rng.start.offset))
+                        except Exception:
+                            pass
+                
+                for attr in ['members', 'body', 'statements', 'items', 'left', 'right', 
+                           'expression', 'expressions', 'predicate', 'condition']:
+                    if hasattr(node, attr):
+                        child = getattr(node, attr)
+                        if child:
+                            if isinstance(child, list):
+                                for c in child:
+                                    visit(c, depth+1)
+                            else:
+                                visit(child, depth+1)
+            except Exception:
+                pass
         
         visit(root)
         return list(set(lines))
@@ -156,7 +239,13 @@ class ScopeExtractor:
         try:
             with open(file_path, 'r') as f:
                 lines = f.readlines()
-        except:
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "CodeExtraction",
+                e,
+                context=f"file={file_path}",
+                component="ScopeExtractor"
+            )
             return None
         
         total_lines = len(lines)
@@ -262,11 +351,30 @@ class ScopeExtractor:
                     result.append(line)
             return '\n'.join(result)
         return code
+    
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
+    
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()
 
 
 class SignalFlowAnalyzer:
-    def __init__(self, parser):
+    """信号流分析器
+    
+    增强: 解析过程中显式打印不支持的语法结构
+    """
+    
+    def __init__(self, parser, verbose: bool = True):
         self.parser = parser
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="SignalFlowAnalyzer"
+        )
         self._driver = None
         self._load = None
         self._cf = None
@@ -274,26 +382,62 @@ class SignalFlowAnalyzer:
     
     def _get_driver(self):
         if not self._driver:
-            from .driver import DriverTracer
-            self._driver = DriverTracer(self.parser)
+            try:
+                from .driver import DriverTracer
+                self._driver = DriverTracer(self.parser)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "DriverTracerInit",
+                    e,
+                    context="SignalFlowAnalyzer",
+                    component="SignalFlowAnalyzer"
+                )
+                return None
         return self._driver
     
     def _get_load(self):
         if not self._load:
-            from .load import LoadTracer
-            self._load = LoadTracer(self.parser)
+            try:
+                from .load import LoadTracer
+                self._load = LoadTracer(self.parser)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "LoadTracerInit",
+                    e,
+                    context="SignalFlowAnalyzer",
+                    component="SignalFlowAnalyzer"
+                )
+                return None
         return self._load
     
     def _get_cf(self):
         if not self._cf:
-            from .controlflow import ControlFlowTracer
-            self._cf = ControlFlowTracer(self.parser)
+            try:
+                from .controlflow import ControlFlowTracer
+                self._cf = ControlFlowTracer(self.parser)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "ControlFlowTracerInit",
+                    e,
+                    context="SignalFlowAnalyzer",
+                    component="SignalFlowAnalyzer"
+                )
+                return None
         return self._cf
     
     def _get_bs(self):
         if not self._bs:
-            from .bitselect import BitSelectTracer
-            self._bs = BitSelectTracer(self.parser)
+            try:
+                from .bitselect import BitSelectTracer
+                self._bs = BitSelectTracer(self.parser)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "BitSelectTracerInit",
+                    e,
+                    context="SignalFlowAnalyzer",
+                    component="SignalFlowAnalyzer"
+                )
+                return None
         return self._bs
     
     def analyze(self, signal_path: str) -> SignalFlow:
@@ -302,33 +446,81 @@ class SignalFlowAnalyzer:
         node = FlowNode(signal_name=signal_name)
         flow = SignalFlow(root_signal=signal_name, path=signal_path, node=node)
         
-        drivers = self._get_driver().find_driver(signal_name)
-        node.drivers = [{'kind': d.kind.name, 'expr': d.sources[0] if d.sources else ''} for d in drivers]
+        try:
+            driver_tracer = self._get_driver()
+            if driver_tracer:
+                drivers = driver_tracer.find_driver(signal_name)
+                node.drivers = [{'kind': d.kind.name, 'expr': d.sources[0] if d.sources else ''} for d in drivers]
+                
+                for d in drivers:
+                    sigs = self._extract_signals(d.sources[0] if d.sources else '')
+                    for s in sigs:
+                        if s not in flow.upstream_signals and s != signal_name:
+                            flow.upstream_signals.append(s)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "DriverAnalysis",
+                e,
+                context=f"signal={signal_name}",
+                component="SignalFlowAnalyzer"
+            )
         
-        for d in drivers:
-            sigs = self._extract_signals(d.sources[0] if d.sources else '')
-            for s in sigs:
-                if s not in flow.upstream_signals and s != signal_name:
-                    flow.upstream_signals.append(s)
+        try:
+            load_tracer = self._get_load()
+            if load_tracer:
+                loads = load_tracer.find_load(signal_name)
+                node.loads = [{'signal': l.signal_name} for l in loads]
+                
+                for l in loads:
+                    if l.context:
+                        sigs = self._extract_signals(l.context)
+                        for s in sigs:
+                            if s not in flow.downstream_signals and s != signal_name:
+                                flow.downstream_signals.append(s)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "LoadAnalysis",
+                e,
+                context=f"signal={signal_name}",
+                component="SignalFlowAnalyzer"
+            )
         
-        loads = self._get_load().find_load(signal_name)
-        node.loads = [{'signal': l.signal_name} for l in loads]
+        try:
+            cf_tracer = self._get_cf()
+            if cf_tracer:
+                cf = cf_tracer.find_control_dependencies(signal_name)
+                node.controlling_signals = cf.controlling_signals if hasattr(cf, 'controlling_signals') else []
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "ControlFlowAnalysis",
+                e,
+                context=f"signal={signal_name}",
+                component="SignalFlowAnalyzer"
+            )
         
-        for l in loads:
-            if l.context:
-                sigs = self._extract_signals(l.context)
-                for s in sigs:
-                    if s not in flow.downstream_signals and s != signal_name:
-                        flow.downstream_signals.append(s)
+        try:
+            bs_tracer = self._get_bs()
+            if bs_tracer:
+                bs = bs_tracer.trace_signal_with_bitselect(signal_name)
+                node.has_bit_selection = bs.get('has_bit_selection', False)
+                node.driven_bits = bs_tracer.get_driven_bits(signal_name)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "BitSelectAnalysis",
+                e,
+                context=f"signal={signal_name}",
+                component="SignalFlowAnalyzer"
+            )
         
-        cf = self._get_cf().find_control_dependencies(signal_name)
-        node.controlling_signals = cf.controlling_signals
-        
-        bs = self._get_bs().trace_signal_with_bitselect(signal_name)
-        node.has_bit_selection = bs['has_bit_selection']
-        node.driven_bits = self._get_bs().get_driven_bits(signal_name)
-        
-        flow.code_snippets = ScopeExtractor(self.parser).extract_with_scope(signal_name)
+        try:
+            flow.code_snippets = ScopeExtractor(self.parser, verbose=self.verbose).extract_with_scope(signal_name)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "CodeSnippetExtraction",
+                e,
+                context=f"signal={signal_name}",
+                component="SignalFlowAnalyzer"
+            )
         
         return flow
     
@@ -420,12 +612,27 @@ class SignalFlowAnalyzer:
             else:
                 lines.append(f"     Code:\n{raw}")
         
+        # 添加警告报告
+        warning_report = self.warn_handler.get_report()
+        if warning_report and "No warnings" not in warning_report:
+            lines.append("\n" + "=" * 60)
+            lines.append("PARSER WARNINGS:")
+            lines.append(warning_report)
+        
         return '\n'.join(lines)
+    
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
+    
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()
 
 
-def analyze_signal(parser, signal_path: str):
-    return SignalFlowAnalyzer(parser).analyze(signal_path)
+def analyze_signal(parser, signal_path: str, verbose: bool = True):
+    return SignalFlowAnalyzer(parser, verbose=verbose).analyze(signal_path)
 
 
-def visualize_signal(parser, signal_path: str):
-    return SignalFlowAnalyzer(parser).visualize(signal_path)
+def visualize_signal(parser, signal_path: str, verbose: bool = True):
+    return SignalFlowAnalyzer(parser, verbose=verbose).visualize(signal_path)

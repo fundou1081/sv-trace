@@ -1,79 +1,33 @@
 """
 Parse 模块 - SystemVerilog 代码解析
 """
-from .parser import SVParser, get_source_safe, GlobalParseCache, parse_file_cached
+from .parser import SVParser, get_source_safe
 from .extractors import (
     ModuleExtractor,
     SignalExtractor,
     PortAnalyzer,
+    InstanceExtractor,
+    AlwaysBlockExtractor,
+    extract_signals,
+    extract_instances,
+    extract_always_blocks
 )
-from .params import ParameterResolver
-from .class_utils import ClassExtractor
-from .constraint import ConstraintExtractor
-from .covergroup import CovergroupExtractor
-from .assertion import AssertionExtractor
-
-# SV 独有语法
-from .interface import InterfaceExtractor, InterfaceDef, ModportDef, ClockingDef
-from .package import PackageExtractor, PackageDef, ProgramDef, PackageItem
-from .generate import GenerateExtractor, GenerateBlock, GenerateItem
-from .continuous_assign import AssignExtractor, ContinuousAssign
-
-# 验证语法 (2026-04-30 新增)
-from .verification_syntax import VerificationSyntaxExtractor
+from .class_utils import ClassExtractor, get_classes
+from pyslang_helper import SVParser as PyslangHelperParser, extract_all
 
 __all__ = [
-    # Core
-    "SVParser",
-    "ModuleExtractor", 
-    "SignalExtractor",
-    "PortAnalyzer",
-    "ParameterResolver",
-    "ClassExtractor",
-    "ConstraintExtractor",
-    "CovergroupExtractor",
-    "AssertionExtractor",
-    "get_source_safe",
-    "GlobalParseCache",
-    "parse_file_cached",
-    # SV 独有语法
-    "InterfaceExtractor",
-    "InterfaceDef",
-    "ModportDef", 
-    "ClockingDef",
-    "PackageExtractor",
-    "PackageDef",
-    "ProgramDef",
-    "PackageItem",
-    "GenerateExtractor",
-    "GenerateBlock",
-    "GenerateItem",
-    # 连续赋值
-    "AssignExtractor",
-    "ContinuousAssign",
-    # 验证语法
-    "VerificationSyntaxExtractor",
-]
-
-# 新增解析器 (2026-04-30)
-from .clocking import ClockingExtractor, ClockingDef, ClockingItem
-from .checker import CheckerExtractor, CheckerDef, CheckerProperty
-from .rand_extractor import RandExtractor, RandClass, RandVariable
-from .time_region import TimeRegionExtractor, TimeUnit, TimeRegion, ForkItem
-
-__all__ += [
-    # 新增解析器
-    "ClockingExtractor",
-    "ClockingDef",
-    "ClockingItem",
-    "CheckerExtractor", 
-    "CheckerDef",
-    "CheckerProperty",
-    "RandExtractor",
-    "RandClass",
-    "RandVariable",
-    "TimeRegionExtractor",
-    "TimeUnit",
-    "TimeRegion",
-    "ForkItem",
+    'SVParser',
+    'get_source_safe',
+    'ModuleExtractor',
+    'SignalExtractor', 
+    'PortAnalyzer',
+    'InstanceExtractor',
+    'AlwaysBlockExtractor',
+    'extract_signals',
+    'extract_instances',
+    'extract_always_blocks',
+    'ClassExtractor',
+    'get_classes',
+    'PyslangHelperParser',
+    'extract_all',
 ]

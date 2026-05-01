@@ -1,6 +1,8 @@
 """
 PowerEstimator - 功耗估算器 (简单实现)
 基于静态RTL分析的功耗估算
+
+增强版: 添加解析警告，显式打印不支持的语法结构
 """
 import sys
 import os
@@ -9,6 +11,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+# 导入解析警告模块
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from trace.parse_warn import (
+    ParseWarningHandler,
+    warn_unsupported,
+    warn_error,
+    WarningLevel
+)
 
 # 功耗常量 (pJ per toggle @ 16nm 工艺)
 POWER_CONSTANTS = {
@@ -79,40 +89,101 @@ class PowerResult:
         lines.append("=" * 60)
         lines.append(f"POWER ESTIMATION: {self.module_name}")
         lines.append("=" * 60)
-        
-        lines.append(f"\n⏱️ Clock: {self.clock_mhz} MHz")
-        
-        lines.append(f"\n📊 Resources:")
-        lines.append(f"  LUTs: {self.luts:,}")
-        lines.append(f"  FFs:  {self.ffs:,}")
-        lines.append(f"  DSPs: {self.dsps:,}")
-        lines.append(f"  BRAM: {self.brams:,}")
-        
-        lines.append(f"\n⚡ Power Breakdown (Simple):")
+        lines.append(f"Clock: {self.clock_mhz} MHz")
+        lines.append(f"\nResources:")
+        lines.append(f"  LUTs: {self.luts}")
+        lines.append(f"  FFs:  {self.ffs}")
+        lines.append(f"  DSPs: {self.dsps}")
+        lines.append(f"  BRAMs: {self.brams}")
+        lines.append(f"  I/Os: {self.ios}")
+        lines.append(f"\nPower Breakdown:")
         lines.append(self.breakdown.visualize())
-        
-        lines.append(f"\n📐 Method: {self.method}")
-        
         lines.append("=" * 60)
         return '\n'.join(lines)
 
 
 class PowerEstimator:
-    """功耗估算器 (简单实现)"""
+    """功耗估算器
     
-    def __init__(self, parser):
+    增强: 添加解析警告
+    """
+    
+    # 不支持的语法类型
+    UNSUPPORTED_TYPES = {
+        'CovergroupDeclaration': 'covergroup不影响功耗估算',
+        'PropertyDeclaration': 'property声明无功耗',
+        'SequenceDeclaration': 'sequence声明无功耗',
+        'ClassDeclaration': 'class内部功耗估算可能不完整',
+        'InterfaceDeclaration': 'interface内部功耗估算可能不完整',
+        'PackageDeclaration': 'package无功耗',
+        'ProgramDeclaration': 'program块功耗估算可能不完整',
+        'ClockingBlock': 'clocking block功耗估算有限',
+    }
+    
+    def __init__(self, parser, verbose: bool = True):
         self.parser = parser
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="PowerEstimator"
+        )
         self._resource = None
+        self._unsupported_encountered = set()
+    
+    def _check_unsupported_syntax(self):
+        """检查不支持的语法"""
+        for key, tree in self.parser.trees.items():
+            if not tree or not hasattr(tree, 'root'):
+                continue
+            
+            root = tree.root
+            if hasattr(root, 'members') and root.members:
+                try:
+                    members = list(root.members) if hasattr(root.members, '__iter__') else [root.members]
+                    for member in members:
+                        if member is None:
+                            continue
+                        kind_name = str(member.kind) if hasattr(member, 'kind') else type(member).__name__
+                        
+                        if kind_name in self.UNSUPPORTED_TYPES:
+                            if kind_name not in self._unsupported_encountered:
+                                self.warn_handler.warn_unsupported(
+                                    kind_name,
+                                    context=key,
+                                    suggestion=self.UNSUPPORTED_TYPES[kind_name],
+                                    component="PowerEstimator"
+                                )
+                                self._unsupported_encountered.add(kind_name)
+                except Exception as e:
+                    self.warn_handler.warn_error(
+                        "UnsupportedSyntaxCheck",
+                        e,
+                        context=f"file={key}",
+                        component="PowerEstimator"
+                    )
     
     def _get_resource(self):
         if not self._resource:
-            from .resource_estimation import ResourceEstimation
-            self._resource = ResourceEstimation(self.parser)
+            try:
+                from .resource_estimation import ResourceEstimation
+                self._resource = ResourceEstimation(self.parser, verbose=self.verbose)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "ResourceEstimatorInit",
+                    e,
+                    context="PowerEstimator",
+                    component="PowerEstimator"
+                )
+                return None
         return self._resource
     
     def estimate(self, module_name: str = None, 
                 clock_mhz: float = 100.0) -> PowerResult:
         """估算功耗"""
+        
+        # 先检查不支持的语法
+        self._check_unsupported_syntax()
         
         # 获取模块名
         if not module_name:
@@ -123,24 +194,41 @@ class PowerEstimator:
             clock_mhz=clock_mhz
         )
         
-        # 1. 获取资源统计
-        res = self._get_resource().analyze_module(module_name)
+        try:
+            # 1. 获取资源统计
+            res = self._get_resource().analyze_module(module_name) if self._get_resource() else None
+            
+            if res:
+                result.luts = res.lut_count
+                result.ffs = res.ff_count
+                result.dsps = res.dsp_count
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "ResourceAnalysis",
+                e,
+                context=f"module={module_name}",
+                component="PowerEstimator"
+            )
         
-        result.luts = res.lut_count
-        result.ffs = res.ff_count
-        result.dsps = res.dsp_count
-        
-        # 2. 估算功耗 (简单方法)
-        breakdown = self._simple_estimate(
-            result.luts,
-            result.ffs,
-            result.dsps,
-            0,  # BRAM
-            0,  # IO
-            clock_mhz
-        )
-        
-        result.breakdown = breakdown
+        try:
+            # 2. 估算功耗 (简单方法)
+            breakdown = self._simple_estimate(
+                result.luts,
+                result.ffs,
+                result.dsps,
+                0,  # BRAM
+                0,  # IO
+                clock_mhz
+            )
+            
+            result.breakdown = breakdown
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "PowerEstimation",
+                e,
+                context=f"module={module_name}",
+                component="PowerEstimator"
+            )
         
         return result
     
@@ -186,16 +274,32 @@ class PowerEstimator:
     def _get_default_module(self) -> str:
         for fname, tree in self.parser.trees.items():
             if tree and hasattr(tree, 'root'):
-                import pyslang
-                for m in tree.root.members:
-                    if m.kind == pyslang.SyntaxKind.ModuleDeclaration:
-                        if hasattr(m, 'header'):
-                            return str(m.header.name).strip()
+                try:
+                    import pyslang
+                    for m in tree.root.members:
+                        if m.kind == pyslang.SyntaxKind.ModuleDeclaration:
+                            if hasattr(m, 'header'):
+                                return str(m.header.name).strip()
+                except Exception as e:
+                    self.warn_handler.warn_error(
+                        "ModuleNameSearch",
+                        e,
+                        context=f"file={fname}",
+                        component="PowerEstimator"
+                    )
         return "unknown"
+    
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
+    
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()
 
 
 def estimate_power(parser, module_name: str = None, 
-                clock_mhz: float = 100.0) -> PowerResult:
+                clock_mhz: float = 100.0, verbose: bool = True) -> PowerResult:
     """便捷函数"""
-    est = PowerEstimator(parser)
+    est = PowerEstimator(parser, verbose=verbose)
     return est.estimate(module_name, clock_mhz)

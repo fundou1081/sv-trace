@@ -1,6 +1,8 @@
 """
 位选信号分析 - Bit Selection Analysis
 支持追踪信号的部分选择 (signal[3:0], signal[idx], signal[msb:lsb])
+
+增强版: 添加解析警告，显式打印不支持的语法结构
 """
 import sys
 import os
@@ -10,6 +12,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 import re
+
+# 导入解析警告模块
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from trace.parse_warn import (
+    ParseWarningHandler,
+    warn_unsupported,
+    warn_error,
+    WarningLevel
+)
 
 
 @dataclass
@@ -41,10 +52,19 @@ class BitSelect:
 
 
 class BitSelectExtractor:
-    """位选提取器"""
+    """位选提取器
     
-    def __init__(self, parser):
+    增强: 添加解析警告
+    """
+    
+    def __init__(self, parser, verbose: bool = True):
         self.parser = parser
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="BitSelectExtractor"
+        )
     
     def extract(self, expr: str) -> List[BitSelect]:
         if not expr:
@@ -53,13 +73,21 @@ class BitSelectExtractor:
         results = []
         pattern = r'(\w+)\[([^\]]+)\]'
         
-        for match in re.finditer(pattern, expr):
-            signal_name = match.group(1)
-            select_expr = match.group(2)
-            
-            bit_select = self._parse_select(signal_name, select_expr)
-            if bit_select:
-                results.append(bit_select)
+        try:
+            for match in re.finditer(pattern, expr):
+                signal_name = match.group(1)
+                select_expr = match.group(2)
+                
+                bit_select = self._parse_select(signal_name, select_expr)
+                if bit_select:
+                    results.append(bit_select)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "BitSelectExtraction",
+                e,
+                context=f"expr={expr[:50]}",
+                component="BitSelectExtractor"
+            )
         
         return results
     
@@ -67,30 +95,39 @@ class BitSelectExtractor:
         result = BitSelect(signal_name=signal_name, select_expr=select_expr)
         select_expr = select_expr.strip()
         
-        # 单bit [3]
-        if re.match(r'^\d+$', select_expr):
-            result.is_single_bit = True
-            result.msb = int(select_expr)
-            result.lsb = int(select_expr)
+        try:
+            # 单bit [3]
+            if re.match(r'^\d+$', select_expr):
+                result.is_single_bit = True
+                result.msb = int(select_expr)
+                result.lsb = int(select_expr)
+                return result
+            
+            # 范围 [3:0]
+            if ':' in select_expr:
+                parts = select_expr.split(':')
+                if len(parts) == 2:
+                    msb_str = parts[0].strip()
+                    lsb_str = parts[1].strip()
+                    
+                    if msb_str.isdigit() and lsb_str.isdigit():
+                        result.is_range = True
+                        result.is_single_bit = (msb_str == lsb_str)
+                        result.msb = int(msb_str)
+                        result.lsb = int(lsb_str)
+                        return result
+            
+            # 变量索引
+            result.is_index = True
             return result
-        
-        # 范围 [3:0]
-        if ':' in select_expr:
-            parts = select_expr.split(':')
-            if len(parts) == 2:
-                msb_str = parts[0].strip()
-                lsb_str = parts[1].strip()
-                
-                if msb_str.isdigit() and lsb_str.isdigit():
-                    result.is_range = True
-                    result.is_single_bit = (msb_str == lsb_str)
-                    result.msb = int(msb_str)
-                    result.lsb = int(lsb_str)
-                    return result
-        
-        # 变量索引
-        result.is_index = True
-        return result
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "SelectParsing",
+                e,
+                context=f"signal={signal_name}, expr={select_expr}",
+                component="BitSelectExtractor"
+            )
+            return result
     
     def match_signal(self, expr: str, target_base: str) -> bool:
         if not expr:
@@ -122,32 +159,67 @@ class BitSelectExtractor:
 
 
 class BitSelectTracer:
-    """位选追踪器"""
+    """位选追踪器
     
-    def __init__(self, parser):
+    增强: 添加解析警告
+    """
+    
+    def __init__(self, parser, verbose: bool = True):
         self.parser = parser
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="BitSelectTracer"
+        )
         self.driver_tracer = None
         self.load_tracer = None
-        self.extractor = BitSelectExtractor(parser)
+        self.extractor = BitSelectExtractor(parser, verbose=verbose)
     
     def _get_driver_tracer(self):
         if not self.driver_tracer:
-            from .driver import DriverTracer
-            self.driver_tracer = DriverTracer(self.parser)
+            try:
+                from .driver import DriverTracer
+                self.driver_tracer = DriverTracer(self.parser, verbose=self.verbose)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "DriverTracerInit",
+                    e,
+                    context="BitSelectTracer",
+                    component="BitSelectTracer"
+                )
         return self.driver_tracer
     
     def _get_load_tracer(self):
         if not self.load_tracer:
-            from .load import LoadTracer
-            self.load_tracer = LoadTracer(self.parser)
+            try:
+                from .load import LoadTracer
+                self.load_tracer = LoadTracer(self.parser, verbose=self.verbose)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "LoadTracerInit",
+                    e,
+                    context="BitSelectTracer",
+                    component="BitSelectTracer"
+                )
         return self.load_tracer
     
     def find_bit_drivers(self, signal_name: str) -> List[Tuple[str, BitSelect]]:
         """查找信号的位选驱动"""
         tracer = self._get_driver_tracer()
+        if not tracer:
+            return []
         
-        # 使用新的 find_driver 包含位选驱动
-        drivers = tracer.find_driver(signal_name, include_bit_select=True)
+        try:
+            drivers = tracer.find_driver(signal_name, include_bit_select=True)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "BitDriverSearch",
+                e,
+                context=f"signal={signal_name}",
+                component="BitSelectTracer"
+            )
+            return []
         
         results = []
         for d in drivers:
@@ -163,7 +235,19 @@ class BitSelectTracer:
     def find_bit_loads(self, signal_name: str) -> List[Tuple[str, BitSelect]]:
         """查找信号的位选负载"""
         tracer = self._get_load_tracer()
-        loads = tracer.find_load(signal_name)
+        if not tracer:
+            return []
+        
+        try:
+            loads = tracer.find_load(signal_name)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "BitLoadSearch",
+                e,
+                context=f"signal={signal_name}",
+                component="BitSelectTracer"
+            )
+            return []
         
         results = []
         for l in loads:
@@ -206,3 +290,11 @@ class BitSelectTracer:
                     driven_bits.add(b)
         
         return sorted(list(driven_bits))
+    
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
+    
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()

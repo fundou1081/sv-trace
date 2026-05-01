@@ -1,6 +1,8 @@
 """
 PipelineAnalyzer - 流水线结构分析器
 基于 DataPathAnalyzer 实现，增强handshaking 检测
+
+增强版: 添加解析警告，显式打印不支持的语法结构
 """
 import sys
 import os
@@ -10,6 +12,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from dataclasses import dataclass, field
 from typing import List, Set, Dict, Optional
+
+# 导入解析警告模块
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from trace.parse_warn import (
+    ParseWarningHandler,
+    warn_unsupported,
+    warn_error,
+    WarningLevel
+)
 
 
 @dataclass 
@@ -110,40 +121,114 @@ class PipelineInfo:
 
 
 class PipelineAnalyzer:
-    """流水线分析器 - 基于 DataPathAnalyzer"""
+    """流水线分析器 - 基于 DataPathAnalyzer
     
-    def __init__(self, parser):
+    增强: 添加解析警告
+    """
+    
+    # 不支持的语法类型
+    UNSUPPORTED_TYPES = {
+        'CovergroupDeclaration': 'covergroup不影响流水线分析',
+        'PropertyDeclaration': 'property声明无流水线',
+        'SequenceDeclaration': 'sequence声明无流水线',
+        'ClassDeclaration': 'class内部流水线分析可能不完整',
+        'InterfaceDeclaration': 'interface内部流水线分析可能不完整',
+        'PackageDeclaration': 'package无流水线',
+        'ProgramDeclaration': 'program块流水线分析可能不完整',
+        'ClockingBlock': 'clocking block流水线分析有限',
+    }
+    
+    def __init__(self, parser, verbose: bool = True):
         self.parser = parser
+        self.verbose = verbose
+        # 创建警告处理器
+        self.warn_handler = ParseWarningHandler(
+            verbose=verbose,
+            component="PipelineAnalyzer"
+        )
         self._datapath = None
+        self._unsupported_encountered = set()
+    
+    def _check_unsupported_syntax(self):
+        """检查不支持的语法"""
+        for key, tree in self.parser.trees.items():
+            if not tree or not hasattr(tree, 'root'):
+                continue
+            
+            root = tree.root
+            if hasattr(root, 'members') and root.members:
+                try:
+                    members = list(root.members) if hasattr(root.members, '__iter__') else [root.members]
+                    for member in members:
+                        if member is None:
+                            continue
+                        kind_name = str(member.kind) if hasattr(member, 'kind') else type(member).__name__
+                        
+                        if kind_name in self.UNSUPPORTED_TYPES:
+                            if kind_name not in self._unsupported_encountered:
+                                self.warn_handler.warn_unsupported(
+                                    kind_name,
+                                    context=key,
+                                    suggestion=self.UNSUPPORTED_TYPES[kind_name],
+                                    component="PipelineAnalyzer"
+                                )
+                                self._unsupported_encountered.add(kind_name)
+                except Exception as e:
+                    self.warn_handler.warn_error(
+                        "UnsupportedSyntaxCheck",
+                        e,
+                        context=f"file={key}",
+                        component="PipelineAnalyzer"
+                    )
     
     def _get_datapath(self):
         if not self._datapath:
-            from trace.datapath import DataPathAnalyzer
-            self._datapath = DataPathAnalyzer(self.parser)
+            try:
+                from trace.datapath import DataPathAnalyzer
+                self._datapath = DataPathAnalyzer(self.parser, verbose=self.verbose)
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "DataPathAnalyzerInit",
+                    e,
+                    context="PipelineAnalyzer",
+                    component="PipelineAnalyzer"
+                )
         return self._datapath
     
     def analyze(self, module_name: str = None, 
                signal: str = None) -> PipelineInfo:
         """分析流水线"""
+        # 先检查不支持的语法
+        self._check_unsupported_syntax()
+        
         info = PipelineInfo(name=module_name or "pipeline")
         
         # 1. 使用 DataPathAnalyzer 获取 stages
         if signal:
             dp = self._get_datapath()
-            result = dp.analyze(signal, max_depth=20)
-            
-            # 转换 stages
-            if result.stages:
-                for i, s in enumerate(result.stages):
-                    stage = StageInfo(
-                        name=s.name,
-                        registers=s.signals,
-                        clock=s.clock,
-                        enable=s.enable,
-                        reset=s.reset,
-                        stage_id=i
+            if dp:
+                try:
+                    result = dp.analyze(signal, max_depth=20)
+                    
+                    # 转换 stages
+                    if result.stages:
+                        for i, s in enumerate(result.stages):
+                            stage = StageInfo(
+                                name=s.name,
+                                registers=s.signals,
+                                clock=s.clock,
+                                enable=s.enable,
+                                reset=s.reset,
+                                stage_id=i
+                            )
+                            info.stages.append(stage)
+                except Exception as e:
+                    self.warn_handler.warn_error(
+                        "DataPathAnalysis",
+                        e,
+                        context=f"signal={signal}",
+                        component="PipelineAnalyzer"
                     )
-                    info.stages.append(stage)
         
         # 2. 如果没有指定信号，尝试分析所有 FF 信号
         if not signal and module_name:
@@ -160,6 +245,8 @@ class PipelineAnalyzer:
         
         # 使用 datapath 分析所有信号
         dp = self._get_datapath()
+        if not dp:
+            return info
         
         # 收集所有逻辑信号
         all_signals = set()
@@ -176,8 +263,13 @@ class PipelineAnalyzer:
                 result = dp.analyze(sig, max_depth=5)
                 if result.stages:
                     stage_map[sig] = result.stages
-            except:
-                pass
+            except Exception as e:
+                self.warn_handler.warn_error(
+                    "SignalAnalysis",
+                    e,
+                    context=f"signal={sig}",
+                    component="PipelineAnalyzer"
+                )
         
         # 转换为 StageInfo
         all_stages = []
@@ -210,27 +302,35 @@ class PipelineAnalyzer:
         if node is None:
             return
         
-        # ModuleDeclaration
-        if 'ModuleDeclaration' in type(node).__name__:
-            if hasattr(node, 'members') and node.members:
-                for m in node.members:
-                    self._collect_signals(m, signals)
-        
-        # VariableDeclarations
-        elif 'VariableDeclarations' in type(node).__name__:
-            decl = getattr(node, 'declarators', [])
-            if decl:
-                for d in decl:
-                    if hasattr(d, 'name'):
-                        signals.add(str(d.name))
-        
-        # 递归
-        for attr in ['members', 'items', 'body']:
-            if hasattr(node, attr):
-                children = getattr(node, attr)
-                if children and hasattr(children, '__iter__'):
-                    for child in children:
-                        self._collect_signals(child, signals)
+        try:
+            # ModuleDeclaration
+            if 'ModuleDeclaration' in type(node).__name__:
+                if hasattr(node, 'members') and node.members:
+                    for m in node.members:
+                        self._collect_signals(m, signals)
+            
+            # VariableDeclarations
+            elif 'VariableDeclarations' in type(node).__name__:
+                decl = getattr(node, 'declarators', [])
+                if decl:
+                    for d in decl:
+                        if hasattr(d, 'name'):
+                            signals.add(str(d.name))
+            
+            # 递归
+            for attr in ['members', 'items', 'body']:
+                if hasattr(node, attr):
+                    children = getattr(node, attr)
+                    if children and hasattr(children, '__iter__'):
+                        for child in children:
+                            self._collect_signals(child, signals)
+        except Exception as e:
+            self.warn_handler.warn_error(
+                "SignalCollection",
+                e,
+                context="collect_signals",
+                component="PipelineAnalyzer"
+            )
     
     def _compute_stats(self, stages: List[StageInfo]) -> PipelineStats:
         """计算统计"""
@@ -253,10 +353,18 @@ class PipelineAnalyzer:
     def analyze_signal(self, signal: str) -> PipelineInfo:
         """分析单个信号的数据路径"""
         return self.analyze(signal=signal)
+    
+    def get_warning_report(self) -> str:
+        """获取警告报告"""
+        return self.warn_handler.get_report()
+    
+    def print_warning_report(self):
+        """打印警告报告"""
+        self.warn_handler.print_report()
 
 
 def analyze_pipeline(parser, signal: str = None, 
-                   module_name: str = None) -> PipelineInfo:
+                   module_name: str = None, verbose: bool = True) -> PipelineInfo:
     """便捷函数"""
-    analyzer = PipelineAnalyzer(parser)
+    analyzer = PipelineAnalyzer(parser, verbose=verbose)
     return analyzer.analyze(module_name, signal)

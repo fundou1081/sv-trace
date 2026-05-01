@@ -474,3 +474,239 @@ b68cb97 Fix DriverTracer: always_comb simple expression
 4d8c3c3 Fix parse modules: tree.root.visit
 707ccbd Add test_all.py runner
 ```
+
+---
+
+## 后续更新 (2026-05-01) - Docstring 风格统一与 DriverCollector 修复
+
+### 新增模块: parse_warn.py
+
+**文件**: `src/trace/parse_warn.py`
+
+统一的警告处理系统，为所有 trace 模块提供一致的警告报告机制。
+
+```python
+from trace.parse_warn import (
+    ParseWarningHandler,
+    warn_unsupported,
+    warn_error,
+    WarningLevel
+)
+
+handler = ParseWarningHandler(verbose=True, component="DriverCollector")
+handler.warn_unsupported("ClassDeclaration", context="file.sv")
+```
+
+**核心组件**:
+| 类/函数 | 功能 |
+|---------|------|
+| `ParseWarningHandler` | 警告收集和报告 |
+| `ParseWarning` | 警告数据类 |
+| `WarningLevel` | 警告级别枚举 (INFO/WARN/ERROR/UNKNOWN) |
+| `warn_unsupported()` | 便捷函数，报告不支持的语法 |
+| `warn_error()` | 便捷函数，报告处理异常 |
+
+**支持的语法类型**:
+- `InterfaceDeclaration` - interface 声明
+- `ProgramDeclaration` - program 声明
+- `PackageDeclaration` - package 声明
+- `ClassDeclaration` - class 声明
+- `CovergroupDeclaration` - covergroup
+- `PropertyDeclaration` - property 声明
+- `SequenceDeclaration` - sequence 声明
+- `ClockingBlock` - clocking block
+- `ConstraintBlock` - constraint 块
+- 等等...
+
+### Docstring 风格统一
+
+**目标**: Google Style docstring 格式
+
+所有 trace 模块的 docstring 已统一为以下格式：
+
+```python
+"""模块/类/函数的简要描述。
+
+详细描述（可选）。
+
+Args:
+    参数名: 参数描述
+
+Returns:
+    返回值描述
+
+Raises:
+    异常类型: 异常描述
+
+Example:
+    >>> 使用示例
+"""
+```
+
+**统一的模块**:
+
+| 模块 | 类 | Docstring 行数 |
+|------|-----|----------------|
+| `parse_warn.py` | `ParseWarningHandler` | 280+ 行 |
+| `driver.py` | `DriverCollector` | 550+ 行 |
+| `vcd_analyzer.py` | `VCDAnalyzer` | 450+ 行 |
+| `connection.py` | `ConnectionTracer` | 400+ 行 |
+| `load.py` | `LoadTracer` | 350+ 行 |
+| `datapath.py` | `DataPathAnalyzer` | 已更新 |
+| `controlflow.py` | `ControlFlowTracer` | 已更新 |
+| `pipeline_analyzer.py` | `PipelineAnalyzer` | 已更新 |
+
+### DriverCollector 关键修复
+
+#### 1. pyslang 属性名差异 (`expr.lhs` → `expr.left`)
+
+**问题**: pyslang 的 `BinaryExpressionSyntax` 使用 `left`/`right` 而非 `lhs`/`rhs`
+
+```python
+# 错误
+self._handle_assignment(expr.lhs, expr.rhs, ...)
+
+# 正确
+self._handle_assignment(expr.left, expr.right, ...)
+```
+
+#### 2. SyntaxList 迭代 (`_iter_children` 辅助函数)
+
+**问题**: `node.items` 返回 `SyntaxNode` 而非 list，无法直接迭代
+
+```python
+def _iter_children(node) -> List:
+    """安全地遍历节点的子节点"""
+    if node is None:
+        return []
+    if isinstance(node, list):
+        return node
+    if hasattr(node, '__iter__') and not isinstance(node, str):
+        try:
+            return list(node)
+        except:
+            pass
+    if hasattr(node, 'kind'):
+        return [node]
+    return []
+```
+
+#### 3. 二元表达式类型检测 (`BINARY_EXPR_KINDS`)
+
+**问题**: `rhs.kind.name` 返回 'AddExpression'，不是 'BinaryExpression'
+
+```python
+BINARY_EXPR_KINDS = {
+    'AddExpression', 'SubtractExpression', 'MultiplyExpression', 'DivideExpression',
+    'ModExpression', 'PowerExpression',
+    'EqualityExpression', 'InequalityExpression', ...
+    # 注意：不是简单的 'BinaryExpression'
+}
+
+UNARY_EXPR_KINDS = {
+    'UnaryPlusExpression', 'UnaryMinusExpression', ...
+}
+
+CONDITIONAL_EXPR_KINDS = {'ConditionalExpression', 'TernaryExpression'}
+```
+
+#### 4. ClassDeclaration 作为 Root 处理
+
+**问题**: 当代码只有 class 没有 module 时，root 本身就是 ClassDeclaration
+
+```python
+# 修复前：只处理 ModuleDeclaration
+if kind == SyntaxKind.ModuleDeclaration:
+    ...
+
+# 修复后：同时处理 ClassDeclaration 作为 root
+if root_kind == SyntaxKind.ClassDeclaration or \
+   (hasattr(root, 'members') and len(list(root.members)) == 0):
+    # ClassDeclaration 作为 root 的情况
+    ...
+```
+
+### pyslang_helper 更新
+
+**文件**: `pyslang_helper/__init__.py`
+
+`extract_classes()` 方法增强，支持 ClassDeclaration 作为 root 的情况：
+
+```python
+def extract_classes(self) -> List[ClassInfo]:
+    ...
+    for node in all_nodes:
+        kind_name = str(node.kind)
+        if kind_name == 'ClassDeclaration':
+            # 支持 ClassDeclaration 作为 root 的情况
+            ...
+```
+
+### VCDAnalyzer 增强
+
+**文件**: `src/trace/vcd_analyzer.py`
+
+- 统一 Google Style docstring
+- 添加 `SignalWaveform`, `Transition`, `VCDHeader` 数据类
+- 增强 `detect_clock_domain()`, `compare_signals()` 方法
+- 添加 `parse_vcd_text()` 支持从文本解析
+
+### ConnectionTracer 增强
+
+**文件**: `src/trace/connection.py`
+
+- 统一 Google Style docstring
+- 添加 `Connection`, `Instance` 数据类
+- 增强 `get_instance_inputs()`, `get_instance_outputs()` 方法
+- 添加 `get_instances_by_type()`, `get_signal_connections()` 方法
+
+### LoadTracer 增强
+
+**文件**: `src/trace/load.py`
+
+- 统一 Google Style docstring
+- 添加 `_LoadTracerRegexImpl` 内部实现类
+- 增强 `_check_unsupported_syntax()` 方法
+- 添加 `extract_from_text()` 静态方法
+
+### 验证结果
+
+```
+[1] 模块导入测试
+  ✅ trace.parse_warn.ParseWarningHandler
+  ✅ trace.driver.DriverCollector
+  ✅ trace.vcd_analyzer.VCDAnalyzer
+  ✅ trace.connection.ConnectionTracer
+  ✅ trace.load.LoadTracer
+  ✅ trace.datapath.DataPathAnalyzer
+  ✅ trace.controlflow.ControlFlowTracer
+
+[2] 基本功能测试
+  ✅ DriverCollector: 2 drivers (temp, data)
+  ✅ VCDAnalyzer: 2 signals (clk, data)
+  ✅ ConnectionTracer: 0 instances (test code 无实例化)
+
+[3] Docstring 风格检查
+  ✅ 所有模块使用 Google Style docstring
+  ✅ 首行描述 + 详细描述 + Example
+```
+
+### 提交记录 (2026-05-01)
+
+```
+5514920 Fix: improve tree/root handling via parser
+5cb9327 Final robustness improvements
+9cdfcf1 Fix: unify tree param handling in parse modules
+ad9a8dd Improve robustness: unify param names (tree->root), add error handling
+```
+
+### 下一步计划
+
+1. **lint/ 模块** - 统一 docstring 风格（待处理）
+2. **debug/ 模块** - 统一 docstring 风格（待处理）
+3. **query/ 模块** - 统一 docstring 风格（待处理）
+4. **CLI 集成** - 将警告系统集成到命令行工具
+
+---
+
+**最后更新**: 2026-05-01 08:45

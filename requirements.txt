@@ -1,0 +1,18 @@
+# sv-trace 依赖包
+# 使用: pip install -r requirements.txt
+
+# 核心依赖
+pyslang>=0.12.0              # SystemVerilog/VHDL 解析器
+
+# 可选依赖 (用于特定功能)
+# numpy>=1.21.0               # 数值计算 (可选)
+# matplotlib>=3.5.0           # 波形可视化 (可选)
+# graphviz>=0.18.0            # 图形化输出 (可选)
+
+# 开发依赖
+# pytest>=7.0.0              # 单元测试
+# pytest-cov>=3.0.0           # 测试覆盖率
+
+# Lint/代码质量 (可选)
+# pylint>=2.14.0
+# flake8>=4.0.0
