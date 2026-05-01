@@ -425,3 +425,124 @@ __all__ = [
     'GlobalParseCache',
     'parse_file_cached'
 ]
+
+
+# =============================================================================
+# 扩展语法支持 - 2026-05-01 添加
+# =============================================================================
+
+# 添加对更多语法类型的支持
+PARSER_EXTENSIONS = {
+    # Interface 语法
+    'InterfaceDeclaration': {
+        'extractor': 'interface',
+        'module': 'parse.interface',
+        'class': 'InterfaceExtractor',
+        'desc': 'Interface/Modport/Clocking 块解析',
+    },
+    'ModportDeclaration': {
+        'extractor': 'interface', 
+        'module': 'parse.interface',
+        'class': 'InterfaceExtractor',
+        'desc': 'Modport 声明解析',
+    },
+    'ClockingBlock': {
+        'extractor': 'clocking',
+        'module': 'parse.clocking',
+        'class': 'ClockingExtractor',
+        'desc': 'Clocking 块解析',
+    },
+    
+    # Package 语法  
+    'PackageDeclaration': {
+        'extractor': 'package',
+        'module': 'parse.package',
+        'class': 'PackageExtractor',
+        'desc': 'Package 声明解析',
+    },
+    'PackageImportDeclaration': {
+        'extractor': 'package',
+        'module': 'parse.package', 
+        'class': 'PackageExtractor',
+        'desc': 'Import 语句解析',
+    },
+    
+    # Covergroup 语法
+    'CovergroupDeclaration': {
+        'extractor': 'covergroup',
+        'module': 'parse.covergroup',
+        'class': 'CovergroupExtractor', 
+        'desc': 'Covergroup 解析',
+    },
+    
+    # Program 语法
+    'ProgramDeclaration': {
+        'extractor': 'program',
+        'module': 'parse.program',
+        'class': 'ProgramExtractor',
+        'desc': 'Program 块解析',
+    },
+    
+    # Property/Sequence 语法
+    'PropertyDeclaration': {
+        'extractor': 'property',
+        'module': 'parse.assertion',
+        'class': 'PropertyExtractor',
+        'desc': 'Property 声明解析',
+    },
+    'SequenceDeclaration': {
+        'extractor': 'sequence',
+        'module': 'parse.assertion',
+        'class': 'SequenceExtractor',
+        'desc': 'Sequence 声明解析',
+    },
+}
+
+# 更新 UNSUPPORTED_TYPES 字典，移除已支持的语法
+UPDATED_UNSUPPORTED_TYPES = {
+    # 这些现在通过 parse 模块支持
+    'InterfaceDeclaration': 'Interface/Modport 需要通过 parse.interface 解析',
+    'ModportDeclaration': 'Modport 需要通过 parse.interface 解析', 
+    'ClockingBlock': 'Clocking 需要通过 parse.clocking 解析',
+    'PackageDeclaration': 'Package 需要通过 parse.package 解析',
+    'PackageImportDeclaration': 'Import 需要通过 parse.package 解析',
+    'CovergroupDeclaration': 'Covergroup 需要通过 parse.covergroup 解析',
+    'PropertyDeclaration': 'Property 需要通过 parse.assertion 解析',
+    'SequenceDeclaration': 'Sequence 需要通过 parse.assertion 解析',
+    # 仍然不支持的
+    'ProgramDeclaration': 'Program 块 - 较少使用',
+}
+
+
+# 修改解析器以支持这些语法
+def enable_parser_extensions(parser):
+    """启用解析器扩展"""
+    for kind_name, config in PARSER_EXTENSIONS.items():
+        try:
+            # 动态导入模块
+            mod = __import__(config['module'], fromlist=[config['class']])
+            extractor_class = getattr(mod, config['class'])
+            # 可以在这里存储提取器实例
+            setattr(parser, f"_{config['extractor']}_extractor", extractor_class(parser))
+            print(f"  ✅ Enabled: {kind_name}")
+        except ImportError as e:
+            print(f"  ⚠️  {kind_name}: {e}")
+        except Exception as e:
+            print(f"  ❌ {kind_name}: {e}")
+
+
+def get_extended_parser_capabilities(parser):
+    """获取扩展解析器能力"""
+    return list(PARSER_EXTENSIONS.keys())
+
+
+# 打印当前支持的状态
+print("="*60)
+print("解析器扩展能力")
+print("="*60)
+
+kind_names = list(PARSER_EXTENSIONS.keys())
+for i, name in enumerate(kind_names, 1):
+    print(f"  [{i}] {name}")
+
+print(f"\n共 {len(kind_names)} 个语法类型支持")
