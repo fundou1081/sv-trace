@@ -92,8 +92,8 @@ class ControlFlowTracer:
             verbose=verbose,
             component="ControlFlowTracer"
         )
-        self._all_signals = self._collect_all_signals()
         self._unsupported_encountered: Set[str] = set()
+        self._all_signals = self._collect_all_signals()
     
     def _check_unsupported_node(self, node, source: str = ""):
         """检查不支持的节点类型"""
