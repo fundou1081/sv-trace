@@ -136,7 +136,7 @@ class SVParser:
                                 component="SVParser"
                             )
                             self._unsupported_encountered.add(kind_name)
-                    elif 'Declaration' in kind_name or 'Block' in kind_name:
+                    elif kind_name.startswith('Data') or kind_name.startswith('Net') or kind_name.startswith('Typedef') or kind_name == 'AlwaysFFBlock' or kind_name == 'AlwaysCombBlock' or kind_name == 'AlwaysLatchBlock':
                         # 记录其他声明类型
                         if kind_name not in self._unsupported_encountered and kind_name not in ['ModuleDeclaration', 'CompilationUnit']:
                             self.warn_handler.warn_unsupported(
@@ -531,18 +531,6 @@ def enable_parser_extensions(parser):
             print(f"  ❌ {kind_name}: {e}")
 
 
-def get_extended_parser_capabilities(parser):
-    """获取扩展解析器能力"""
-    return list(PARSER_EXTENSIONS.keys())
 
+# Functions added in parser extension
 
-# 打印当前支持的状态
-print("="*60)
-print("解析器扩展能力")
-print("="*60)
-
-kind_names = list(PARSER_EXTENSIONS.keys())
-for i, name in enumerate(kind_names, 1):
-    print(f"  [{i}] {name}")
-
-print(f"\n共 {len(kind_names)} 个语法类型支持")
