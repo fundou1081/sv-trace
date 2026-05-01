@@ -130,9 +130,9 @@ class ConnectionTracer:
                     kind_name = str(member.kind) if hasattr(member, 'kind') else ""
                     
                     if 'ModuleDeclaration' in kind_name:
-                        self._extract_from_module(member, fname)
+                        self._extract_from_module(member, str(fname))
                     elif kind_name and kind_name != 'Unknown':
-                        self._check_and_warn_unhandled(member, kind_name, fname)
+                        self._check_and_warn_unhandled(member, kind_name, str(fname))
     
     def _to_list(self, obj):
         """安全转换为列表"""
@@ -217,7 +217,7 @@ class ConnectionTracer:
         """
         context = source_file
         if hasattr(member, 'name') and member.name:
-            context += f" / {member.name}"
+            context += f" / {str(member.name)}"
         
         if hasattr(member, 'source') and member.source:
             try:

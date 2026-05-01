@@ -232,13 +232,13 @@ class DriverCollector:
             # 确定驱动类型
             kind_name = str(kind)
             if 'AlwaysFF' in kind_name:
-                driver_kind = DriverKind.AlwaysFf
+                driver_kind = DriverKind.AlwaysFF
             elif 'AlwaysComb' in kind_name:
                 driver_kind = DriverKind.AlwaysComb
             elif 'AlwaysLatch' in kind_name:
                 driver_kind = DriverKind.AlwaysLatch
             else:
-                driver_kind = DriverKind.AlwaysFf
+                driver_kind = DriverKind.AlwaysFF
             
             # TimingControlStatement
             stmt = getattr(node, 'statement', None)
