@@ -2,9 +2,9 @@
 Port Declaration Parser - 使用正确的 AST 遍历
 
 提取端口声明：
+- PortDeclaration
 - AnsiPortDeclaration
 - NonAnsiPortDeclaration
-- PortDeclaration
 
 注意：此文件不包含任何正则表达式
 """
@@ -37,18 +37,15 @@ class PortDeclarationExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name in ['AnsiPortDeclaration', 'NonAnsiPortDeclaration', 'PortDeclaration']:
+            if kind_name in ['PortDeclaration', 'AnsiPortDeclaration', 'NonAnsiPortDeclaration']:
                 pd = PortDecl()
                 
-                # 方向
                 if hasattr(node, 'direction') and node.direction:
                     pd.direction = str(node.direction).lower()
                 
-                # 名称
                 if hasattr(node, 'name') and node.name:
                     pd.name = str(node.name)
                 
-                # 类型
                 if hasattr(node, 'dataType') and node.dataType:
                     pd.data_type = str(node.dataType)[:30]
                 
@@ -64,11 +61,7 @@ class PortDeclarationExtractor:
         self._extract_from_tree(tree.root)
         
         return [
-            {
-                'name': p.name,
-                'direction': p.direction,
-                'type': p.data_type[:20]
-            }
+            {'name': p.name, 'direction': p.direction, 'type': p.data_type[:20]}
             for p in self.ports
         ]
 
@@ -79,7 +72,12 @@ def extract_ports(code: str) -> List[Dict]:
 
 if __name__ == "__main__":
     test_code = '''
-module test(input clk, input [7:0] data, output [7:0] q);
+module test(
+    input clk,
+    input [7:0] data,
+    output reg [7:0] q,
+    ref logic enable
+);
 endmodule
 '''
     result = extract_ports(test_code)
