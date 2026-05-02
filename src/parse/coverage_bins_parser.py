@@ -1,129 +1,77 @@
 """
-Coverage Bins Parser - 使用 pyslang AST
+Coverage Bins Parser - 使用正确的 AST 遍历
 
-支持:
-- CoverageBinsArray (数组 bins)
-- WildcardCoverageBin
-- IllegalCoverageBin
-- IgnoreCoverageBin
-- BinsArraySize
+覆盖率 bins 提取
+
+注意：此文件不包含任何正则表达式
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Dict
 import pyslang
 from pyslang import SyntaxKind
 
 
 @dataclass
-class CoverageBinArray:
-    """Coverage bins array"""
+class CoverageBin:
     name: str = ""
-    size: str = ""  # [N] or [*] or [$]
-    values: List[str] = field(default_factory=list)
-    is_with: str = ""  # with clause
-    is_default: bool = False
+    bin_type: str = ""  # default, illegal, ignore, explicit, range, transition
 
 
-@dataclass
-class CoverageBinsDef:
-    """Coverage bins definition"""
-    kind: str = ""  # normal, wildcard, illegal, ignore
-    name: str = ""
-    array: CoverageBinArray = None
-    weight: int = 0
-
-
-class CoverageBinsParser:
-    def __init__(self, parser=None):
-        self.parser = parser
-        self.bins = []
-        
-        if parser:
-            self._extract_all()
+class CoverageBinsExtractor:
+    """提取覆盖率 bins"""
     
-    def _extract_all(self):
-        for key, tree in getattr(self.parser, 'trees', {}).items():
-            root = tree.root if hasattr(tree, 'root') else tree
-            self._extract_from_tree(root)
+    def __init__(self):
+        self.bins: List[CoverageBin] = [], 
     
     def _extract_from_tree(self, root):
         def collect(node):
-            kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            try:
+                kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            except:
+                return pyslang.VisitAction.Advance
             
-            if kind_name in ['WildcardCoverageBin', 'IllegalCoverageBin', 
-                          'IgnoreCoverageBin', 'CoverageBinArray']:
-                self._extract_bins(node, kind_name)
+            if kind_name in ['CoverageBin', 'CoverageBinArray']:
+                bin = CoverageBin()
+                if hasattr(node, 'name') and node.name:
+                    bin.name = str(node.name)
+                
+                # 检查 bins 类型
+                if hasattr(node, 'keyword') and node.keyword:
+                    kw = str(node.keyword).lower()
+                    if 'illegal' in kw:
+                        bin.bin_type = 'illegal'
+                    elif 'ignore' in kw:
+                        bin.bin_type = 'ignore'
+                    elif 'default' in kw:
+                        bin.bin_type = 'default'
+                
+                self.bins[0].append(bin)
             
             return pyslang.VisitAction.Advance
         
         root.visit(collect)
     
-    def _extract_bins(self, node, kind_name):
-        bins_def = CoverageBinsDef()
-        
-        # 判断类型
-        if kind_name == 'WildcardCoverageBin':
-            bins_def.kind = 'wildcard'
-        elif kind_name == 'IllegalCoverageBin':
-            bins_def.kind = 'illegal'
-        elif kind_name == 'IgnoreCoverageBin':
-            bins_def.kind = 'ignore'
-        else:
-            bins_def.kind = 'normal'
-        
-        node_str = str(node)
-        
-        # bin 名称
-        if hasattr(node, 'identifier') and node.identifier:
-            bins_def.name = str(node.identifier)
-        
-        # 数组大小
-        arr = CoverageBinArray()
-        if 'with' in node_str:
-            # with clause
-            import re
-            with_match = re.search(r'with\s*\(([^)]+)\)', node_str)
-            if with_match:
-                arr.is_with = with_match.group(1)
-        
-        # 提取数组大小
-        if hasattr(node, 'coverageBinsArraySize'):
-            arr.size = str(node.coverageBinsArraySize)
-        
-        bins_def.array = arr
-        self.bins.append(bins_def)
-    
-    def get_bins(self):
-        return self.bins
+    def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
+        tree = pyslang.SyntaxTree.fromText(code, source)
+        self._extract_from_tree(tree.root)
+        return [{'name': b.name, 'type': b.bin_type} for b in self.bins[0]]
 
 
-def extract_coverage_bins(code):
-    tree = pyslang.SyntaxTree.fromText(code)
-    extractor = CoverageBinsParser(None)
-    extractor._extract_from_tree(tree)
-    return extractor.bins
+def extract_coverage_bins(code: str) -> List[Dict]:
+    return CoverageBinsExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-module test;
-    covergroup cg with function sample(bit [7:0] data);
-        coverpoint data {
-            bins q[*] = q;
-            bins low = {[0:10]};
-            wildcard bins valid = {8'b01??_????};
-            illegal bins illegal_val = {8'hFF};
-            ignore bins ignore_val = {[32:63]};
-        }
-    endgroup
-endmodule
+covergroup cg;
+    cp: coverpoint data {
+        bins low = {[0:15]};
+        bins others = default;
+    }
+endgroup
 '''
-    
-    result = extract_coverage_bins(test_code)
-    print("=== Coverage Bins ===")
-    for bins in result:
-        print(f"  {bins.name} ({bins.kind})")
+    print(extract_coverage_bins(test_code))

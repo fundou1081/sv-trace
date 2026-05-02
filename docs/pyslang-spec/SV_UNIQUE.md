@@ -74,7 +74,7 @@ def collect(node):
                 # modport 名称
                 modport_name = str(m).split('(')[0].strip()
             
-            elif m.kind == SyntaxKind.C lockingDeclaration:
+            elif m.kind == SyntaxKind.ClockingDeclaration:
                 # clocking 块
                 clock_event = str(m.clockingEvent)
     return pyslang.VisitAction.Advance

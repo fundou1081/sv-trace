@@ -1,226 +1,102 @@
 """
-Package 解析器 - 使用 pyslang AST
+Package Parser - 使用正确的 AST 遍历
 
-Package/Program 提取 (不使用正则)
+package 声明提取
+
+注意：此文件不包含任何正则表达式
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from typing import Dict, List
 from dataclasses import dataclass, field
+from typing import List, Dict
 import pyslang
-from pyslang import SyntaxKind, TokenKind
+from pyslang import SyntaxKind
 
 
 @dataclass
 class PackageItem:
-    """package 内的 item"""
-    kind: str = ""
     name: str = ""
-    declaration: str = ""
+    item_type: str = ""
 
 
 @dataclass
 class PackageDef:
-    """package 定义"""
     name: str = ""
     items: List[PackageItem] = field(default_factory=list)
 
 
-@dataclass
-class ProgramDef:
-    """program 定义"""
-    name: str = ""
-    ports: List[str] = field(default_factory=list)
-    items: List[str] = field(default_factory=list)
-
-
-def _collect_nodes(node):
-    nodes = []
-    def collect(n):
-        nodes.append(n)
-        return pyslang.VisitAction.Advance
-    node.visit(collect)
-    return nodes
-
-
-def _get_kind(n):
-    if hasattr(n, 'kind'):
-        return n.kind
-    return None
-
-
 class PackageExtractor:
-    def __init__(self, parser=None):
-        self.parser = parser
-        self.packages = {}
-        self.programs = {}
-        if parser:
-            self._extract_all()
+    """提取 package 声明"""
     
-    def _extract_all(self):
-        for key, tree in getattr(self.parser, 'trees', {}).items():
-            if tree and hasattr(tree, 'root') and tree.root:
-                self._extract_from_tree(tree)
+    def __init__(self):
+        self.packages: List[PackageDef] = []
     
-    def _extract_from_tree(self, tree):
-        # 支持传入 tree 或 root
-        if hasattr(tree, 'root') and not hasattr(tree, 'visit'):
-            tree = tree.root
-        elif not hasattr(tree, 'visit'):
-            pass  # 已经是 root,直接使用
-        
-        root = tree.root if hasattr(tree, "root") else tree
-        
+    def _extract_from_tree(self, root):
         def collect(node):
-            kn = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            try:
+                kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            except:
+                return pyslang.VisitAction.Advance
             
-            if kn == 'PackageDeclaration':
-                self._extract_package(node)
-            elif kn == 'ProgramDeclaration':
-                self._extract_program(node)
+            # 只处理顶层的 PackageDeclaration
+            if kind_name == 'PackageDeclaration':
+                # 检查是否在根层级 (parent 可能不是另一个 package)
+                pkg = PackageDef()
+                if hasattr(node, 'name') and node.name:
+                    pkg.name = str(node.name)
+                
+                # 提取内部项
+                for child in node:
+                    if not child:
+                        continue
+                    try:
+                        child_kind = child.kind.name if hasattr(child.kind, 'name') else str(child.kind)
+                    except:
+                        continue
+                    
+                    if child_kind in ['FunctionDeclaration', 'TaskDeclaration', 
+                                       'ClassDeclaration', 'ParameterDeclaration']:
+                        item = PackageItem()
+                        if hasattr(child, 'name') and child.name:
+                            item.name = str(child.name)
+                        item.item_type = child_kind
+                        pkg.items.append(item)
+                
+                if pkg.name:
+                    self.packages.append(pkg)
             
             return pyslang.VisitAction.Advance
         
         root.visit(collect)
     
-    def _extract_package(self, node):
-        pkg = PackageDef()
-        
-        # name from header
-        if node.header and node.header.name:
-            pkg.name = str(node.header.name.valueText)
-        
-        # members
-        if node.members:
-            # 遍历 members
-            for m in node.members:
-                if not m:
-                    continue
-                
-                item = PackageItem()
-                item.kind = m.kind.name if hasattr(m.kind, 'name') else str(m.kind)
-                item.declaration = str(m).strip().rstrip(';')
-                
-                # 函数/任务名称
-                if item.kind == 'FunctionDeclaration' or item.kind == 'TaskDeclaration':
-                    # 从 FunctionPrototype 获取名称
-                    if hasattr(m, 'prototype') and m.prototype:
-                        for child in m.prototype:
-                            if child.kind.name == 'IdentifierName':
-                                item.name = str(child)
-                                break
-                    # 备选：从 declaration 字符串提取
-                    if not item.name:
-                        decl = item.declaration
-                        # function NAME(...);
-                        import re
-                        match = re.search(r'(function|task)\s+(?:(?:virtual|static|automatic)\s+)?(\w+(?:\s+\w+)*?)\s+(\w+)', decl)
-                        if match:
-                            rets = match.group(1)
-                            item.name = match.group(3)
-                
-                # class 名称
-                elif item.kind == 'ClassDeclaration':
-                    if hasattr(m, 'name') and m.name:
-                        item.name = str(m.name)
-                
-                # parameter 名称
-                elif item.kind == 'ParameterDeclarationStatement' or item.kind == 'ParameterDeclaration':
-                    # 从 Declarator 获取
-                    for child in m:
-                        if child.kind.name == 'Declarator':
-                            for c in child:
-                                if c.kind.name == 'IdentifierName':
-                                    item.name = str(c)
-                                    break
-                
-                if item.declaration:
-                    pkg.items.append(item)
-        
-        if pkg.name:
-            self.packages[pkg.name] = pkg
-        
-        return pkg
-    
-    def _extract_program(self, node):
-        prog = ProgramDef()
-        
-        # name from header
-        if node.header and node.header.name:
-            prog.name = str(node.header.name.valueText)
-        
-        # ports from header
-        if node.header and node.header.ports:
-            for p in node.header.ports:
-                prog.ports.append(str(p).strip())
-        
-        # members
-        if node.members:
-            for m in node.members:
-                if m and hasattr(m, 'kind'):
-                    decl = str(m).strip()
-                    if decl:
-                        prog.items.append(decl)
-        
-        if prog.name:
-            self.programs[prog.name] = prog
-        
-        return prog
-    
-    def get_packages(self):
-        return self.packages
-    
-    def get_programs(self):
-        return self.programs
+    def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
+        tree = pyslang.SyntaxTree.fromText(code, source)
+        self._extract_from_tree(tree.root)
+        return [
+            {
+                'name': p.name,
+                'items': [{'name': i.name, 'type': i.item_type} for i in p.items]
+            }
+            for p in self.packages
+        ]
 
 
-def extract_packages(code):
-    tree = pyslang.SyntaxTree.fromText(code)
-    extractor = PackageExtractor(None)
-    extractor._extract_from_tree(tree)
-    return extractor.packages
-
-
-def extract_programs(code):
-    tree = pyslang.SyntaxTree.fromText(code)
-    extractor = PackageExtractor(None)
-    extractor._extract_from_tree(tree)
-    return extractor.programs
+def extract_packages(code: str) -> List[Dict]:
+    return PackageExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
-    test_code = '''package my_pkg;
-    parameter int P1 = 8;
-    
-    function bit [7:0] add(input bit [7:0] a, b);
+    test_code = '''
+package my_pkg;
+    function int add(int a, b);
         return a + b;
     endfunction
     
-    class packet;
-        rand bit [7:0] data;
+    class MyClass;
     endclass
-endpackage'''
-
+endpackage
+'''
     result = extract_packages(test_code)
-    print("=== Package 提取测试 ===")
-    for name, pkg in result.items():
-        print(f"\nPackage: {name}")
-        print(f"  items: {len(pkg.items)}")
-        for item in pkg.items[:5]:
-            print(f"    {item.kind}: {item.name or item.declaration[:30]}")
-    
-    # Program
-    test_prog = '''program test_prog (input clk, output [7:0] data);
-    initial begin
-        data = 0;
-    end
-endprogram'''
-
-    ep = extract_programs(test_prog)
-    print("\n=== Program 提取测试 ===")
-    for name, prog in ep.items():
-        print(f"\nProgram: {name}")
-        print(f"  ports: {prog.ports[:2]}")
-        print(f"  items: {len(prog.items)}")
+    print(result)

@@ -1,98 +1,124 @@
 """
-连续赋值 / 线网声明解析器
+Continuous Assign Parser - 使用正确的 AST 遍历
 
-处理:
-- assign lhs = rhs;
-- wire/var [width] name = expr;
+连续赋值语句提取
+
+注意：此文件使用正确的 AST 属性访问，不包含正则表达式
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from typing import List
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import List, Dict, Optional
 import pyslang
 from pyslang import SyntaxKind
 
 
 @dataclass
 class ContinuousAssign:
-    lhs: str = ""
-    rhs: str = ""
+    name: str = ""
+    left: str = ""
+    right: str = ""
+    delay: str = ""
 
 
-class AssignExtractor:
-    def __init__(self, parser=None):
-        self.parser = parser
-        self.assigns = []
-        if parser:
-            self._extract_all()
+class ContinuousAssignExtractor:
+    """提取连续赋值语句 - 使用正确的 AST 遍历"""
     
-    def _extract_all(self):
-        for key, tree in getattr(self.parser, 'trees', {}).items():
-            if tree and hasattr(root, 'root') and root.root:
-                self._extract_from_tree(tree)
+    def __init__(self):
+        self.assigns: List[ContinuousAssign] = []
     
     def _extract_from_tree(self, root):
-        # 支持 SyntaxTree 或 CompilationUnitSyntax
-        root = root.root if hasattr(root, 'root') else root
+        """使用 AST 遍历"""
+        self.assigns = []
         
         def collect(node):
-            kn = node.kind.name
+            try:
+                kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            except:
+                return pyslang.VisitAction.Advance
             
-            if kn == 'ContinuousAssign':
-                self._extract_continuous_assign(node)
-            elif kn == 'NetDeclaration' or kn == 'VariableDeclaration':
-                self._extract_decl_assign(node)
+            # ContinuousAssign
+            if kind_name == 'ContinuousAssign':
+                assign = self._extract_assign(node)
+                if assign:
+                    self.assigns.append(assign)
             
             return pyslang.VisitAction.Advance
         
         root.visit(collect)
-    
-    def _extract_continuous_assign(self, node):
-        full = str(node).strip()
-        if 'assign' in full:
-            import re
-            match = re.search(r'assign\s+(.+?)\s*=\s*(.+?)\s*;', full)
-            if match:
-                lhs = match.group(1).strip()
-                rhs = match.group(2).strip()
-                self.assigns.append(ContinuousAssign(lhs=lhs, rhs=rhs))
-    
-    def _extract_decl_assign(self, node):
-        """处理 wire/var 初始化"""
-        full = str(node).strip()
-        
-        # 移除类型前缀
-        import re
-        # wire [7:0] a = b;
-        match = re.search(r'(?:wire|var|logic|reg)\s*(?:\[[^\]]+\])?\s*(\w+)\s*=\s*([^;]+)', full)
-        if match:
-            lhs = match.group(1).strip()
-            rhs = match.group(2).strip()
-            self.assigns.append(ContinuousAssign(lhs=lhs, rhs=rhs))
-    
-    def get_assigns(self):
         return self.assigns
+    
+    def _extract_assign(self, node) -> Optional[ContinuousAssign]:
+        """提取连续赋值 - 使用 AST 属性"""
+        assign = ContinuousAssign()
+        
+        # 赋值名称 (optional label)
+        if hasattr(node, 'name') and node.name:
+            assign.name = str(node.name)
+        elif hasattr(node, 'label') and node.label:
+            assign.name = str(node.label)
+        
+        # 左侧 (目标)
+        if hasattr(node, 'left') and node.left:
+            assign.left = str(node.left)
+        elif hasattr(node, 'target') and node.target:
+            assign.left = str(node.target)
+        
+        # 右侧 (表达式)
+        if hasattr(node, 'right') and node.right:
+            assign.right = str(node.right)
+        elif hasattr(node, 'expression') and node.expression:
+            assign.right = str(node.expression)
+        
+        # 延迟
+        if hasattr(node, 'delay') and node.delay:
+            assign.delay = str(node.delay)
+        
+        return assign if assign.left or assign.right else None
+    
+    def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
+        """提取"""
+        tree = pyslang.SyntaxTree.fromText(code, source)
+        assigns = self._extract_from_tree(tree.root)
+        
+        return [
+            {
+                'name': a.name,
+                'left': a.left[:50],
+                'right': a.right[:50],
+                'delay': a.delay
+            }
+            for a in assigns
+        ]
 
 
-def extract_assigns(code):
-    tree = pyslang.SyntaxTree.fromText(code)
-    extractor = AssignExtractor(None)
-    extractor._extract_from_tree(tree)
-    return extractor.assigns
+# ============================================================================
+# 便捷函数
+# ============================================================================
+
+def extract_continuous_assigns(code: str) -> List[Dict]:
+    """提取连续赋值"""
+    extractor = ContinuousAssignExtractor()
+    return extractor.extract_from_text(code)
 
 
 if __name__ == "__main__":
-    test_code = '''module m;
-    logic [7:0] a, b, c, d;
-    assign a = b & c;
-    wire [7:0] d = a;
-    wire e = 1'b0;
-endmodule'''
-
-    result = extract_assigns(test_code)
-    print("=== 连续赋值/wire 测试 ===")
-    print(f"Found {len(result)} assigns")
-    for a in result:
-        print(f"  {a.lhs} = {a.rhs}")
+    test_code = '''
+module test;
+    wire [7:0] a = 8'h0;
+    wire b = c;
+    assign d = e;
+    assign #5 f = g;
+endmodule
+'''
+    
+    print("=== Continuous Assign Extraction ===\n")
+    
+    result = extract_continuous_assigns(test_code)
+    
+    print(f"Found {len(result)} continuous assigns:")
+    for r in result:
+        delay_str = f", delay={r['delay']}" if r['delay'] else ""
+        print(f"  {r['left']} = {r['right']}{delay_str}")

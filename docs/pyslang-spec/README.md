@@ -56,7 +56,7 @@ module 示例:
         else q <= d;
 
 AST 结构:
-    AlwaysFFBlockSyntax
+    AlwaysFFBlock
         └── Statement
             └── ...
 ```
@@ -142,3 +142,27 @@ classes = ce.extract_from_text(class_code)
 ---
 
 最后更新: 2026-05-01
+
+## 重要: SyntaxKind 命名规范
+
+pyslang 使用特定的命名格式:
+
+| 语法 | pyslang SyntaxKind 名称 |
+|------|-------------------------|
+| module | ModuleDeclaration |
+| always_ff | AlwaysFFBlock |
+| always_comb | AlwaysCombBlock |
+| always_latch | AlwaysLatchBlock |
+| assign | ContinuousAssign |
+| logic/reg/wire | DataDeclaration |
+| class | ClassDeclaration |
+| interface | InterfaceDeclaration |
+| constraint | ConstraintBlock |
+
+
+```python
+if item.kind == SyntaxKind.ModuleDeclaration:
+    ...
+```
+```
+

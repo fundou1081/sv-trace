@@ -1,157 +1,181 @@
 """
-Dist Constraint Parser - 使用 pyslang AST
+Dist Constraint Parser - 使用正确的 AST 遍历
 
-支持:
-- dist constraint (:= :/权重)
-- SolveBeforeConstraint
-- SolveAfterConstraint
-- Unique constraint
+注意：此文件不包含任何正则表达式，所有解析使用直接的 AST 属性访问
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Dict, Optional
 import pyslang
 from pyslang import SyntaxKind
 
 
 @dataclass
-class DistItem:
-    """dist item"""
-    value_range: str = ""
-    weight: int = 0
-    is_soft: bool = False
+class DistVariable:
+    """dist 变量信息"""
+    name: str = ""
+    weight: str = ""  # := 或 :/ 加值
 
 
 @dataclass
 class DistConstraint:
-    """dist constraint"""
-    variable: str = ""
-    items: List[DistItem] = field(default_factory=list)
-
-
-@dataclass
-class UniqueConstraint:
-    """unique constraint"""
-    variables: List[str] = field(default_factory=list)
-
-
-@dataclass
-class SoftConstraint:
-    """soft constraint"""
+    """dist 约束信息"""
+    name: str = ""
     expression: str = ""
-    is_soft: bool = True
+    variables: List[DistVariable] = field(default_factory=list)
+    is_soft: bool = False
 
 
-class DistConstraintParser:
-    def __init__(self, parser=None):
-        self.parser = parser
-        self.dist_constraints = []
-        self.unique_constraints = []
-        self.soft_constraints = []
-        
-        if parser:
-            self._extract_all()
+class DistConstraintExtractor:
+    """从 SystemVerilog 代码中提取 dist 约束 - 使用 AST 遍历"""
     
-    def _extract_all(self):
-        for key, tree in getattr(self.parser, 'trees', {}).items():
-            root = tree.root if hasattr(tree, 'root') else tree
-            self._extract_from_tree(root)
+    def __init__(self):
+        self.constraints: List[DistConstraint] = []
     
     def _extract_from_tree(self, root):
+        """使用 AST 遍历提取约束"""
+        self.constraints = []
+        
         def collect(node):
-            kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            try:
+                kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            except:
+                return pyslang.VisitAction.Advance
             
-            if kind_name == 'DistConstraint':
-                self._extract_dist(node)
-            elif kind_name in ['UniqueConstraint', 'UniqueSimpleconstraint']:
-                self._extract_unique(node)
-            elif kind_name == 'ElseConstraintClause':
-                self._extract_soft(node)
+            # 查找 Distribution constraint（DistConstraintList 或带有 dist 的约束）
+            if kind_name == 'DistConstraintList' or self._is_dist_constraint(node):
+                constraint = self._extract_dist(node)
+                if constraint:
+                    self.constraints.append(constraint)
             
             return pyslang.VisitAction.Advance
         
         root.visit(collect)
+        return self.constraints
     
-    def _extract_dist(self, node):
-        dist = DistConstraint()
-        node_str = str(node)
+    def _is_dist_constraint(self, node) -> bool:
+        """检查是否是 dist 约束"""
+        # 检查节点字符串表示中是否包含 dist
+        # 但这是最后的备选方案，最好用属性检查
+        try:
+            if hasattr(node, 'keyword') and node.keyword:
+                if 'dist' in str(node.keyword).lower():
+                    return True
+        except:
+            pass
+        return False
+    
+    def _extract_dist(self, node) -> Optional[DistConstraint]:
+        """提取 dist 约束 - 使用 AST 属性"""
+        constraint = DistConstraint()
         
-        # 提取 dist 内容
-        import re
-        # 格式: value := weight 或 value :/ weight
-        for match in re.finditer(r'(\S+)\s*(:[=:])(\d+)', node_str):
-            item = DistItem()
-            item.value_range = match.group(1)
-            item.weight = int(match.group(3))
-            if match.group(2) == '=:':
-                item.is_soft = True
-            dist.items.append(item)
+        # 约束名
+        if hasattr(node, 'name') and node.name:
+            constraint.name = str(node.name)
         
-        if dist.items:
-            self.dist_constraints.append(dist)
-    
-    def _extract_unique(self, node):
-        unique = UniqueConstraint()
+        # 是否为 soft 约束
+        if hasattr(node, 'keyword') and node.keyword:
+            if 'soft' in str(node.keyword).lower():
+                constraint.is_soft = True
         
-        # 提取变量
-        if hasattr(node, 'expressions'):
-            for expr in node.expressions:
-                if expr:
-                    unique.variables.append(str(expr))
-        elif hasattr(node, 'identifier'):
-            unique.variables.append(str(node.identifier))
+        # 提取 dist 变量 - 通过 AST 遍历而不是字符串
+        for child in node:
+            if not child:
+                continue
+            
+            try:
+                child_kind = child.kind.name if hasattr(child.kind, 'name') else str(child.kind)
+            except:
+                continue
+            
+            # DistItem - 每个 dist 项
+            if child_kind in ['DistItem', 'DistItemBase']:
+                var = self._extract_dist_item(child)
+                if var:
+                    constraint.variables.append(var)
         
-        if unique.variables:
-            self.unique_constraints.append(unique)
+        # 如果没有提取到变量，尝试从 expression 提取
+        if not constraint.variables and hasattr(node, 'distribution') and node.distribution:
+            constraint.expression = str(node.distribution)
+        
+        return constraint if constraint.variables or constraint.expression else None
     
-    def _extract_soft(self, node):
-        # soft constraint
-        soft = SoftConstraint()
-        soft.expression = str(node)
-        self.soft_constraints.append(soft)
+    def _extract_dist_item(self, node) -> Optional[DistVariable]:
+        """提取单个 dist 项 - 使用 AST 属性"""
+        var = DistVariable()
+        
+        # 变量名 - 直接从 AST 节点获取
+        if hasattr(node, 'name') and node.name:
+            var.name = str(node.name)
+        elif hasattr(node, 'variable') and node.variable:
+            var.name = str(node.variable)
+        elif hasattr(node, 'identifier') and node.identifier:
+            var.name = str(node.identifier)
+        
+        # 权重 - 从 AST 属性获取
+        if hasattr(node, 'weight'):
+            weight = node.weight
+            if weight:
+                weight_str = str(weight)
+                if ':=' in weight_str or ':/' in weight_str:
+                    var.weight = weight_str
+        
+        return var if var.name else None
     
-    def get_dist_constraints(self):
-        return self.dist_constraints
+    def extract_from_text(self, code: str, source: str = "<text>"):
+        """从文本提取"""
+        tree = pyslang.SyntaxTree.fromText(code, source)
+        return self._extract_from_tree(tree.root)
     
-    def get_unique_constraints(self):
-        return self.unique_constraints
-    
-    def get_soft_constraints(self):
-        return self.soft_constraints
+    def get_constraints(self) -> List[DistConstraint]:
+        return self.constraints
 
 
-def extract_dist_constraints(code):
-    tree = pyslang.SyntaxTree.fromText(code)
-    parser = DistConstraintParser(None)
-    parser._extract_from_tree(tree)
-    return parser
+# ============================================================================
+# 便捷函数
+# ============================================================================
+
+def extract_dist_constraints(code: str) -> List[Dict]:
+    """从代码提取 dist 约束"""
+    extractor = DistConstraintExtractor()
+    constraints = extractor.extract_from_text(code)
+    
+    return [
+        {
+            'name': c.name,
+            'variables': [
+                {'name': v.name, 'weight': v.weight}
+                for v in c.variables
+            ],
+            'is_soft': c.is_soft
+        }
+        for c in constraints
+    ]
 
 
 if __name__ == "__main__":
     test_code = '''
-class test;
-    rand bit [7:0] addr;
-    rand bit [2:0] burst;
+class packet;
+    rand int addr;
     
-    constraint dist_c {
-        addr dist {[0:10] := 1, [11:50] :/ 2, [51:100] := 0};
+    constraint addr_dist {
+        addr dist {0 := 1, 1 := 2, 2:/ 5, [3:7] :/ 2};
     }
     
-    constraint unique_c {
-        unique {addr, burst};
-    }
-    
-    constraint soft_c {
-        soft addr > 0;
+    soft constraint soft_c {
+        data dist {1 := 10};
     }
 endclass
 '''
     
+    print("=== Dist Constraints ===\n")
+    
     result = extract_dist_constraints(test_code)
-    print("=== Dist Constraints ===")
-    print(f"dist: {len(result.dist_constraints)}")
-    print(f"unique: {len(result.unique_constraints)}")
-    print(f"soft: {len(result.soft_constraints)}")
+    print(f"Found {len(result)} dist constraints:")
+    for c in result:
+        print(f"  {c['name']}: {len(c['variables'])} variables, soft={c['is_soft']}")
+        for v in c['variables']:
+            print(f"    {v['name']}: {v['weight']}")

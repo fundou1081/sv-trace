@@ -1,170 +1,111 @@
 """
-Assertion 解析器 - assertion/sequence/property 提取
+Assertion Parser - 使用正确的 AST 遍历
+
+断言、序列、属性提取
+
+注意：此文件不包含任何正则表达式
 """
 import sys
 import os
-import re
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from typing import Dict, List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional
+import pyslang
+from pyslang import SyntaxKind
 
 
 @dataclass
-class AssertionBlock:
+class SequenceExpr:
     name: str = ""
-    kind: str = ""
-    property_expr: str = ""
+    type: str = ""
 
 
 @dataclass
-class SequenceDef:
+class PropertyExpr:
     name: str = ""
-    args: List[str] = None
-    body: str = ""
-    
-    def __init__(self):
-        self.args = []
+    type: str = ""
 
 
 @dataclass
-class PropertyDef:
-    name: str = ""
-    args: List[str] = None
-    body: str = ""
-    
-    def __init__(self):
-        self.args = []
+class AssertionStmt:
+    statement_type: str = ""  # assert, assume, cover
+    severity: str = ""
 
 
 class AssertionExtractor:
-    def __init__(self, parser):
-        self.parser = parser
-        self.assertions: List[AssertionBlock] = []
-        self.sequences: Dict[str, SequenceDef] = {}
-        self.properties: Dict[str, PropertyDef] = {}
-        self._extract_all()
+    """提取断言相关 - 使用正确的 AST 遍历"""
     
-    def _extract_all(self):
-        for key, tree in self.parser.trees.items():
-            if not tree or not hasattr(tree, 'root') or not tree.root:
-                continue
+    def __init__(self):
+        self.sequences: List[SequenceExpr] = []
+        self.properties: List[PropertyExpr] = []
+        self.assertions: List[AssertionStmt] = []
+    
+    def _extract_from_tree(self, root):
+        def collect(node):
+            try:
+                kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            except:
+                return pyslang.VisitAction.Advance
             
-            root = tree.root
+            # 序列声明
+            if kind_name == 'SequenceDeclaration':
+                seq = SequenceExpr()
+                if hasattr(node, 'name') and node.name:
+                    seq.name = str(node.name)
+                self.sequences.append(seq)
             
-            if hasattr(root, 'members') and root.members:
-                for m in root.members:
-                    self._process_member(m)
-    
-    def _process_member(self, member):
-        type_name = str(type(member))
-        node_str = str(member)
+            # 属性声明
+            elif kind_name == 'PropertyDeclaration':
+                prop = PropertyExpr()
+                if hasattr(node, 'name') and node.name:
+                    prop.name = str(node.name)
+                self.properties.append(prop)
+            
+            # 断言语句
+            elif kind_name in ['AssertPropertyStatement', 'AssumePropertyStatement', 
+                              'CoverPropertyStatement', 'ImmediateAssertStatement']:
+                stmt = AssertionStmt()
+                if 'Assert' in kind_name:
+                    stmt.statement_type = 'assert'
+                elif 'Assume' in kind_name:
+                    stmt.statement_type = 'assume'
+                elif 'Cover' in kind_name:
+                    stmt.statement_type = 'cover'
+                
+                self.assertions.append(stmt)
+            
+            return pyslang.VisitAction.Advance
         
-        # Concurrent assertion
-        if 'ConcurrentAssertion' in type_name or 'Assert' in type_name:
-            block = self._parse_assertion(node_str, member)
-            if block:
-                self.assertions.append(block)
-        
-        # Sequence
-        elif 'SequenceDeclaration' in type_name:
-            seq = self._parse_sequence(node_str)
-            if seq:
-                self.sequences[seq.name] = seq
-        
-        # Property
-        elif 'PropertyDeclaration' in type_name:
-            prop = self._parse_property(node_str)
-            if prop:
-                self.properties[prop.name] = prop
-        
-        # 递归
-        for attr in ['members', 'body', 'items']:
-            if hasattr(member, attr):
-                child = getattr(member, attr)
-                if child:
-                    if isinstance(child, list):
-                        for c in child:
-                            self._process_member(c)
-                    else:
-                        self._process_member(child)
+        root.visit(collect)
     
-    def _parse_assertion(self, node_str: str, node) -> Optional[AssertionBlock]:
-        block = AssertionBlock()
-        
-        kind_match = re.search(r'\b(assert|assume|cover)\b', node_str)
-        if kind_match:
-            block.kind = kind_match.group(1)
-        
-        name_match = re.search(rf'{block.kind}\s+(\w+)\s*\(', node_str)
-        if name_match:
-            block.name = name_match.group(1)
-        else:
-            block.name = f"anon_{len(self.assertions)}"
-        
-        block.property_expr = node_str
-        return block
-    
-    def _parse_sequence(self, node_str: str) -> Optional[SequenceDef]:
-        seq = SequenceDef()
-        match = re.search(r'sequence\s+(\w+)', node_str)
-        if match:
-            seq.name = match.group(1)
-        return seq if seq.name else None
-    
-    def _parse_property(self, node_str: str) -> Optional[PropertyDef]:
-        prop = PropertyDef()
-        match = re.search(r'property\s+(\w+)', node_str)
-        if match:
-            prop.name = match.group(1)
-        return prop if prop.name else None
-    
-    def get_all_assertions(self) -> List[AssertionBlock]:
-        return self.assertions
-    
-    def get_all_sequences(self) -> Dict[str, SequenceDef]:
-        return self.sequences
-    
-    def get_all_properties(self) -> Dict[str, PropertyDef]:
-        return self.properties
+    def extract_from_text(self, code: str, source: str = "<text>"):
+        tree = pyslang.SyntaxTree.fromText(code, source)
+        self._extract_from_tree(tree.root)
+        return {
+            'sequences': len(self.sequences),
+            'properties': len(self.properties),
+            'assertions': len(self.assertions)
+        }
 
 
-def extract_assertions_from_text(code: str) -> List[dict]:
-    """从源码文本提取 assertions/sequences/properties (使用 pyslang)"""
-    import pyslang
-    from pyslang import SyntaxKind
+def extract_assertion_expr(code: str) -> Dict:
+    return AssertionExtractor().extract_from_text(code)
+
+
+if __name__ == "__main__":
+    test_code = '''
+sequence s1;
+    a |-> b;
+endsequence
+
+property p1;
+    always @ (posedge clk) a |-> b;
+endproperty
+
+assert property (p1);
+cover property (s1);
+'''
     
-    results = []
-    
-    # 主要的 assertion 相关声明类型
-    target_kinds = {
-        'SequenceDeclaration',
-        'PropertyDeclaration',
-        'AssertPropertyStatement',
-        'AssumePropertyStatement', 
-        'CoverPropertyStatement',
-    }
-    
-    def collect(node):
-        kind_name = node.kind.name
-        
-        if kind_name in target_kinds:
-            name = str(getattr(node, 'name', '')).strip()
-            expr = str(node)[:100].replace('\n', ' ').strip()
-            
-            results.append({
-                'name': name,
-                'kind': kind_name,
-                'expr': expr
-            })
-        
-        return pyslang.VisitAction.Advance
-    
-    try:
-        tree = pyslang.SyntaxTree.fromText(code)
-        (tree.root if hasattr(tree, "root") else tree).visit(collect)
-    except Exception as e:
-        pass
-    
-    return results
+    result = extract_assertion_expr(test_code)
+    print(result)

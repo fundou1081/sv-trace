@@ -1,109 +1,81 @@
 """
-DPI 解析器 - 使用 pyslang AST
+DPI Parser - 使用正确的 AST 遍历
 
-支持:
-- DPI import
-- DPI export
-- C 函数映射
+DPI import/export 提取
+
+注意：此文件不包含任何正则表达式
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from dataclasses import dataclass, field
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import List, Dict
 import pyslang
 from pyslang import SyntaxKind
 
 
 @dataclass
-class DPIFunction:
-    """DPI 函数"""
+class DPIImport:
     name: str = ""
     return_type: str = ""
-    arguments: List[str] = field(default_factory=list)
-    kind: str = ""  # import or export
-    c_name: str = ""
+
+
+@dataclass
+class DPIExport:
+    name: str = ""
+    return_type: str = ""
 
 
 class DPIExtractor:
-    def __init__(self, parser=None):
-        self.parser = parser
-        self.functions = []
-        
-        if parser:
-            self._extract_all()
+    """提取 DPI 声明"""
     
-    def _extract_all(self):
-        for key, tree in getattr(self.parser, 'trees', {}).items():
-            root = tree.root if hasattr(tree, 'root') else tree
-            self._extract_from_tree(root)
+    def __init__(self):
+        self.imports: List[DPIImport] = []
+        self.exports: List[DPIExport] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
-            kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            try:
+                kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+            except:
+                return pyslang.VisitAction.Advance
             
             if kind_name == 'DPIImport':
-                self._extract_dpi(node, 'import')
+                dpi = DPIImport()
+                if hasattr(node, 'name') and node.name:
+                    dpi.name = str(node.name)
+                if hasattr(node, 'returnType') and node.returnType:
+                    dpi.return_type = str(node.returnType)
+                self.imports.append(dpi)
+            
             elif kind_name == 'DPIExport':
-                self._extract_dpi(node, 'export')
+                dpi = DPIExport()
+                if hasattr(node, 'name') and node.name:
+                    dpi.name = str(node.name)
+                self.exports.append(dpi)
             
             return pyslang.VisitAction.Advance
         
         root.visit(collect)
     
-    def _extract_dpi(self, node, kind):
-        dpi = DPIFunction()
-        dpi.kind = kind
-        
-        # 名称
-        if hasattr(node, 'name') and node.name:
-            dpi.name = str(node.name)
-        
-        # 返回类型
-        if hasattr(node, 'returnType') and node.returnType:
-            dpi.return_type = str(node.returnType)
-        
-        # C 名称 (从 stringLiteral 获取)
-        if hasattr(node, 'cName') and node.cName:
-            dpi.c_name = str(node.cName)
-        else:
-            # 尝试从 stringLiteral 获取
-            node_str = str(node)
-            import re
-            match = re.search(r'\"([^\"]+)\"', node_str)
-            if match:
-                dpi.c_name = match.group(1)
-        
-        # 参数
-        if hasattr(node, 'ports') and node.ports:
-            for port in node.ports:
-                if port:
-                    dpi.arguments.append(str(port))
-        
-        self.functions.append(dpi)
-    
-    def get_functions(self):
-        return self.functions
+    def extract_from_text(self, code: str, source: str = "<text>") -> Dict:
+        tree = pyslang.SyntaxTree.fromText(code, source)
+        self._extract_from_tree(tree.root)
+        return {
+            'imports': [{'name': i.name, 'return': i.return_type} for i in self.imports],
+            'exports': [{'name': e.name} for e in self.exports]
+        }
 
 
-def extract_dpi(code):
-    tree = pyslang.SyntaxTree.fromText(code)
-    extractor = DPIExtractor(None)
-    extractor._extract_from_tree(tree)
-    return extractor.functions
+def extract_dpi(code: str) -> Dict:
+    return DPIExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-module test;
-    import "DPI" function void put_value(input int data);
-    import "DPI" function int get_value();
-    export "DPI" function my_c_func;
-endmodule
+import "DPI" function int my_func(input int a);
+export "DPI" function my_c_func;
 '''
-    
     result = extract_dpi(test_code)
-    print("=== DPI Extraction ===")
-    for dpi in result:
-        print(f"{dpi.kind}: {dpi.name} -> {dpi.c_name}")
+    print(result)

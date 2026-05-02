@@ -68,7 +68,7 @@ class HierarchyQuery:
             return instances
         
         for member in module.body:
-            if hasattr(member, 'kind') and member.kind == pyslang.SyntaxKind.HierarchicalInstantiation:
+            if hasattr(member, 'kind') and member.kind == pyslang.SyntaxKind.HierarchyInstantiation:
                 if hasattr(member, 'instances') and member.instances:
                     for inst in member.instances:
                         inst_name = inst.name.value if hasattr(inst, 'name') and inst.name else ""
