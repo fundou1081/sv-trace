@@ -4,76 +4,54 @@
 
 ```
 sv-trace/
-├── src/                    # 核心源代码 (62 files)
-│   ├── parse/             # 解析器 (9 files)
+├── src/                    # 核心源代码
+│   ├── parse/             # ✅ 解析器 (302 files) - 基于 pyslang AST
 │   ├── trace/            # 追踪模块 (22 files)
 │   ├── query/           # 查询模块 (13 files)
 │   └── debug/           # 调试模块 (21 files)
 │
-├── tests/                 # 测试 (62 files)
-│   ├── test_*.py         # 基本测试
-│   ├── edge_cases/       # 边界测试
-│   └── ...
-│
-├── docs/                  # 文档 (21 files)
-│   ├── MODULE_SUMMARY.md # 模块汇总
-│   ├── MODULE_DETAILS.md # 详细API文档
+├── docs/                  # 文档 (40+ files)
+│   ├── PARSER_SUPPORT.md # ⭐ Parser 支持文档 v1.0
+│   ├── adr/              # 架构决策记录 (28 files)
+│   ├── pyslang-spec/     # pyslang 语法规范
 │   └── *.md              # 各模块文档
 │
-└── [项目根目录文件]       # 配置文件等
-``` 
+├── tests/                 # 测试
+│   ├── test_*.py         # 基本测试
+│   ├── edge_cases/       # 边界测试
+│   └── targeted/          # 针对性测试
+│
+└── [项目根目录文件]       # 配置文件
+```
 
 ## 统计
 
-| 目录 | 文件数 |
-|------|--------|
-| src/parse | 9 |
-| src/trace | 22 |
-| src/query | 13 |
-| src/debug | 21 |
-| **src总计** | **65** |
-| tests/ | 62 |
-| docs/ | 21 |
-| 项目根目录 | 41 |
-
-## 模块列表
-
-### Trace 模块 (22)
-- driver, load, datapath, dependency, connection
-- controlflow, dataflow, bitselect, flow_analyzer
-- pipeline_analyzer, timing_depth, timing_path
-- performance, resource_estimation, power_estimation
-- throughput_estimation, sim_performance, visualize
-- driver_simple
-
-### Query 模块 (13)
-- signal, path, condition_relation_extractor
-- overflow_risk_detector, datapath_boundary_analyzer
-- fuzzy_path_matcher, nested_condition_expander
-- sample_condition_analyzer, stimulus_path_finder
-- stim1
-
-### Debug 模块 (21)
-- class_extractor, class_hierarchy, class_info
-- class_usage, class_quality, class_relation
-- class_const_parser, constraint_parser
-- design_evaluator, assistant, complexity
-
-## 测试覆盖
-
-| 测试类型 | 状态 |
-|----------|------|
-| 核心测试 | ✅ 6/6 |
-| 边界测试 | ✅ 38/38 |
-| P1模块 | ✅ 5/5 |
-| P2模块 | ✅ 4/4 |
-| P3模块 | ✅ 8+ |
-
-## 最新提交
-
-- 测试: 边界测试100% (38/38)
-- 文档: MODULE_DETAILS.md
+| 目录 | 文件数 | 说明 |
+|------|--------|------|
+| src/parse | **302** | ✅ 基于 pyslang AST 的原子化解析器 |
+| src/trace | 22 | 核心追踪引擎 |
+| src/query | 13 | 查询功能 |
+| src/debug | 21 | 高级分析工具 |
+| docs | 40+ | 文档 |
+| tests | 60+ | 测试用例 |
 
 ---
 
-*最后更新: 2026-04-25*
+## Parser Foundation v1.0 里程碑
+
+```
+✅ 解析器文件: 302 个
+✅ 支持语法: 603 种
+✅ 覆盖率: 112%
+✅ sv-tests 成功率: 100%
+```
+
+### 设计原则
+
+1. **原子化** - 每个解析器专注单一语法类别
+2. **组合式** - 可基于现有 parser 派生新 parser
+3. **AST 优先** - 使用 pyslang AST 遍历，无正则表达式
+
+---
+
+*最后更新: 2026-05-02*
