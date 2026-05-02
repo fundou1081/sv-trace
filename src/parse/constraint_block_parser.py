@@ -1,52 +1,49 @@
 """
 Constraint Block Parser - 使用正确的 AST 遍历
 
-支持:
-- ConstraintBlock (约束块 inside class)
-- ConstraintDeclaration (单个约束声明)
-- ExpressionConstraint (表达式约束)
-- ConditionalConstraint (if-else 约束)
-- ImplicationConstraint (if-else -> 约束)
-- LoopConstraint (foreach 约束)
-- DistConstraintList (dist 约束)
+提取 constraint block 及其内容：
+- constraint 块声明
+- 表达式约束 (in, inside, ==, !=, >, <, >=, <=)
+- if-else 约束
+- foreach 约束
+- 约束优先级 (soft, unique, solve...before)
 
-注意：此文件不包含任何正则表达式，所有解析使用 AST 属性
+注意：此文件不包含任何正则表达式
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 import pyslang
 from pyslang import SyntaxKind
 
 
 @dataclass
-class ConstraintInfo:
-    """约束信息"""
-    name: str = ""
-    constraint_type: str = ""  # expression, conditional, implication, loop, dist
-    expression: str = ""
-    expressions_count: int = 0
-    solve_order: int = -1
+class ConstraintExpr:
+    """约束表达式"""
+    expr_type: str = ""  # binary, unary, range, dist, if_else, foreach
+    operator: str = ""
+    left: str = ""
+    right: str = ""
+    body: str = ""
 
 
-@dataclass  
+@dataclass
 class ConstraintBlock:
-    """约束块信息"""
+    """约束块"""
     name: str = ""
-    constraints: List[ConstraintInfo] = field(default_factory=list)
+    class_name: str = ""
     is_soft: bool = False
-    constraints_count: int = 0
+    expressions: List[ConstraintExpr] = field(default_factory=list)
 
 
 class ConstraintBlockExtractor:
-    """从 SystemVerilog 代码中提取约束块 - 使用正确的 AST 遍历"""
+    """提取 constraint block 声明和内容"""
     
     def __init__(self):
-        self.blocks: List[ConstraintBlock] = []
-        self.standalone_constraints: List[ConstraintInfo] = []
+        self.constraints: List[ConstraintBlock] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -55,237 +52,176 @@ class ConstraintBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            # ConstraintDeclaration - 单个约束声明
-            if kind_name == 'ConstraintDeclaration':
-                # 检查是否是 dist 约束
-                if self._is_dist_constraint(node):
-                    constraint = self._extract_constraint(node)
-                    if constraint:
-                        self.standalone_constraints.append(constraint)
-                else:
-                    # 普通约束 - 检查是否在类中（即 ConstraintBlock）
-                    in_class = self._is_inside_class(node, root)
-                    if in_class:
-                        block = self._extract_constraint_block(node)
-                        if block:
-                            self.blocks.append(block)
-                    else:
-                        constraint = self._extract_constraint(node)
-                        if constraint:
-                            self.standalone_constraints.append(constraint)
+            # ConstraintBlockDeclaration
+            if kind_name == 'ConstraintBlockDeclaration':
+                cb = self._extract_constraint_block(node)
+                if cb:
+                    self.constraints.append(cb)
+            
+            # ConstraintExpression 直接子节点
+            elif kind_name == 'ConstraintExpression':
+                ce = self._extract_constraint_expr(node)
+                if ce:
+                    pass  # 可以收集但通常属于某个 block
             
             return pyslang.VisitAction.Advance
         
         root.visit(collect)
-        return self.blocks + self.standalone_constraints
-    
-    def _is_dist_constraint(self, node) -> bool:
-        """检查是否是 dist 约束 - 使用 AST 属性"""
-        try:
-            # 通过 AST 属性判断，而不是字符串
-            if hasattr(node, 'keyword') and node.keyword:
-                kw = str(node.keyword).lower()
-                if 'dist' in kw:
-                    return True
-        except:
-            pass
-        return False
-    
-    def _is_inside_class(self, node, root) -> bool:
-        """检查约束是否在类内部"""
-        # 简单方法：检查父节点是否是 ClassDeclaration
-        # 更准确的方法需要维护父节点栈
-        return True  # 简化：如果在类中就用 block 模式
-    
-    def _extract_constraint(self, node) -> Optional[ConstraintInfo]:
-        """提取单个约束 - 使用 AST 属性"""
-        constraint = ConstraintInfo()
-        
-        # 约束名
-        if hasattr(node, 'name') and node.name:
-            constraint.name = str(node.name)
-        elif hasattr(node, 'identifier') and node.identifier:
-            constraint.name = str(node.identifier)
-        
-        # 约束类型 - 通过 AST 属性判断
-        constraint.constraint_type = self._get_constraint_type(node)
-        
-        # 表达式 - 直接从 AST 获取
-        if hasattr(node, 'expression') and node.expression:
-            constraint.expression = str(node.expression)
-        elif hasattr(node, 'condition') and node.condition:
-            constraint.expression = str(node.condition)
-        
-        constraint.expressions_count = 1
-        
-        # solve order
-        if hasattr(node, 'solveBefore') and node.solveBefore:
-            constraint.solve_order = 1
-        elif hasattr(node, 'solveAfter') and node.solveAfter:
-            constraint.solve_order = -1
-        
-        return constraint
-    
-    def _get_constraint_type(self, node) -> str:
-        """判断约束类型 - 使用 AST 属性判断"""
-        # if-else 条件约束
-        if hasattr(node, 'condition') and node.condition:
-            return 'conditional'
-        
-        # implication (->)
-        if hasattr(node, 'left') and node.left:
-            return 'implication'
-        
-        # loop (foreach)
-        if hasattr(node, 'body') and node.body:
-            return 'loop'
-        
-        # dist 分布约束
-        if self._is_dist_constraint(node):
-            return 'dist'
-        
-        # soft 约束
-        if hasattr(node, 'keyword') and node.keyword:
-            if 'soft' in str(node.keyword).lower():
-                return 'soft'
-        
-        return 'expression'
     
     def _extract_constraint_block(self, node) -> Optional[ConstraintBlock]:
-        """提取约束块"""
-        block = ConstraintBlock()
+        cb = ConstraintBlock()
         
-        # 块名
+        # 获取名称
         if hasattr(node, 'name') and node.name:
-            block.name = str(node.name)
+            cb.name = str(node.name)
         
-        # 软约束
+        # 检查 soft 属性
         if hasattr(node, 'keyword') and node.keyword:
-            if 'soft' in str(node.keyword).lower():
-                block.is_soft = True
+            kw = str(node.keyword).lower()
+            cb.is_soft = 'soft' in kw
         
-        # 提取块内的约束 - 遍历子节点
-        constraints = []
+        # 遍历子节点提取约束表达式
         for child in node:
             if not child:
                 continue
-            
             try:
                 child_kind = child.kind.name if hasattr(child.kind, 'name') else str(child.kind)
             except:
                 continue
             
-            if child_kind in ['ConstraintDeclaration', 'ConstraintItem', 'ExpressionConstraint']:
-                c = self._extract_constraint(child)
-                if c:
-                    constraints.append(c)
+            # 约束表达式
+            if child_kind in ['BinaryConstraint', 'UnaryConstraint', 'ImplicationConstraint',
+                             'ConditionalConstraint', 'ForeachConstraint']:
+                expr = self._extract_constraint_expr(child)
+                if expr:
+                    cb.expressions.append(expr)
+            
+            # 分布约束
+            elif child_kind == 'DistConstraint':
+                dist_expr = self._extract_dist_expr(child)
+                if dist_expr:
+                    ce = ConstraintExpr()
+                    ce.expr_type = 'dist'
+                    ce.body = dist_expr
+                    cb.expressions.append(ce)
         
-        block.constraints = constraints
-        block.constraints_count = len(constraints)
-        
-        return block if constraints else None
+        return cb if cb.name else None
     
-    def extract_from_text(self, code: str, source: str = "<text>"):
+    def _extract_constraint_expr(self, node) -> Optional[ConstraintExpr]:
+        ce = ConstraintExpr()
+        
+        try:
+            kind_name = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
+        except:
+            return None
+        
+        ce.expr_type = kind_name
+        
+        # 二元约束 (a == b, a < b, etc.)
+        if kind_name in ['BinaryConstraint', 'BinaryExpression']:
+            if hasattr(node, 'left') and node.left:
+                ce.left = str(node.left)
+            if hasattr(node, 'operator') and node.operator:
+                ce.operator = str(node.operator)
+            if hasattr(node, 'right') and node.right:
+                ce.right = str(node.right)
+        
+        # 隐含约束 (a -> b)
+        elif kind_name == 'ImplicationConstraint':
+            if hasattr(node, 'condition') and node.condition:
+                ce.left = str(node.condition)
+            if hasattr(node, 'expression') and node.expression:
+                ce.right = str(node.expression)
+            ce.operator = '->'
+        
+        # 条件约束 (if-else)
+        elif kind_name in ['ConditionalConstraint', 'ConditionalExpression']:
+            if hasattr(node, 'condition') and node.condition:
+                ce.left = str(node.condition)
+            if hasattr(node, 'trueExpression') and node.trueExpression:
+                ce.body = str(node.trueExpression)
+            ce.expr_type = 'if_else'
+        
+        # foreach 约束
+        elif kind_name in ['ForeachConstraint', 'ForeachExpression']:
+            if hasattr(node, 'loopVariables') and node.loopVariables:
+                ce.body = str(node.loopVariables)
+            ce.expr_type = 'foreach'
+        
+        # 范围约束 (inside {[1:10]})
+        elif kind_name == 'RangeConstraint':
+            if hasattr(node, 'expression') and node.expression:
+                ce.body = str(node.expression)
+            ce.expr_type = 'range'
+        
+        return ce if (ce.left or ce.right or ce.body) else None
+    
+    def _extract_dist_expr(self, node) -> str:
+        """提取 dist 表达式"""
+        if hasattr(node, 'expression') and node.expression:
+            return str(node.expression)
+        return ""
+    
+    def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
-        return self._extract_from_tree(tree.root)
+        self._extract_from_tree(tree.root)
+        
+        return [
+            {
+                'name': cb.name,
+                'soft': cb.is_soft,
+                'expressions': [
+                    {
+                        'type': e.expr_type,
+                        'operator': e.operator,
+                        'left': e.left[:30] if e.left else '',
+                        'right': e.right[:30] if e.right else '',
+                        'body': e.body[:30] if e.body else ''
+                    }
+                    for e in cb.expressions
+                ]
+            }
+            for cb in self.constraints
+        ]
     
-    def get_constraints(self) -> List[ConstraintInfo]:
-        return self.standalone_constraints
-    
-    def get_blocks(self) -> List[ConstraintBlock]:
-        return self.blocks
-
-
-# ============================================================================
-# 便捷函数
-# ============================================================================
-
-def extract_constraints(code: str) -> List[Dict]:
-    """从代码提取约束"""
-    extractor = ConstraintBlockExtractor()
-    constraints = extractor.extract_from_text(code)
-    
-    result = []
-    for c in constraints:
-        if isinstance(c, ConstraintBlock):
-            for constraint in c.constraints:
-                result.append({
-                    'name': constraint.name,
-                    'type': constraint.constraint_type,
-                    'expression': constraint.expression[:50],
-                    'block': c.name,
-                    'soft': c.is_soft
-                })
-        elif isinstance(c, ConstraintInfo):
-            result.append({
-                'name': c.name,
-                'type': c.constraint_type,
-                'expression': c.expression[:50],
-                'block': '',
-                'soft': False
-            })
-    
-    return result
+    def extract_from_file(self, filepath: str) -> List[Dict]:
+        with open(filepath, 'r') as f:
+            code = f.read()
+        return self.extract_from_text(code, filepath)
 
 
 def extract_constraint_blocks(code: str) -> List[Dict]:
-    """从代码提取约束块"""
-    extractor = ConstraintBlockExtractor()
-    extractor.extract_from_text(code)
-    
-    return [
-        {
-            'name': b.name,
-            'constraints': [
-                {'name': c.name, 'type': c.constraint_type, 'expression': c.expression[:50]}
-                for c in b.constraints
-            ],
-            'is_soft': b.is_soft,
-            'count': b.constraints_count
-        }
-        for b in extractor.blocks
-    ]
+    """便捷函数"""
+    return ConstraintBlockExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-class packet;
-    rand int data;
-    rand int addr;
+class Packet;
+    rand bit [7:0] addr;
+    rand bit [7:0] data;
     
-    // Soft constraint block
-    soft constraint addr_c {
-        addr < 100;
+    constraint c1 {
+        addr inside {[0:100]};
     }
     
-    // Simple constraint
-    constraint data_c { data < 256; }
-    
-    // Conditional constraint
-    constraint con_c {
-        if (addr < 10)
-            data == 0;
-        else
-            data == addr * 2;
+    constraint c2 {
+        soft data == 8'hFF;
+        if (addr > 50) {
+            data inside {[1:10]};
+        }
     }
     
-    // Implication constraint
-    constraint imp_c {
-        (addr > 100) -> data == 255;
+    constraint c3 {
+        addr dist {0:/10, [1:100]:/90};
     }
 endclass
 '''
     
-    print("=== Constraint Extraction ===\n")
-    
-    print("--- extract_constraints ---")
-    constraints = extract_constraints(test_code)
-    print(f"Found {len(constraints)} constraints:")
-    for c in constraints:
-        print(f"  {c['type']}: {c['name']} (block: {c['block']})")
-    
-    print("\n--- extract_constraint_blocks ---")
-    blocks = extract_constraint_blocks(test_code)
-    print(f"Found {len(blocks)} constraint blocks:")
-    for b in blocks:
-        print(f"  {b['name']}: {b['count']} constraints, soft={b['is_soft']}")
+    print("=== Constraint Block Extraction ===\n")
+    result = extract_constraint_blocks(test_code)
+    for item in result:
+        print(f"Constraint: {item['name']}")
+        print(f"  Soft: {item['soft']}")
+        print(f"  Expressions: {len(item['expressions'])}")
+    print(f"\nTotal: {len(result)} constraints")
