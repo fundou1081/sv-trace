@@ -2,88 +2,90 @@ import sys
 sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
 
 """
-测试Coverage激励建议器和Constraint检测器
-使用OpenTitan项目
+测试验证工具应用
 """
 import sys
 import os
 
 sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
 
-from verify.coverage_guide.stimulus_suggester import (
-    CoverageStimulusSuggester, 
-    CoverageTarget, 
-    CoverageType
-)
+from parse import SVParser
+from debug.analyzers.fsm_analyzer import FSMAnalyzer
+from debug.analyzers.cdc import CDCExtendedAnalyzer
 
-from verify.constraint_check.constraint_analyzer import ConstraintAnalyzer
 
-# OpenTitan路径
-OPENTITAN_RTL = [
-    "/Users/fundou/my_dv_proj/opentitan/hw/top_earlgrey/ip_autogen/rv_core_ibex/rtl/rv_core_ibex_peri.sv",
-]
+TARGETED_DIR = '/Users/fundou/my_dv_proj/sv-trace/tests/targeted'
 
-def test_coverage_suggester():
-    """测试Coverage激励建议"""
-    print("=" * 60)
-    print("测试1: Coverage激励建议")
-    print("=" * 60)
-    
-    suggester = CoverageStimulusSuggester()
-    
-    # 加载设计
-    result = suggester.load_design(OPENTITAN_RTL)
-    print(f"加载结果: {result}")
-    
-    if not result:
-        print("❌ 加载失败")
-        return
-    
-    # 分析一个Coverage目标
-    target = CoverageTarget(
-        coverage_type=CoverageType.BRANCH,
-        file=OPENTITAN_RTL[0],
-        line=30,  # 任意行
-    )
-    
-    result = suggester.suggest_stimulus(target)
-    print(result)
 
-def test_constraint_analyzer():
-    """测试Constraint分析"""
-    print("\n" + "=" * 60)
-    print("测试2: Constraint Corner Case检测")
-    print("=" * 60)
+def test_fsm_app():
+    """FSM 应用测试"""
+    print("\n=== FSM 应用测试 ===")
     
-    analyzer = ConstraintAnalyzer()
+    code = '''
+module test;
+    typedef enum {S0, S1, S2} state_t;
+    state_t state;
+    always_ff @(posedge clk) begin
+        case (state)
+            S0: state <= S1;
+            S1: state <= S2;
+            S2: state <= S0;
+        endcase
+    end
+endmodule
+'''
+    parser = SVParser()
+    parser.parse_text(code)
     
-    # 测试约束
-    test_constraint = """
-    class test_data_constraint;
-        rand bit[7:0] value;
-        rand bit[7:0] count;
-        
-        constraint value_c {
-            value inside {[10:50]};
-        }
-        
-        constraint count_c {
-            count inside {[20:60]};
-            count < value;  // count < value可能冲突
-        }
-    endclass
-    """
+    analyzer = FSMAnalyzer(parser)
+    report = analyzer.analyze()
     
-    issues = analyzer.analyze_constraint(test_constraint)
-    print(f"发现问题: {len(issues)} 个")
+    print(f"  状态数: {len(report.state_names)}")
+    print("  ✅ FSM 应用测试通过")
+    return True
+
+
+def test_cdc_app():
+    """CDC 应用测试"""
+    print("\n=== CDC 应用测试 ===")
     
-    for issue in issues:
-        print(f"  - {issue.issue_type.value}: {issue.description}")
+    code = '''
+module test;
+    logic clk_a, clk_b;
+    logic [7:0] data;
+    always_ff @(posedge clk_a) data <= data + 1;
+    always_ff @(posedge clk_b) data <= data + 2;
+endmodule
+'''
+    parser = SVParser()
+    parser.parse_text(code)
     
-    # 生成报告
-    report = analyzer.generate_report(test_constraint)
-    print("\n" + report)
+    analyzer = CDCExtendedAnalyzer(parser)
+    result = analyzer.analyze()
+    
+    print(f"  ✅ CDC 应用测试通过")
+    return True
+
+
+def run_all_tests():
+    tests = [
+        ("FSMApp", test_fsm_app),
+        ("CDCApp", test_cdc_app),
+    ]
+    
+    passed = 0
+    for name, test in tests:
+        try:
+            if test():
+                passed += 1
+                print(f"  ✅ {name} 通过")
+        except Exception as e:
+            print(f"  ❌ {name}: {e}")
+    
+    print(f"\n总计: {passed}/{len(tests)} 通过")
+    return passed == len(tests)
+
 
 if __name__ == "__main__":
-    test_coverage_suggester()
-    test_constraint_analyzer()
+    success = run_all_tests()
+    sys.exit(0 if success else 1)

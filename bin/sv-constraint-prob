@@ -9,7 +9,7 @@ from debug.constraint_parser_v2 import parse_constraints
 from debug.probabilistic_constraint import ProbabilisticConstraintAnalyzer
 
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print("Usage: sv-constraint-prob <file.sv>")
         sys.exit(1)
     

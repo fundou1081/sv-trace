@@ -43,7 +43,7 @@ endmodule
 
 def test_signal_extract():
     """测试信号提取"""
-    from parse import SignalExtractor
+    from parse.extractors import SignalExtractor
     
     code = '''
 module mem (
@@ -59,8 +59,9 @@ endmodule
     parser = SVParser()
     tree = parser.parse_text(code)
     
-    signals = SignalExtractor.extract(tree)
-    print(f"Found {len(signals)} signal(s): {signals}")
+    extractor = SignalExtractor(parser)
+    signals = extractor.extract(tree.root)
+    print(f"Found {len(signals)} signal(s)")
     
     return True
 

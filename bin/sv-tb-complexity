@@ -4,12 +4,13 @@
 import sys
 sys.path.insert(0, 'src')
 
-from verify.tb_analyzer import TBComplexityAnalyzer
+from verify.tb_analyzer.complexity import TBComplexityAnalyzer
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: sv-tb-complexity <tb_file.sv>")
-        sys.exit(1)
+    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
+        print("Usage: sv-tb-complexity <file.sv>")
+        print("Analyze TB complexity with 40+ metrics")
+        sys.exit(0)
     
     filepath = sys.argv[1]
     analyzer = TBComplexityAnalyzer(filepath=filepath)

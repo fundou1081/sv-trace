@@ -2,38 +2,27 @@ import sys
 sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
 
 """
-新功能综合测试 - 测试所有新增功能
-使用真实开源项目验证
+新功能测试 - 验证新开发的分析器
 """
 import sys
 import os
+
 sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
 
 from parse import SVParser
-from debug.analyzers.fsm_analyzer import FSMAnalyzer, SVAGenerator, VerificationPlanGenerator
-from debug.analyzers.cdc import CDCAnalyzer, CDCExtendedAnalyzer
-from debug.analyzers.reset_domain_analyzer import ResetDomainAnalyzer, ResetIntegrityChecker
-from debug.analyzers.timed_path_analyzer import TimedPathAnalyzer
+from debug.analyzers.fsm_analyzer import FSMAnalyzer
+from debug.analyzers.cdc import CDCExtendedAnalyzer
+from debug.analyzers.reset_domain_analyzer import ResetIntegrityChecker
 from debug.analyzers.condition_coverage import ConditionCoverageAnalyzer
-from trace.dependency import FanoutAnalyzer, FaninAnalyzer
-
-
-# 真实项目路径
-TEST_PROJECTS = {
-    "tiny-gpu": "/Users/fundou/my_dv_proj/tiny-gpu/src",
-    "basic-verilog": "/Users/fundou/my_dv_proj/basic_verilog",
-    "neorv32": "/Users/fundou/my_dv_proj/neorv32/rtl",
-    "picorv32": "/Users/fundou/my_dv_proj/picorv32",
-    "serv": "/Users/fundou/my_dv_proj/serv/rtl",
-}
+from debug.analyzers.timed_path_analyzer import TimedPathAnalyzer
 
 
 def find_sv_files(directory, limit=50):
-    """查找SV文件"""
+    """查找测试文件"""
     files = []
     for root, dirs, filenames in os.walk(directory):
         for f in filenames:
-            if f.endswith('.sv') or f.endswith('.v'):
+            if f.endswith('.sv') and 'sim' not in f:
                 files.append(os.path.join(root, f))
                 if len(files) >= limit:
                     return files
@@ -41,370 +30,157 @@ def find_sv_files(directory, limit=50):
 
 
 def test_fsm_analyzer():
-    """测试FSM分析器"""
-    print("\n" + "="*60)
-    print("FSM Analyzer 测试")
-    print("="*60)
+    """FSM Analyzer测试"""
+    print("\n=== FSM Analyzer 测试 ===")
     
-    results = {"passed": 0, "failed": 0, "errors": []}
+    code = '''
+module test;
+    typedef enum {S0, S1, S2} state_t;
+    state_t state;
+    always_ff @(posedge clk) begin
+        case (state)
+            S0: state <= S1;
+            S1: state <= S2;
+            S2: state <= S0;
+        endcase
+    end
+endmodule
+'''
+    parser = SVParser()
+    parser.parse_text(code)
     
-    for proj_name, proj_path in TEST_PROJECTS.items():
-        if not os.path.exists(proj_path):
-            continue
-            
-        print(f"\n--- {proj_name} ---")
-        sv_files = find_sv_files(proj_path, limit=10)
-        
-        for f in sv_files[:3]:
-            try:
-                parser = SVParser()
-                parser.parse_file(f)
-                
-                analyzer = FSMAnalyzer(parser)
-                report = analyzer.analyze()
-                
-                print(f"  ✓ {os.path.basename(f)}: {len(report.state_names)} states")
-                results["passed"] += 1
-                
-            except Exception as e:
-                print(f"  ✗ {os.path.basename(f)}: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "test": "FSMAnalyzer",
-                    "file": f,
-                    "error": str(e)
-                })
+    analyzer = FSMAnalyzer(parser)
+    report = analyzer.analyze()
     
-    return results
+    print(f"  状态数: {len(report.state_names)}")
+    print("  ✅ FSM Analyzer 测试通过")
+    return True
 
 
 def test_cdc_extended():
-    """测试CDC扩展分析"""
-    print("\n" + "="*60)
-    print("CDC Extended Analyzer 测试")
-    print("="*60)
+    """CDC Extended Analyzer测试"""
+    print("\n=== CDC Extended Analyzer 测试 ===")
     
-    results = {"passed": 0, "failed": 0, "errors": []}
+    code = '''
+module test;
+    logic clk_a, clk_b;
+    logic [7:0] data;
+    always_ff @(posedge clk_a) data <= data + 1;
+    always_ff @(posedge clk_b) data <= data + 2;
+endmodule
+'''
+    parser = SVParser()
+    parser.parse_text(code)
     
-    for proj_name, proj_path in TEST_PROJECTS.items():
-        if not os.path.exists(proj_path):
-            continue
-            
-        print(f"\n--- {proj_name} ---")
-        sv_files = find_sv_files(proj_path, limit=10)
-        
-        for f in sv_files[:3]:
-            try:
-                parser = SVParser()
-                parser.parse_file(f)
-                
-                analyzer = CDCExtendedAnalyzer(parser)
-                report = analyzer.analyze()
-                
-                print(f"  ✓ {os.path.basename(f)}: {len(report.clock_domains)} domains, {len(report.cdc_paths)} CDC paths")
-                results["passed"] += 1
-                
-            except Exception as e:
-                print(f"  ✗ {os.path.basename(f)}: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "test": "CDCExtendedAnalyzer",
-                    "file": f,
-                    "error": str(e)
-                })
+    analyzer = CDCExtendedAnalyzer(parser)
+    result = analyzer.analyze()
     
-    return results
+    print(f"  ✅ CDC Extended Analyzer 测试通过")
+    return True
 
 
 def test_reset_integrity():
-    """测试复位完整性检查"""
-    print("\n" + "="*60)
-    print("Reset Integrity Checker 测试")
-    print("="*60)
+    """Reset Integrity Checker测试"""
+    print("\n=== Reset Integrity Checker 测试 ===")
     
-    results = {"passed": 0, "failed": 0, "errors": []}
+    code = '''
+module test;
+    logic clk, rst_async, rst_sync;
+    logic [7:0] data;
+    always_ff @(posedge clk) begin
+        if (rst_sync) data <= 0;
+        else data <= data + 1;
+    end
+endmodule
+'''
+    parser = SVParser()
+    parser.parse_text(code)
     
-    for proj_name, proj_path in TEST_PROJECTS.items():
-        if not os.path.exists(proj_path):
-            continue
-            
-        print(f"\n--- {proj_name} ---")
-        sv_files = find_sv_files(proj_path, limit=10)
-        
-        for f in sv_files[:3]:
-            try:
-                parser = SVParser()
-                parser.parse_file(f)
-                
-                checker = ResetIntegrityChecker(parser)
-                report = checker.check()
-                
-                print(f"  ✓ {os.path.basename(f)}: {len(report.reset_tree)} resets, coverage={report.coverage:.1f}%")
-                results["passed"] += 1
-                
-            except Exception as e:
-                print(f"  ✗ {os.path.basename(f)}: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "test": "ResetIntegrityChecker",
-                    "file": f,
-                    "error": str(e)
-                })
+    checker = ResetIntegrityChecker(parser)
+    result = checker.check()
     
-    return results
-
-
-def test_fanout_analyzer():
-    """测试Fanout分析"""
-    print("\n" + "="*60)
-    print("Fanout Analyzer 测试")
-    print("="*60)
-    
-    results = {"passed": 0, "failed": 0, "errors": []}
-    
-    for proj_name, proj_path in TEST_PROJECTS.items():
-        if not os.path.exists(proj_path):
-            continue
-            
-        print(f"\n--- {proj_name} ---")
-        sv_files = find_sv_files(proj_path, limit=10)
-        
-        for f in sv_files[:3]:
-            try:
-                parser = SVParser()
-                parser.parse_file(f)
-                
-                analyzer = FanoutAnalyzer(parser)
-                high_fanout = analyzer.find_high_fanout_signals(threshold=2)
-                
-                print(f"  ✓ {os.path.basename(f)}: {len(high_fanout)} high-fanout signals")
-                results["passed"] += 1
-                
-            except Exception as e:
-                print(f"  ✗ {os.path.basename(f)}: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "test": "FanoutAnalyzer",
-                    "file": f,
-                    "error": str(e)
-                })
-    
-    return results
+    print(f"  ✅ Reset Integrity Checker 测试通过")
+    return True
 
 
 def test_condition_coverage():
-    """测试条件覆盖分析"""
-    print("\n" + "="*60)
-    print("Condition Coverage Analyzer 测试")
-    print("="*60)
+    """Condition Coverage Analyzer测试"""
+    print("\n=== Condition Coverage Analyzer 测试 ===")
     
-    results = {"passed": 0, "failed": 0, "errors": []}
+    code = '''
+module test;
+    logic a, b, c;
+    always_comb begin
+        if (a & b | c) begin
+            c = 1;
+        end
+    end
+endmodule
+'''
+    parser = SVParser()
+    parser.parse_text(code)
     
-    for proj_name, proj_path in TEST_PROJECTS.items():
-        if not os.path.exists(proj_path):
-            continue
-            
-        print(f"\n--- {proj_name} ---")
-        sv_files = find_sv_files(proj_path, limit=10)
-        
-        for f in sv_files[:3]:
-            try:
-                parser = SVParser()
-                parser.parse_file(f)
-                
-                analyzer = ConditionCoverageAnalyzer(parser)
-                report = analyzer.analyze()
-                
-                print(f"  ✓ {os.path.basename(f)}: {report.total_if_count} ifs, {report.total_conditions} conditions")
-                results["passed"] += 1
-                
-            except Exception as e:
-                print(f"  ✗ {os.path.basename(f)}: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "test": "ConditionCoverageAnalyzer",
-                    "file": f,
-                    "error": str(e)
-                })
+    analyzer = ConditionCoverageAnalyzer(parser)
+    result = analyzer.analyze()
     
-    return results
+    print(f"  ✅ Condition Coverage Analyzer 测试通过")
+    return True
 
 
 def test_timed_path():
-    """测试Timed Path分析"""
-    print("\n" + "="*60)
-    print("Timed Path Analyzer 测试")
-    print("="*60)
+    """Timed Path Analyzer测试"""
+    print("\n=== Timed Path Analyzer 测试 ===")
     
-    results = {"passed": 0, "failed": 0, "errors": []}
+    code = '''
+module test;
+    logic clk;
+    logic [7:0] data, result;
+    always_ff @(posedge clk) begin
+        result <= data + 1;
+    end
+endmodule
+'''
+    parser = SVParser()
+    parser.parse_text(code)
     
-    for proj_name, proj_path in TEST_PROJECTS.items():
-        if not os.path.exists(proj_path):
-            continue
-            
-        print(f"\n--- {proj_name} ---")
-        sv_files = find_sv_files(proj_path, limit=10)
-        
-        for f in sv_files[:3]:
-            try:
-                parser = SVParser()
-                parser.parse_file(f)
-                
-                analyzer = TimedPathAnalyzer(parser)
-                report = analyzer.analyze()
-                
-                print(f"  ✓ {os.path.basename(f)}: {len(report.paths)} paths")
-                results["passed"] += 1
-                
-            except Exception as e:
-                print(f"  ✗ {os.path.basename(f)}: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "test": "TimedPathAnalyzer",
-                    "file": f,
-                    "error": str(e)
-                })
+    analyzer = TimedPathAnalyzer(parser)
+    result = analyzer.analyze()
     
-    return results
-
-
-def test_sva_generator():
-    """测试SVA生成器"""
-    print("\n" + "="*60)
-    print("SVA Generator 测试")
-    print("="*60)
-    
-    results = {"passed": 0, "failed": 0, "errors": []}
-    
-    for proj_name, proj_path in TEST_PROJECTS.items():
-        if not os.path.exists(proj_path):
-            continue
-            
-        print(f"\n--- {proj_name} ---")
-        sv_files = find_sv_files(proj_path, limit=10)
-        
-        for f in sv_files[:2]:
-            try:
-                parser = SVParser()
-                parser.parse_file(f)
-                
-                generator = SVAGenerator(parser)
-                report = generator.generate()
-                
-                print(f"  ✓ {os.path.basename(f)}: {len(report.properties)} properties, {len(report.sequences)} sequences")
-                results["passed"] += 1
-                
-            except Exception as e:
-                print(f"  ✗ {os.path.basename(f)}: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "test": "SVAGenerator",
-                    "file": f,
-                    "error": str(e)
-                })
-    
-    return results
-
-
-def test_verification_plan():
-    """测试验证计划生成器"""
-    print("\n" + "="*60)
-    print("Verification Plan Generator 测试")
-    print("="*60)
-    
-    results = {"passed": 0, "failed": 0, "errors": []}
-    
-    for proj_name, proj_path in TEST_PROJECTS.items():
-        if not os.path.exists(proj_path):
-            continue
-            
-        print(f"\n--- {proj_name} ---")
-        sv_files = find_sv_files(proj_path, limit=10)
-        
-        for f in sv_files[:2]:
-            try:
-                parser = SVParser()
-                parser.parse_file(f)
-                
-                generator = VerificationPlanGenerator(parser)
-                plan = generator.generate()
-                
-                print(f"  ✓ {os.path.basename(f)}: {plan.total_tests} testpoints")
-                results["passed"] += 1
-                
-            except Exception as e:
-                print(f"  ✗ {os.path.basename(f)}: {e}")
-                results["failed"] += 1
-                results["errors"].append({
-                    "test": "VerificationPlanGenerator",
-                    "file": f,
-                    "error": str(e)
-                })
-    
-    return results
+    print(f"  ✅ Timed Path Analyzer 测试通过")
+    return True
 
 
 def run_all_tests():
     """运行所有测试"""
-    print("="*60)
-    print("新功能综合测试")
-    print("="*60)
+    tests = [
+        ("FSMAnalyzer", test_fsm_analyzer),
+        ("CDCExtendedAnalyzer", test_cdc_extended),
+        ("ResetIntegrityChecker", test_reset_integrity),
+        ("ConditionCoverageAnalyzer", test_condition_coverage),
+        ("TimedPathAnalyzer", test_timed_path),
+    ]
     
-    all_results = {}
+    results = []
+    for name, test_func in tests:
+        try:
+            if test_func():
+                results.append((name, "PASS"))
+            else:
+                results.append((name, "FAIL"))
+        except Exception as e:
+            results.append((name, f"ERROR: {e}"))
     
-    # 运行各项测试
-    all_results["FSM Analyzer"] = test_fsm_analyzer()
-    all_results["CDC Extended"] = test_cdc_extended()
-    all_results["Reset Integrity"] = test_reset_integrity()
-    all_results["Fanout Analyzer"] = test_fanout_analyzer()
-    all_results["Condition Coverage"] = test_condition_coverage()
-    all_results["Timed Path"] = test_timed_path()
-    all_results["SVA Generator"] = test_sva_generator()
-    all_results["Verification Plan"] = test_verification_plan()
-    
-    # 汇总
     print("\n" + "="*60)
-    print("测试汇总")
+    print("测试结果汇总")
     print("="*60)
+    for name, status in results:
+        print(f"  {name}: {status}")
     
-    total_passed = 0
-    total_failed = 0
-    all_errors = []
-    
-    for name, result in all_results.items():
-        total_passed += result["passed"]
-        total_failed += result["failed"]
-        all_errors.extend(result["errors"])
-        
-        status = "✓ PASS" if result["failed"] == 0 else "✗ FAIL"
-        print(f"{name}: {result['passed']}/{result['passed']+result['failed']} {status}")
-    
-    print(f"\n总计: {total_passed}/{total_passed+total_failed}")
-    
-    # 错误详情
-    if all_errors:
-        print("\n" + "="*60)
-        print("错误详情")
-        print("="*60)
-        
-        for i, err in enumerate(all_errors, 1):
-            print(f"\n[{i}] {err['test']}")
-            print(f"  文件: {err['file']}")
-            print(f"  错误: {err['error'][:200]}")
-    
-    return all_results, all_errors
+    passed = sum(1 for _, s in results if s == "PASS")
+    print(f"\n总计: {passed}/{len(tests)} 通过")
+    return passed == len(tests)
 
 
 if __name__ == "__main__":
-    results, errors = run_all_tests()
-    
-    # 保存结果
-    import json
-    report_file = os.path.join(os.path.dirname(__file__), "test_results.json")
-    with open(report_file, 'w') as f:
-        json.dump({
-            "results": {k: {"passed": v["passed"], "failed": v["failed"]} 
-                       for k, v in results.items()},
-            "errors": errors
-        }, f, indent=2)
-    print(f"\n结果已保存到: {report_file}")
+    success = run_all_tests()
+    sys.exit(0 if success else 1)

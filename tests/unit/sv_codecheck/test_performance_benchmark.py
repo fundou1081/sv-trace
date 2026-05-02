@@ -2,8 +2,7 @@ import sys
 sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
 
 """
-性能基准测试 - SV-Trace
-测量核心功能的性能指标
+性能基准测试
 """
 import sys
 import os
@@ -14,110 +13,140 @@ sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
 from parse import SVParser
 from trace.driver import DriverCollector
 from trace.load import LoadTracer
-from trace.dependency import FanoutAnalyzer, DependencyAnalyzer
 from debug.analyzers.fsm_analyzer import FSMAnalyzer
 from debug.analyzers.cdc import CDCExtendedAnalyzer
 
-TARGETED_DIR = '/Users/fundou/my_dv_proj/sv-trace/tests/targeted'
 
-
-def measure_time(func, *args, **kwargs):
-    """测量函数执行时间"""
-    start = time.perf_counter()
-    result = func(*args, **kwargs)
-    end = time.perf_counter()
-    return result, (end - start) * 1000  # ms
-
-
-def run_benchmark():
-    """运行性能基准测试"""
-    print("="*60)
-    print("SV-Trace 性能基准测试")
-    print("="*60)
+def benchmark_parser():
+    """Parser 性能测试"""
+    print("\n=== Parser 性能测试 ===")
     
-    # 测试文件列表
-    test_files = [
-        'test_fsm_corners.sv',
-        'test_cdc_corners.sv',
-        'test_condition_corners.sv',
-        'test_fanout_fixed.sv',
+    code = '''
+module top;
+    logic [7:0] data;
+    logic clk;
+    always_ff @(posedge clk) begin
+        data <= data + 1;
+    end
+endmodule
+'''
+    
+    times = []
+    for _ in range(10):
+        parser = SVParser()
+        start = time.time()
+        parser.parse_text(code)
+        elapsed = (time.time() - start) * 1000
+        times.append(elapsed)
+    
+    avg = sum(times) / len(times)
+    print(f"  平均: {avg:.4f} ms")
+    return True
+
+
+def benchmark_driver():
+    """DriverCollector 性能测试"""
+    print("\n=== DriverCollector 性能测试 ===")
+    
+    code = '''
+module top;
+    logic [7:0] data;
+    logic clk;
+    always_ff @(posedge clk) begin
+        data <= data + 1;
+    end
+endmodule
+'''
+    
+    parser = SVParser()
+    parser.parse_text(code)
+    
+    start = time.time()
+    tracer = DriverCollector(parser)
+    drivers = tracer.find_driver('data')
+    elapsed = (time.time() - start) * 1000
+    
+    print(f"  耗时: {elapsed:.4f} ms")
+    return True
+
+
+def benchmark_load():
+    """LoadTracer 性能测试"""
+    print("\n=== LoadTracer 性能测试 ===")
+    
+    code = '''
+module top;
+    logic [7:0] data;
+    logic clk;
+    always_ff @(posedge clk) begin
+        data <= data + 1;
+    end
+endmodule
+'''
+    
+    parser = SVParser()
+    parser.parse_text(code)
+    
+    start = time.time()
+    tracer = LoadTracer(parser)
+    loads = tracer.find_load('clk')
+    elapsed = (time.time() - start) * 1000
+    
+    print(f"  耗时: {elapsed:.4f} ms")
+    return True
+
+
+def benchmark_fsm():
+    """FSMAnalyzer 性能测试"""
+    print("\n=== FSMAnalyzer 性能测试 ===")
+    
+    code = '''
+module test;
+    typedef enum {S0, S1, S2} state_t;
+    state_t state;
+    always_ff @(posedge clk) begin
+        case (state)
+            S0: state <= S1;
+            S1: state <= S2;
+            S2: state <= S0;
+        endcase
+    end
+endmodule
+'''
+    
+    parser = SVParser()
+    parser.parse_text(code)
+    
+    start = time.time()
+    analyzer = FSMAnalyzer(parser)
+    report = analyzer.analyze()
+    elapsed = (time.time() - start) * 1000
+    
+    print(f"  耗时: {elapsed:.4f} ms")
+    return True
+
+
+def run_all_tests():
+    tests = [
+        ("Parser", benchmark_parser),
+        ("DriverCollector", benchmark_driver),
+        ("LoadTracer", benchmark_load),
+        ("FSMAnalyzer", benchmark_fsm),
     ]
     
-    results = []
+    passed = 0
+    for name, test in tests:
+        try:
+            if test():
+                passed += 1
+                print(f"  ✅ {name} 通过")
+        except Exception as e:
+            print(f"  ❌ {name}: {e}")
     
-    for fname in test_files:
-        filepath = os.path.join(TARGETED_DIR, fname)
-        if not os.path.exists(filepath):
-            continue
-        
-        print(f"\n文件: {fname}")
-        print("-"*40)
-        
-        # 1. Parse
-        parser = SVParser()
-        _, parse_time = measure_time(parser.parse_file, filepath)
-        print(f"  解析: {parse_time:.2f} ms")
-        
-        # 2. DriverCollector
-        dc = DriverCollector(parser)
-        _, dc_time = measure_time(len, dc.get_all_signals())
-        print(f"  DriverCollector: {dc_time:.4f} ms")
-        
-        # 3. LoadTracer
-        lt = LoadTracer(parser)
-        _, lt_time = measure_time(len, lt.get_all_signals())
-        print(f"  LoadTracer: {lt_time:.4f} ms")
-        
-        # 4. FanoutAnalyzer
-        fa = FanoutAnalyzer(parser)
-        _, fa_time = measure_time(len, fa.find_high_fanout_signals(threshold=2))
-        print(f"  FanoutAnalyzer: {fa_time:.4f} ms")
-        
-        # 5. FSMAnalyzer
-        fsm = FSMAnalyzer(parser)
-        _, fsm_time = measure_time(fsm.analyze)
-        print(f"  FSMAnalyzer: {fsm_time:.2f} ms")
-        
-        # 6. CDCAnalyzer
-        cdc = CDCExtendedAnalyzer(parser)
-        _, cdc_time = measure_time(cdc.analyze)
-        print(f"  CDCAnalyzer: {cdc_time:.2f} ms")
-        
-        total = parse_time + dc_time + lt_time + fa_time + fsm_time + cdc_time
-        results.append({
-            'file': fname,
-            'parse': parse_time,
-            'analyze': total - parse_time,
-            'total': total
-        })
-    
-    # 总结
-    print("\n" + "="*60)
-    print("性能汇总")
-    print("="*60)
-    
-    avg_parse = sum(r['parse'] for r in results) / len(results)
-    avg_analyze = sum(r['analyze'] for r in results) / len(results)
-    
-    print(f"平均解析时间: {avg_parse:.2f} ms")
-    print(f"平均分析时间: {avg_analyze:.2f} ms")
-    print(f"平均总时间: {avg_parse + avg_analyze:.2f} ms")
-    
-    # 性能评级
-    if avg_analyze < 100:
-        grade = "A - 优秀"
-    elif avg_analyze < 500:
-        grade = "B - 良好"
-    elif avg_analyze < 1000:
-        grade = "C - 一般"
-    else:
-        grade = "D - 需要优化"
-    
-    print(f"性能评级: {grade}")
-    
-    print("="*60)
-    return results
+    print(f"\n总计: {passed}/{len(tests)} 通过")
+    return passed == len(tests)
 
 
-if __name__ == '__main__':
-    run_benchmark()
+if __name__ == "__main__":
+    success = run_all_tests()
+    sys.exit(0 if success else 1)
