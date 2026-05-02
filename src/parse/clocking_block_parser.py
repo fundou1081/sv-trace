@@ -2,10 +2,9 @@
 Clocking Block Parser - 使用正确的 AST 遍历
 
 提取 clocking block：
-- clocking 声明
-- clocking event
-- input/output signals
-- default setup/hold timing
+- ClockingDeclaration (主要)
+- ClockingBlock (别名)
+- ClockingItem (时钟项)
 
 注意：此文件不包含任何正则表达式
 """
@@ -22,8 +21,8 @@ from pyslang import SyntaxKind
 @dataclass
 class ClockingSignal:
     name: str = ""
-    direction: str = ""  # input, output, inout
-    timing: str = ""  # ##delay, etc.
+    direction: str = ""
+    skew: str = ""
 
 
 @dataclass
@@ -46,7 +45,9 @@ class ClockingBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ClockingDeclaration':
+            # ClockingDeclaration 是主要的语法
+            # ClockingBlock 可能作为别名或内部表示
+            if kind_name in ['ClockingDeclaration', 'ClockingBlock', 'ClockingItem']:
                 cb = self._extract_clocking_block(node)
                 if cb:
                     self.clocking_blocks.append(cb)
@@ -58,11 +59,9 @@ class ClockingBlockExtractor:
     def _extract_clocking_block(self, node) -> Optional[ClockingBlock]:
         cb = ClockingBlock()
         
-        # 名称
         if hasattr(node, 'name') and node.name:
             cb.name = str(node.name)
         
-        # 时钟事件
         if hasattr(node, 'clock') and node.clock:
             cb.clock_event = str(node.clock)
         
@@ -75,17 +74,23 @@ class ClockingBlockExtractor:
             except:
                 continue
             
-            # 信号声明
-            if child_kind in ['ClockingInput', 'ClockingOutput', 'ClockingInout']:
+            # ClockingInput, ClockingOutput
+            if child_kind in ['ClockingInput', 'ClockingOutput', 'ClockingDirection']:
                 sig = ClockingSignal()
-                sig.direction = child_kind.replace('Clocking', '').lower()
+                if 'Input' in child_kind:
+                    sig.direction = 'input'
+                elif 'Output' in child_kind:
+                    sig.direction = 'output'
+                else:
+                    sig.direction = 'inout'
                 
                 if hasattr(child, 'name') and child.name:
                     sig.name = str(child.name)
                 if hasattr(child, 'skew') and child.skew:
-                    sig.timing = str(child.skew)
+                    sig.skew = str(child.skew)
                 
-                cb.signals.append(sig)
+                if sig.name:
+                    cb.signals.append(sig)
         
         # 默认 skew
         if hasattr(node, 'defaultInputSkew') and node.defaultInputSkew:
@@ -93,7 +98,7 @@ class ClockingBlockExtractor:
         if hasattr(node, 'defaultOutputSkew') and node.defaultOutputSkew:
             cb.default_output_skew = str(node.defaultOutputSkew)
         
-        return cb if cb.name else None
+        return cb if cb.name or cb.clock_event else None
     
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
@@ -102,8 +107,8 @@ class ClockingBlockExtractor:
         return [
             {
                 'name': cb.name,
-                'clock_event': cb.clock_event,
-                'signals': [{'name': s.name, 'dir': s.direction, 'timing': s.timing} for s in cb.signals],
+                'clock_event': cb.clock_event[:30] if cb.clock_event else '',
+                'signals': [{'name': s.name, 'dir': s.direction, 'skew': s.skew} for s in cb.signals],
                 'input_skew': cb.default_input_skew,
                 'output_skew': cb.default_output_skew
             }
@@ -117,18 +122,11 @@ def extract_clocking_blocks(code: str) -> List[Dict]:
 
 if __name__ == "__main__":
     test_code = '''
-module test;
-    clocking cb @(posedge clk);
-        default input #1step output #2;
-        input data;
-        output addr;
-        inout ready;
-    endclocking
-endmodule
+clocking cb @(posedge clk);
+    default input #1step output #2;
+    input data;
+    output addr;
+endclocking
 '''
     result = extract_clocking_blocks(test_code)
-    for item in result:
-        print(f"Clocking: {item['name']}")
-        print(f"  Clock: {item['clock_event']}")
-        for sig in item['signals']:
-            print(f"  {sig['dir']}: {sig['name']} {sig['timing']}")
+    print(f"Clocking blocks: {len(result)}")
