@@ -1,6 +1,6 @@
 [project]
 name = "sv-trace"
-version = "0.1.1"
+version = "1.0.0"
 description = "SystemVerilog static analysis library for RTL tracing, verification, and code quality"
 readme = "README.md"
 license = {text = "MIT"}
@@ -16,7 +16,7 @@ keywords = [
     "static-analysis", "verification", "rtl", "slang",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
