@@ -1,8 +1,9 @@
 """
-Clocking Block Parser - 使用正确的 AST 遍历
+Implicit Non-Ansi Port Parser - 使用正确的 AST 遍历
 
-提取时钟块：
-- ClockingBlock
+提取隐式非 ANSI 端口：
+- ImplicitNonAnsiPort
+- NonAnsiPortList
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +16,14 @@ import pyslang
 
 
 @dataclass
-class ClockingBlock:
+class ImplicitNonAnsiPort:
     name: str = ""
-    clock_event: str = ""
+    direction: str = ""
 
 
-class ClockingBlockExtractor:
+class ImplicitNonAnsiPortExtractor:
     def __init__(self):
-        self.blocks: List[ClockingBlock] = []
+        self.ports: List[ImplicitNonAnsiPort] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,18 +32,16 @@ class ClockingBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ClockingBlock':
-                cb = ClockingBlock()
+            if kind_name in ['ImplicitNonAnsiPort', 'NonAnsiPortList', 'NonAnsiPort']:
+                inap = ImplicitNonAnsiPort()
                 
                 if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
+                    inap.name = str(node.name)
                 
-                if hasattr(node, 'clock') and node.clock:
-                    cb.clock_event = str(node.clock)[:30]
-                elif hasattr(node, 'event') and node.event:
-                    cb.clock_event = str(node.event)[:30]
+                if hasattr(node, 'direction') and node.direction:
+                    inap.direction = str(node.direction).lower()
                 
-                self.blocks.append(cb)
+                self.ports.append(inap)
             
             return pyslang.VisitAction.Advance
         
@@ -51,17 +50,17 @@ class ClockingBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name or '(default)', 'clock': b.clock_event[:30]} for b in self.blocks]
+        return [{'name': p.name, 'direction': p.direction[:10]} for p in self.ports]
 
 
-def extract_clocking_blocks(code: str) -> List[Dict]:
-    return ClockingBlockExtractor().extract_from_text(code)
+def extract_implicit_ports(code: str) -> List[Dict]:
+    return ImplicitNonAnsiPortExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-clocking cb @(posedge clk);
-endclocking
+module m (a, b, c);
+endmodule
 '''
-    result = extract_clocking_blocks(test_code)
-    print(f"Clocking blocks: {len(result)}")
+    result = extract_implicit_ports(test_code)
+    print(f"Implicit non-ANSI ports: {len(result)}")

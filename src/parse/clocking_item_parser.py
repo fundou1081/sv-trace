@@ -1,8 +1,8 @@
 """
-Clocking Block Parser - 使用正确的 AST 遍历
+Clocking Item Parser - 使用正确的 AST 遍历
 
-提取时钟块：
-- ClockingBlock
+提取时钟块项目：
+- ClockingItem
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +15,14 @@ import pyslang
 
 
 @dataclass
-class ClockingBlock:
+class ClockingItem:
     name: str = ""
-    clock_event: str = ""
+    direction: str = ""
 
 
-class ClockingBlockExtractor:
+class ClockingItemExtractor:
     def __init__(self):
-        self.blocks: List[ClockingBlock] = []
+        self.items: List[ClockingItem] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,18 +31,13 @@ class ClockingBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ClockingBlock':
-                cb = ClockingBlock()
-                
+            if kind_name == 'ClockingItem':
+                ci = ClockingItem()
                 if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
-                
-                if hasattr(node, 'clock') and node.clock:
-                    cb.clock_event = str(node.clock)[:30]
-                elif hasattr(node, 'event') and node.event:
-                    cb.clock_event = str(node.event)[:30]
-                
-                self.blocks.append(cb)
+                    ci.name = str(node.name)
+                if hasattr(node, 'direction') and node.direction:
+                    ci.direction = str(node.direction).lower()
+                self.items.append(ci)
             
             return pyslang.VisitAction.Advance
         
@@ -51,17 +46,18 @@ class ClockingBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name or '(default)', 'clock': b.clock_event[:30]} for b in self.blocks]
+        return [{'name': i.name[:20], 'direction': i.direction[:10]} for i in self.items]
 
 
-def extract_clocking_blocks(code: str) -> List[Dict]:
-    return ClockingBlockExtractor().extract_from_text(code)
+def extract_clocking_items(code: str) -> List[Dict]:
+    return ClockingItemExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
 clocking cb @(posedge clk);
+    default input #1step output #2;
 endclocking
 '''
-    result = extract_clocking_blocks(test_code)
-    print(f"Clocking blocks: {len(result)}")
+    result = extract_clocking_items(test_code)
+    print(f"Clocking items: {len(result)}")

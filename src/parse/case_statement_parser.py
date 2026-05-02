@@ -1,8 +1,8 @@
 """
-Constraint Block Parser - 使用正确的 AST 遍历
+Case Statement Parser - 使用正确的 AST 遍历
 
-提取约束块：
-- ConstraintBlock
+提取 case 语句：
+- CaseStatement
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +15,14 @@ import pyslang
 
 
 @dataclass
-class ConstraintBlock:
-    name: str = ""
-    num_constraints: int = 0
+class CaseStatement:
+    expression: str = ""
+    items: int = 0
 
 
-class ConstraintBlockExtractor:
+class CaseStatementExtractor:
     def __init__(self):
-        self.blocks: List[ConstraintBlock] = []
+        self.statements: List[CaseStatement] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,21 +31,21 @@ class ConstraintBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ConstraintBlock':
-                cb = ConstraintBlock()
-                if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
+            if kind_name in ['CaseStatement', 'CaseInsideStatement', 'CaseOutsideStatement']:
+                cs = CaseStatement()
+                if hasattr(node, 'expression') and node.expression:
+                    cs.expression = str(node.expression)[:30]
                 
                 count = 0
                 def count_items(n, c=[0]):
                     kn = n.kind.name if hasattr(n.kind, 'name') else str(n.kind)
-                    if 'Constraint' in kn:
+                    if 'CaseItem' in kn or 'Item' in kn:
                         c[0] += 1
                     return pyslang.VisitAction.Advance
                 node.visit(count_items)
-                cb.num_constraints = count
+                cs.items = count
                 
-                self.blocks.append(cb)
+                self.statements.append(cs)
             
             return pyslang.VisitAction.Advance
         
@@ -54,16 +54,19 @@ class ConstraintBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name, 'count': b.num_constraints} for b in self.blocks]
+        return [{'expr': s.expression[:20], 'items': s.items} for s in self.statements]
 
 
-def extract_constraint_blocks(code: str) -> List[Dict]:
-    return ConstraintBlockExtractor().extract_from_text(code)
+def extract_case_statements(code: str) -> List[Dict]:
+    return CaseStatementExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-constraint c1 { x inside {[0:10]}; }
+case (sel)
+    0: a = 1;
+    1: a = 2;
+endcase
 '''
-    result = extract_constraint_blocks(test_code)
-    print(f"Constraint blocks: {len(result)}")
+    result = extract_case_statements(test_code)
+    print(f"Case statements: {len(result)}")

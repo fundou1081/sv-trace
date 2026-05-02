@@ -1,8 +1,8 @@
 """
-Constraint Block Parser - 使用正确的 AST 遍历
+Covergroup Body Parser - 使用正确的 AST 遍历
 
-提取约束块：
-- ConstraintBlock
+提取覆盖组体：
+- CovergroupBody
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +15,13 @@ import pyslang
 
 
 @dataclass
-class ConstraintBlock:
-    name: str = ""
-    num_constraints: int = 0
+class CovergroupBody:
+    members: int = 0
 
 
-class ConstraintBlockExtractor:
+class CovergroupBodyExtractor:
     def __init__(self):
-        self.blocks: List[ConstraintBlock] = []
+        self.bodies: List[CovergroupBody] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,21 +30,19 @@ class ConstraintBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ConstraintBlock':
-                cb = ConstraintBlock()
-                if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
+            if kind_name == 'CovergroupBody':
+                cgb = CovergroupBody()
                 
                 count = 0
-                def count_items(n, c=[0]):
+                def count_members(n, c=[0]):
                     kn = n.kind.name if hasattr(n.kind, 'name') else str(n.kind)
-                    if 'Constraint' in kn:
+                    if 'Coverpoint' in kn or 'Cross' in kn:
                         c[0] += 1
                     return pyslang.VisitAction.Advance
-                node.visit(count_items)
-                cb.num_constraints = count
+                node.visit(count_members)
+                cgb.members = count
                 
-                self.blocks.append(cb)
+                self.bodies.append(cgb)
             
             return pyslang.VisitAction.Advance
         
@@ -54,16 +51,18 @@ class ConstraintBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name, 'count': b.num_constraints} for b in self.blocks]
+        return [{'members': b.members} for b in self.bodies]
 
 
-def extract_constraint_blocks(code: str) -> List[Dict]:
-    return ConstraintBlockExtractor().extract_from_text(code)
+def extract_covergroup_bodies(code: str) -> List[Dict]:
+    return CovergroupBodyExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-constraint c1 { x inside {[0:10]}; }
+covergroup cg @(posedge clk);
+    coverpoint a;
+endgroup
 '''
-    result = extract_constraint_blocks(test_code)
-    print(f"Constraint blocks: {len(result)}")
+    result = extract_covergroup_bodies(test_code)
+    print(f"Covergroup bodies: {len(result)}")

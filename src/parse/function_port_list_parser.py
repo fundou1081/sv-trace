@@ -1,8 +1,8 @@
 """
-Constraint Block Parser - 使用正确的 AST 遍历
+Function Port List Parser - 使用正确的 AST 遍历
 
-提取约束块：
-- ConstraintBlock
+提取函数端口列表：
+- FunctionPortList
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +15,17 @@ import pyslang
 
 
 @dataclass
-class ConstraintBlock:
-    name: str = ""
-    num_constraints: int = 0
+class FunctionPortList:
+    ports: List[Dict] = None
+    
+    def __post_init__(self):
+        if self.ports is None:
+            self.ports = []
 
 
-class ConstraintBlockExtractor:
+class FunctionPortListExtractor:
     def __init__(self):
-        self.blocks: List[ConstraintBlock] = []
+        self.lists: List[FunctionPortList] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,21 +34,19 @@ class ConstraintBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ConstraintBlock':
-                cb = ConstraintBlock()
-                if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
+            if kind_name == 'FunctionPortList':
+                fpl = FunctionPortList()
                 
-                count = 0
-                def count_items(n, c=[0]):
+                ports = []
+                def get_ports(n):
                     kn = n.kind.name if hasattr(n.kind, 'name') else str(n.kind)
-                    if 'Constraint' in kn:
-                        c[0] += 1
+                    if 'Port' in kn or 'Argument' in kn:
+                        ports.append(str(n)[:30])
                     return pyslang.VisitAction.Advance
-                node.visit(count_items)
-                cb.num_constraints = count
+                node.visit(get_ports)
+                fpl.ports = ports[:20]
                 
-                self.blocks.append(cb)
+                self.lists.append(fpl)
             
             return pyslang.VisitAction.Advance
         
@@ -54,16 +55,17 @@ class ConstraintBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name, 'count': b.num_constraints} for b in self.blocks]
+        return [{'count': len(l.ports)} for l in self.lists[:20]]
 
 
-def extract_constraint_blocks(code: str) -> List[Dict]:
-    return ConstraintBlockExtractor().extract_from_text(code)
+def extract_function_ports(code: str) -> List[Dict]:
+    return FunctionPortListExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-constraint c1 { x inside {[0:10]}; }
+function void my_func(input a, output b);
+endfunction
 '''
-    result = extract_constraint_blocks(test_code)
-    print(f"Constraint blocks: {len(result)}")
+    result = extract_function_ports(test_code)
+    print(f"Function port lists: {len(result)}")

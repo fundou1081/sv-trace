@@ -1,8 +1,10 @@
 """
-Clocking Block Parser - 使用正确的 AST 遍历
+RS Rule Parser - 使用正确的 AST 遍历
 
-提取时钟块：
-- ClockingBlock
+提取随机化约束规则：
+- RsRule
+- RsProdItem
+- Production
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +17,14 @@ import pyslang
 
 
 @dataclass
-class ClockingBlock:
+class RsRule:
     name: str = ""
-    clock_event: str = ""
+    expression: str = ""
 
 
-class ClockingBlockExtractor:
+class RsRuleExtractor:
     def __init__(self):
-        self.blocks: List[ClockingBlock] = []
+        self.rules: List[RsRule] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,18 +33,16 @@ class ClockingBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ClockingBlock':
-                cb = ClockingBlock()
+            if kind_name in ['RsRule', 'RsProdItem', 'Production', 'RsCodeBlock']:
+                rr = RsRule()
+                rr.name = kind_name
                 
                 if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
+                    rr.name = str(node.name)
+                elif hasattr(node, 'constraint') and node.constraint:
+                    rr.expression = str(node.constraint)[:30]
                 
-                if hasattr(node, 'clock') and node.clock:
-                    cb.clock_event = str(node.clock)[:30]
-                elif hasattr(node, 'event') and node.event:
-                    cb.clock_event = str(node.event)[:30]
-                
-                self.blocks.append(cb)
+                self.rules.append(rr)
             
             return pyslang.VisitAction.Advance
         
@@ -51,17 +51,16 @@ class ClockingBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name or '(default)', 'clock': b.clock_event[:30]} for b in self.blocks]
+        return [{'name': r.name[:30], 'expr': r.expression[:30]} for r in self.rules[:20]]
 
 
-def extract_clocking_blocks(code: str) -> List[Dict]:
-    return ClockingBlockExtractor().extract_from_text(code)
+def extract_rs_rules(code: str) -> List[Dict]:
+    return RsRuleExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-clocking cb @(posedge clk);
-endclocking
+constraint c1 { x inside {[0:10]}; }
 '''
-    result = extract_clocking_blocks(test_code)
-    print(f"Clocking blocks: {len(result)}")
+    result = extract_rs_rules(test_code)
+    print(f"RS rules: {len(result)}")

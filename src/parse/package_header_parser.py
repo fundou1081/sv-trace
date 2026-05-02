@@ -1,8 +1,8 @@
 """
-Constraint Block Parser - 使用正确的 AST 遍历
+Package Header Parser - 使用正确的 AST 遍历
 
-提取约束块：
-- ConstraintBlock
+提取包头：
+- PackageHeader
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +15,18 @@ import pyslang
 
 
 @dataclass
-class ConstraintBlock:
+class PackageHeader:
     name: str = ""
-    num_constraints: int = 0
+    imports: List[str] = None
+    
+    def __post_init__(self):
+        if self.imports is None:
+            self.imports = []
 
 
-class ConstraintBlockExtractor:
+class PackageHeaderExtractor:
     def __init__(self):
-        self.blocks: List[ConstraintBlock] = []
+        self.headers: List[PackageHeader] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,21 +35,22 @@ class ConstraintBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ConstraintBlock':
-                cb = ConstraintBlock()
+            if kind_name == 'PackageHeader':
+                ph = PackageHeader()
+                
                 if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
+                    ph.name = str(node.name)
                 
-                count = 0
-                def count_items(n, c=[0]):
+                imports = []
+                def get_imports(n):
                     kn = n.kind.name if hasattr(n.kind, 'name') else str(n.kind)
-                    if 'Constraint' in kn:
-                        c[0] += 1
+                    if 'Import' in kn:
+                        imports.append(str(n)[:30])
                     return pyslang.VisitAction.Advance
-                node.visit(count_items)
-                cb.num_constraints = count
+                node.visit(get_imports)
+                ph.imports = imports[:10]
                 
-                self.blocks.append(cb)
+                self.headers.append(ph)
             
             return pyslang.VisitAction.Advance
         
@@ -54,16 +59,17 @@ class ConstraintBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name, 'count': b.num_constraints} for b in self.blocks]
+        return [{'name': h.name, 'imports': len(h.imports)} for h in self.headers]
 
 
-def extract_constraint_blocks(code: str) -> List[Dict]:
-    return ConstraintBlockExtractor().extract_from_text(code)
+def extract_package_headers(code: str) -> List[Dict]:
+    return PackageHeaderExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-constraint c1 { x inside {[0:10]}; }
+package my_pkg;
+endpackage
 '''
-    result = extract_constraint_blocks(test_code)
-    print(f"Constraint blocks: {len(result)}")
+    result = extract_package_headers(test_code)
+    print(f"Package headers: {len(result)}")

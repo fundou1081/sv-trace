@@ -1,8 +1,8 @@
 """
-Constraint Block Parser - 使用正确的 AST 遍历
+Argument List Parser - 使用正确的 AST 遍历
 
-提取约束块：
-- ConstraintBlock
+提取参数列表：
+- ArgumentList
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +15,17 @@ import pyslang
 
 
 @dataclass
-class ConstraintBlock:
-    name: str = ""
-    num_constraints: int = 0
+class ArgumentList:
+    arguments: List[str] = None
+    
+    def __post_init__(self):
+        if self.arguments is None:
+            self.arguments = []
 
 
-class ConstraintBlockExtractor:
+class ArgumentListExtractor:
     def __init__(self):
-        self.blocks: List[ConstraintBlock] = []
+        self.lists: List[ArgumentList] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,21 +34,19 @@ class ConstraintBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ConstraintBlock':
-                cb = ConstraintBlock()
-                if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
+            if kind_name in ['ArgumentList', 'Argument']:
+                al = ArgumentList()
                 
-                count = 0
-                def count_items(n, c=[0]):
+                args = []
+                def get_args(n):
                     kn = n.kind.name if hasattr(n.kind, 'name') else str(n.kind)
-                    if 'Constraint' in kn:
-                        c[0] += 1
+                    if 'Expression' in kn or 'Identifier' in kn:
+                        args.append(str(n)[:30])
                     return pyslang.VisitAction.Advance
-                node.visit(count_items)
-                cb.num_constraints = count
+                node.visit(get_args)
+                al.arguments = args[:20]
                 
-                self.blocks.append(cb)
+                self.lists.append(al)
             
             return pyslang.VisitAction.Advance
         
@@ -54,16 +55,16 @@ class ConstraintBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name, 'count': b.num_constraints} for b in self.blocks]
+        return [{'count': len(l.arguments)} for l in self.lists[:20]]
 
 
-def extract_constraint_blocks(code: str) -> List[Dict]:
-    return ConstraintBlockExtractor().extract_from_text(code)
+def extract_argument_lists(code: str) -> List[Dict]:
+    return ArgumentListExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-constraint c1 { x inside {[0:10]}; }
+foo(a, b, c)
 '''
-    result = extract_constraint_blocks(test_code)
-    print(f"Constraint blocks: {len(result)}")
+    result = extract_argument_lists(test_code)
+    print(f"Argument lists: {len(result)}")

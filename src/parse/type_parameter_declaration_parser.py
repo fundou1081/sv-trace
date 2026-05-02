@@ -1,8 +1,8 @@
 """
-Clocking Block Parser - 使用正确的 AST 遍历
+Type Parameter Declaration Parser - 使用正确的 AST 遍历
 
-提取时钟块：
-- ClockingBlock
+提取类型参数声明：
+- TypeParameterDeclaration
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +15,14 @@ import pyslang
 
 
 @dataclass
-class ClockingBlock:
+class TypeParameterDeclaration:
     name: str = ""
-    clock_event: str = ""
+    default_type: str = ""
 
 
-class ClockingBlockExtractor:
+class TypeParameterDeclarationExtractor:
     def __init__(self):
-        self.blocks: List[ClockingBlock] = []
+        self.parameters: List[TypeParameterDeclaration] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,18 +31,16 @@ class ClockingBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ClockingBlock':
-                cb = ClockingBlock()
+            if kind_name == 'TypeParameterDeclaration':
+                tpd = TypeParameterDeclaration()
                 
                 if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
+                    tpd.name = str(node.name)
                 
-                if hasattr(node, 'clock') and node.clock:
-                    cb.clock_event = str(node.clock)[:30]
-                elif hasattr(node, 'event') and node.event:
-                    cb.clock_event = str(node.event)[:30]
+                if hasattr(node, 'defaultType') and node.defaultType:
+                    tpd.default_type = str(node.defaultType)[:30]
                 
-                self.blocks.append(cb)
+                self.parameters.append(tpd)
             
             return pyslang.VisitAction.Advance
         
@@ -51,17 +49,19 @@ class ClockingBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name or '(default)', 'clock': b.clock_event[:30]} for b in self.blocks]
+        return [{'name': p.name, 'default': p.default_type[:25]} for p in self.parameters]
 
 
-def extract_clocking_blocks(code: str) -> List[Dict]:
-    return ClockingBlockExtractor().extract_from_text(code)
+def extract_type_parameters(code: str) -> List[Dict]:
+    return TypeParameterDeclarationExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-clocking cb @(posedge clk);
-endclocking
+module m #(
+    type T = int
+);
+endmodule
 '''
-    result = extract_clocking_blocks(test_code)
-    print(f"Clocking blocks: {len(result)}")
+    result = extract_type_parameters(test_code)
+    print(f"Type parameters: {len(result)}")

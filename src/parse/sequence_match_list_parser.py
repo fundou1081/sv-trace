@@ -1,8 +1,8 @@
 """
-Constraint Block Parser - 使用正确的 AST 遍历
+Sequence Match List Parser - 使用正确的 AST 遍历
 
-提取约束块：
-- ConstraintBlock
+提取序列匹配列表：
+- SequenceMatchList
 
 注意：此文件不包含任何正则表达式
 """
@@ -15,14 +15,17 @@ import pyslang
 
 
 @dataclass
-class ConstraintBlock:
-    name: str = ""
-    num_constraints: int = 0
+class SequenceMatchList:
+    expressions: List[str] = None
+    
+    def __post_init__(self):
+        if self.expressions is None:
+            self.expressions = []
 
 
-class ConstraintBlockExtractor:
+class SequenceMatchListExtractor:
     def __init__(self):
-        self.blocks: List[ConstraintBlock] = []
+        self.lists: List[SequenceMatchList] = []
     
     def _extract_from_tree(self, root):
         def collect(node):
@@ -31,21 +34,19 @@ class ConstraintBlockExtractor:
             except:
                 return pyslang.VisitAction.Advance
             
-            if kind_name == 'ConstraintBlock':
-                cb = ConstraintBlock()
-                if hasattr(node, 'name') and node.name:
-                    cb.name = str(node.name)
+            if kind_name in ['SequenceMatchList', 'MatchList']:
+                sml = SequenceMatchList()
                 
-                count = 0
-                def count_items(n, c=[0]):
+                exprs = []
+                def get_exprs(n):
                     kn = n.kind.name if hasattr(n.kind, 'name') else str(n.kind)
-                    if 'Constraint' in kn:
-                        c[0] += 1
+                    if 'Expression' in kn:
+                        exprs.append(str(n)[:20])
                     return pyslang.VisitAction.Advance
-                node.visit(count_items)
-                cb.num_constraints = count
+                node.visit(get_exprs)
+                sml.expressions = exprs[:20]
                 
-                self.blocks.append(cb)
+                self.lists.append(sml)
             
             return pyslang.VisitAction.Advance
         
@@ -54,16 +55,16 @@ class ConstraintBlockExtractor:
     def extract_from_text(self, code: str, source: str = "<text>") -> List[Dict]:
         tree = pyslang.SyntaxTree.fromText(code, source)
         self._extract_from_tree(tree.root)
-        return [{'name': b.name, 'count': b.num_constraints} for b in self.blocks]
+        return [{'count': len(l.expressions)} for l in self.lists[:20]]
 
 
-def extract_constraint_blocks(code: str) -> List[Dict]:
-    return ConstraintBlockExtractor().extract_from_text(code)
+def extract_match_lists(code: str) -> List[Dict]:
+    return SequenceMatchListExtractor().extract_from_text(code)
 
 
 if __name__ == "__main__":
     test_code = '''
-constraint c1 { x inside {[0:10]}; }
+match_item (a, b);
 '''
-    result = extract_constraint_blocks(test_code)
-    print(f"Constraint blocks: {len(result)}")
+    result = extract_match_lists(test_code)
+    print(f"Match lists: {len(result)}")
