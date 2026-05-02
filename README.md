@@ -2,552 +2,182 @@
 
 > **开发说明**: 本项目由 [OpenClaw](https://github.com/openclaw) AI助手 驱动
 
-## 🎯 项目定位
-
-**AI Agent 硬件理解引擎** - 给 AI Agent 用的"万能CT机"
-
-本项目不是给人类工程师直接用的 EDA 工具，而是做给 AI Agent 调用的"感知器官"。
-
-### 核心理念
-
-**"AI Agent Skill 底层基座"**:
-
-1. **非交互式、可编程** - Agent 通过 API 调用，返回结构化数据
-2. **原子化、可组合** - 每个功能像"技能原子"，Agent 可按需调用
-3. **上下文自扩展** - Agent 能根据前一步结果动态决定下一步操作
-
-### 独特优势
-
-- 打破传统 EDA 的"批次处理范式" - 支持流式、探索式增量分析
-- 对"正确性"有更高容忍度 - Agent 可通过多轮交互自行修正
-- AI 生成代码是优势 - 用 AI 快速生成技能，契合"覆盖面优先"目标
-
----
-
-**SystemVerilog 静态分析工具库** - 用于RTL设计分析、验证testbench质量评估、约束冲突检测
+**SystemVerilog 静态分析工具库** - 用于 RTL 设计分析、testbench 质量评估、约束冲突检测
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
 
-## 目录
+## 🎯 项目定位
 
-- [特性](#特性)
-- [安装](#安装)
-- [快速开始](#快速开始)
-- [工具列表](#工具列表)
-- [CLI工具](#cli工具)
-- [Python API](#python-api)
-- [项目结构](#项目结构)
-- [贡献](#贡献)
-- [许可证](#许可证)
+**AI Agent 硬件理解引擎** - 给 AI Agent 调用的"感知器官"
 
----
+本项目不是给人类工程师直接用的 EDA 工具，而是做给 AI Agent 调用的"技能原子"。
 
-## 特性
+### 核心理念
 
-> 本项目是 AI 辅助编程的产物，通过 OpenClaw 平台调用 MiniMax 和 DeepSeek 模型实现代码生成和优化。
-
-### 🔍 RTL分析
-- **信号追踪**: 驱动/负载追踪、数据流分析、控制流分析
-- **依赖分析**: 模块间依赖关系、信号依赖图
-- **时序路径**: 关键路径提取、组合逻辑深度分析
-- **Pipeline分析**: 流水线数据路径、握手信号时序
-
-### ✅ 验证支持
-- **Constraint分析**: 8种约束类型解析、z3冲突检测
-- **概率分析**: 低概率组合发现、Danger Zone检测
-- **TB质量评估**: 复杂度评分、UVM组件统计、软件工程指标
-
-### 📊 数据通路
-- **RTL数据通路提取**: 操作单元识别、数据流图构建
-- **概率分析**: SCC检测、rare path发现
-
-### 🎯 UVM Testbench
-- **Class分析**: 继承关系、方法映射、约束提取
-- **组件识别**: Agent/Driver/Monitor/Sequencer自动识别
-- **TLM连接**: analysis/put/get端口追踪
+1. **非交互式、可编程** - Agent 通过 API 调用，返回结构化数据
+2. **原子化、可组合** - 每个功能像"技能原子"，Agent 可按需调用
+3. **上下文自扩展** - Agent 能根据前一步结果动态决定下一步操作
 
 ---
 
-## 安装
+## 🚀 Parser Foundation v1.0
 
-### 依赖
+| 指标 | 值 |
+|------|-----|
+| **解析器文件** | 302 个 |
+| **支持语法** | 603 种 |
+| **覆盖率** | 112% |
+| **sv-tests 成功率** | 100% |
+
+### 设计原则
+
+- **AST 优先** - 所有解析器使用 pyslang AST 遍历，无正则表达式
+- **原子化** - 每个解析器专注单一语法类别
+- **可组合** - 基于现有 parser 可派生新 parser
+
+详细文档: [PARSER_SUPPORT.md](./docs/PARSER_SUPPORT.md)
+
+---
+
+## 📦 安装
 
 ```bash
 pip install pyslang>=10.0 z3-solver>=4.16 graphviz
 ```
 
-### 验证安装
-
+验证安装:
 ```bash
 python3 -c "from parse import SVParser; print('OK')"
 ```
 
 ---
 
-## 快速开始
-
-### CLI工具
-
-```bash
-# 约束分析
-sv-constraint design.sv
-
-# 约束概率分析
-sv-constraint-prob design.sv
-
-# 数据通路分析
-sv-datapath design.sv
-
-# TB复杂度分析
-sv-tb-complexity testbench.sv
-
-# 信号分类
-sv-signal design.sv
-
-# 代码质量分析
-sv quality design.sv
-```
+## ⚡ 快速开始
 
 ### Python API
 
 ```python
-import sys
-sys.path.insert(0, 'src')
-
 from parse import SVParser
-from debug.constraint_parser_v2 import parse_constraints
-from trace.data_path import analyze_data_path
-from verify.tb_analyzer import TBComplexityAnalyzer
+from trace.driver import DriverCollector
 
 # 解析文件
 parser = SVParser()
 parser.parse_file('design.sv')
 
-# 约束分析
-constraints = parse_constraints(parser)
-print(constraints.get_report())
+# 查找信号驱动
+collector = DriverCollector(parser)
+drivers = collector.find_driver('signal_name')
+```
 
-# TB复杂度分析
-analyzer = TBComplexityAnalyzer(filepath='testbench.sv')
-print(analyzer.get_report())
+### CLI 工具
+
+```bash
+# 约束分析
+sv-constraint design.sv
+
+# 数据通路分析
+sv-datapath design.sv
+
+# TB 复杂度分析
+sv-tb-complexity testbench.sv
 ```
 
 ---
 
-## 工具列表
+## 📊 工具列表
 
 ### Tier 1 - 核心工具 🏆
 
-| 模块 | CLI | Skill | 功能 |
-|------|-----|-------|------|
-| `constraint_parser_v2.py` | `sv-constraint` | ✅ | 约束解析+z3冲突检测 |
-| `probabilistic_constraint.py` | `sv-constraint-prob` | ✅ | 约束概率分析 |
-| `tb_analyzer/complexity.py` | `sv-tb-complexity` | ✅ | TB复杂度分析(40+指标) |
-| `class_extractor.py` | - | - | Class提取 |
-| `class_relation.py` | - | - | 类关系图 |
+| 模块 | 功能 |
+|------|------|
+| `constraint_parser_v2.py` | 约束解析 + z3 冲突检测 |
+| `tb_analyzer/complexity.py` | TB 复杂度分析 (40+ 指标) |
+| `class_extractor.py` | Class 提取 |
+| `constraint_generator.py` | 约束生成 |
 
 ### Tier 2 - 重要工具 ⭐
 
-| 模块 | CLI | Skill | 功能 |
-|------|-----|-------|------|
-| `trace/data_path/` | `sv-datapath` | ✅ | 数据通路+corner case |
-| `trace/pipeline_analyzer.py` | - | - | Pipeline分析 |
-| `trace/driver.py` | - | - | 驱动追踪 |
-| `trace/load.py` | - | - | 负载追踪 |
-| `trace/connection.py` | - | - | 连接追踪 |
-| `trace/dataflow.py` | - | - | 数据流分析 |
-| `complexity.py` | `sv-quality` | ✅ | 代码复杂度 |
-| `signal_classifier.py` | `sv-signal` | ✅ | 信号分类 |
+| 模块 | 功能 |
+|------|------|
+| `trace/driver.py` | 驱动追踪 |
+| `trace/load.py` | 负载追踪 |
+| `trace/dataflow.py` | 数据流分析 |
+| `trace/connection.py` | 连接追踪 |
+| `trace/pipeline_analyzer.py` | Pipeline 分析 |
 
 ### Tier 3 - 扩展工具 📦
 
-| 模块 | Skill | 功能 |
-|------|-------|------|
-| `trace/timing_path.py` | - | 时序路径提取 |
-| `trace/timing_depth.py` | - | 时序深度分析 |
-| `trace/cdc_analyzer.py` | - | CDC分析器 |
-| `trace/vcd_analyzer.py` | - | VCD波形分析 |
-| `trace/controlflow.py` | - | 控制流分析 |
-| `trace/dependency.py` | - | 依赖分析 |
-| `trace/performance.py` | - | 性能估算 |
-| `trace/sim_performance.py` | - | 仿真性能 |
-| `trace/resource_estimation.py` | - | 资源估算 |
-| `trace/power_estimation.py` | - | 功耗估算 |
-| `trace/throughput_estimation.py` | - | 吞吐量估算 |
-| `trace/flow_analyzer.py` | - | 流量分析 |
-
-### Tier 4 - 辅助工具 🔧
-
-| 模块 | Skill | 功能 |
-|------|-------|------|
-| `verify/risk_evaluator.py` | - | 风险评估 |
-| `verify/test_manager.py` | - | 测试管理 |
-| `verify/failure_cluster.py` | - | 失败聚类 |
-| `verify/seed_manager.py` | - | 随机种子管理 |
-| `verify/constraint_generator.py` | - | 约束生成器 |
-| `trace/bitselect.py` | - | 位选择分析 |
-| `trace/interface_change.py` | - | 接口变更检测 |
+| 模块 | 功能 |
+|------|------|
+| `trace/cdc_analyzer.py` | CDC 分析 |
+| `trace/fsm_analyzer.py` | FSM 状态机分析 |
+| `trace/timing_path.py` | 时序路径提取 |
+| `trace/timing_depth.py` | 时序深度分析 |
+| `lint/linter.py` | 代码检查 |
 
 ---
 
-## CLI工具
-
-| CLI | Tier | 功能 | Skill |
-|-----|------|------|-------|
-| `sv-constraint` | 1 | 约束分析+z3冲突检测 | ✅ constraint-skill |
-| `sv-constraint-prob` | 1 | 约束概率分析 | ✅ constraint-prob-skill |
-| `sv-tb-complexity` | 1 | TB复杂度分析(40+指标) | ✅ tb-complexity-skill |
-| `sv-datapath` | 2 | 数据通路分析 | ✅ datapath-skill |
-| `sv-quality` | 2 | 代码质量分析 | ✅ codequality-skill |
-| `sv-signal` | 2 | 信号分类 | ✅ signal-classifier-skill |
-| `verify-suite` | 3 | 验证套件分析 | ✅ verify-suite-skill |
-| `verify-test` | 3 | 测试验证 | - |
-| `bug-tracker` | 4 | Bug追踪 | ✅ bug-tracker-skill |
-
----
-
-## Python API
-
-### 约束分析
-
-```python
-from parse import SVParser
-from debug.constraint_parser_v2 import parse_constraints
-from debug.probabilistic_constraint import ProbabilisticConstraintAnalyzer
-
-parser = SVParser()
-parser.parse_file('design.sv')
-
-# 基本约束分析
-constraints = parse_constraints(parser)
-print(constraints.get_report())
-
-# 概率分析
-analyzer = ProbabilisticConstraintAnalyzer(
-    constraints.constraints, 
-    constraints.dependencies
-)
-print(analyzer.get_report())
-```
-
-### TB复杂度分析
-
-```python
-from verify.tb_analyzer import TBComplexityAnalyzer
-import json
-
-analyzer = TBComplexityAnalyzer(filepath='testbench.sv')
-
-# 文本报告
-print(analyzer.get_report())
-
-# JSON格式
-data = analyzer.get_json()
-print(json.dumps(data, indent=2))
-```
-
-### 数据通路分析
-
-```python
-from trace.data_path import analyze_data_path
-
-parser = SVParser()
-parser.parse_file('design.sv')
-
-analyzer = analyze_data_path(parser)
-print(analyzer.get_report())
-
-# 可视化
-analyzer.visualize('data_path.png')
-```
-
----
-
-## 项目结构
+## 📁 项目结构
 
 ```
 sv-trace/
 ├── src/
-│   ├── parse/          # 核心解析器 (pyslang)
-│   │   └── pyslang/     # pyslang AST 封装
-│   ├── trace/          # 追踪器模块
-│   │   └── data_path/ # 数据通路分析
-│   ├── debug/          # 分析工具
-│   ├── verify/         # 验证支持
-│   ├── apps/           # 应用工具
-│   └── pyslang_helper/ # pyslang 辅助工具库
-├── bin/                # CLI工具 (9个)
+│   ├── parse/          # ✅ 解析器 (302 files) - 基于 pyslang AST
+│   ├── trace/          # 信号追踪模块
+│   ├── query/          # 查询模块
+│   ├── debug/          # 调试分析
+│   ├── verify/         # 验证工具
+│   ├── core/           # 核心数据模型
+│   ├── lint/           # 代码检查
+│   ├── apps/           # CLI 应用
+│   └── pyslang_helper/ # pyslang 辅助
+├── bin/                # CLI 工具 (9个)
 ├── skills/             # Agent Skills (20+)
-├── tests/              # 测试用例
+├── tests/              # 测试用例 (784+)
 ├── docs/               # 文档
-│   └── pyslang-spec/  # ⭐ pyslang 语法规范子项目
-│   └── pyslang-spec/  # ⭐ pyslang 语法规范子项目
-└── templates/          # 模板
+│   └── adr/           # 架构决策记录 (28)
+└── templates/         # 模板
 ```
 
-> ⭐ **pyslang 语法规范子项目**: 位于 `docs/pyslang-spec/`，包含 536 个 SyntaxKind 完整映射、节点属性参考。开发时请保持代码与规范的一致性。
+详细文档: [PROJECT_STRUCTURE.md](./docs/PROJECT_STRUCTURE.md)
 
 ---
 
-## ⭐ pyslang 语法规范子项目
+## 🧪 测试
 
-> **重要**: 本项目包含一个独立的 **pyslang 语法规范子项目**，位于 `docs/pyslang-spec/`。
+| 子项目 | 测试用例数 | 说明 |
+|--------|-----------|------|
+| sv_ast | 732 | AST 解析测试 |
+| sv_trace | 27 | 信号追踪测试 |
+| sv_verify | 22 | 验证工具测试 |
+| sv_codecheck | 3 | 代码检查测试 |
 
-### 目的
+测试数据来源: [sv-tests](https://github.com/verikito/sv-tests) (830 个 .sv 文件)
 
-确保 sv-trace 的所有工具与 pyslang AST 规范保持一致，避免因理解偏差导致的 bug。
+---
 
-### 内容
+## 📚 文档
 
 | 文档 | 说明 |
 |------|------|
-| `SKILL.md` | 语法规范主文档 - 536个 SyntaxKind 分类 |
-| `syntaxkind_mapping.md` | 完整的 SyntaxKind → SystemVerilog 映射表 |
-| `node_attribute_mapping.md` | 节点属性快速参考 |
+| [PARSER_SUPPORT.md](./docs/PARSER_SUPPORT.md) | Parser 支持文档 |
+| [PROJECT_STRUCTURE.md](./docs/PROJECT_STRUCTURE.md) | 项目结构 |
+| [adr/README.md](./docs/adr/README.md) | 架构决策记录 |
+| [SCHEMAS.md](./docs/SCHEMAS.md) | JSON Schema 定义 |
 
-### 辅助工具
-
-```python
-# src/pyslang_helper/ - pyslang AST 解析辅助库
-from pyslang_helper import SVParser, extract_all
-```
-
-### 开发准则
-
-1. **新增工具时**: 先查阅 `docs/pyslang-spec/SKILL.md` 确认节点类型
-2. **遇到疑问时**: 对照 `syntaxkind_mapping.md` 验证 SyntaxKind
-3. **发现差异时**: 更新文档和代码，确保一致性
-4. **提交前**: 运行 `pyslang_helper` 测试确保解析正确
-
-### 更新记录
-
-- 2026-04-29: 初始版本，包含 536 个 SyntaxKind 映射
-
----
-
-## 工具分级
-
-详见 [TOOLS_TIERING.md](TOOLS_TIERING.md)
-
-| 分级 | 数量 | 说明 |
-|------|------|------|
-| Tier 1 | 5 | 核心工具，必备 |
-| Tier 2 | 8 | 重要工具，常用 |
-| Tier 3 | 12 | 扩展工具，场景化 |
-| Tier 4 | 20+ | 辅助工具，特定场景 |
-
----
-
-## 贡献
-
-欢迎提交Issue和Pull Request！
+完整文档索引: [sv-trace-index.md](./docs/sv-trace-index.md)
 
 ---
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
-
----
-
-## 版本
-
-### v0.7 (2026-04)
-- TB复杂度分析器增强 (40+质量/性能指标)
-- Package引用关系分析
-- UVM组件详细统计
-
-### v0.6 (2026-04)
-- Constraint Parser V2 (pyslang + z3)
-- RTL数据通路概率分析
-- ProbabilisticConstraintAnalyzer
-
-### v0.5 (2026-04)
-- Pipeline分析器
-- 时序路径提取
-- 性能估算
+MIT License - 详见 [LICENSE](LICENSE)
 
 ---
 
 <p align="center">
-  <strong>SV-Trace</strong> - 让SystemVerilog分析更简单
+  <strong>SV-Trace</strong> - SystemVerilog 分析利器
 </p>
----
-
-## 🧪 测试套件
-
-本项目包含 **784+** 测试用例，分为 4 个子项目测试集：
-
-### 子项目测试分布
-
-| 子项目 | 测试用例数 | 说明 |
-|--------|-----------|------|
-| sv_ast | 732 | AST 解析测试，包含 sv-tests 完整测试集 (830 个 .sv 文件) |
-| sv_trace | 27 | 信号追踪、数据流分析测试 |
-| sv_verify | 22 | 验证工具、调试分析测试 |
-| sv_codecheck | 3 | 代码质量检查测试 |
-
-### 测试数据来源
-
-- **sv-tests**: 外部开源 SystemVerilog 测试集 (830 个 .sv 文件)
-  - 路径: ~/my_dv_proj/sv-tests/tests/
-  - 覆盖: class, constraint, always_ff, always_comb, FSM, CDC 等
-
-### 运行测试
-
-```bash
-# 运行单个子项目测试
-cd tests/unit/sv_ast && python3 test_svtests.py
-
-# 运行全部子项目测试
-python3 tests/unit/run_subproject_tests.py
-```
-
-### 测试文件结构
-
-```
-tests/unit/
-├── sv_ast/          # AST 解析测试
-│   ├── test_svtests.py     # sv-tests 完整测试
-│   ├── test_all.py         # 综合测试
-│   └── ...
-├── sv_trace/        # 追踪器测试
-├── sv_verify/       # 验证工具测试
-└── sv_codecheck/    # 代码检查测试
-```
-
-> 📝 详细测试覆盖率见 [TEST_COVERAGE.md](docs/TEST_COVERAGE.md)
-
----
-
-## 🏗️ 项目架构
-
-### 模块结构
-
-```
-sv-trace/
-├── src/
-│   ├── parse/          # 核心解析器 (pyslang 封装)
-│   │   ├── parser.py          # SVParser 主解析器
-│   │   ├── params.py          # 参数解析
-│   │   ├── class_utils.py     # Class/constraint 提取
-│   │   ├── constraint.py      # 约束解析
-│   │   └── ...
-│   │
-│   ├── core/           # 核心数据模型
-│   │   └── models.py          # Driver, Signal, Parameter 等
-│   │
-│   ├── trace/          # 信号追踪模块
-│   │   ├── driver.py          # 驱动追踪 (DriverTracer)
-│   │   ├── load.py            # 负载追踪 (LoadTracer)
-│   │   ├── connection.py      # 连接追踪 (ConnectionTracer)
-│   │   ├── controlflow.py     # 控制流分析
-│   │   ├── dependency.py      # 依赖分析
-│   │   ├── datapath.py        # 数据路径分析
-│   │   └── area_estimator.py  # 面积估算
-│   │
-│   ├── query/          # 信号查询模块
-│   │   ├── signal.py          # SignalQuery 信号查询
-│   │   ├── path.py            # 路径分析
-│   │   └── ...
-│   │
-│   ├── verify/         # 验证工具模块
-│   │   ├── constraint_generator.py   # 约束生成
-│   │   ├── coverage_advisor.py       # 覆盖率指导
-│   │   ├── simulator.py              # 仿真器
-│   │   └── ...
-│   │
-│   ├── debug/          # 调试分析模块
-│   │   ├── fsm.py              # FSM 提取
-│   │   ├── class_extractor.py  # Class 提取
-│   │   └── ...
-│   │
-│   ├── lint/           # 代码检查模块
-│   │   ├── linter.py           # Lint 主程序
-│   │   └── code_quality.py     # 代码质量
-│   │
-│   └── power/          # 功耗分析模块
-│       └── power_domain.py     # 功耗域分析
-│
-└── tests/              # 测试套件
-    ├── unit/           # 单元测试
-    │   ├── sv_ast/     # AST 解析测试
-    │   ├── sv_trace/   # 追踪器测试
-    │   ├── sv_verify/  # 验证工具测试
-    │   └── sv_codecheck/ # 代码检查测试
-    ├── targeted/       # 针对性测试用例
-    ├── sv_cases/       # 分类测试用例
-    └── edge_cases/     # 边界情况测试
-```
-
-### 核心类说明
-
-| 类名 | 模块 | 功能 |
-|------|------|------|
-| SVParser | parse | SystemVerilog 解析器 |
-| DriverTracer | trace | 信号驱动追踪 |
-| LoadTracer | trace | 信号负载追踪 |
-| ConnectionTracer | trace | 模块连接追踪 |
-| ControlFlowTracer | trace | 控制流分析 |
-| SignalQuery | query | 信号查询接口 |
-| ModuleDependencyAnalyzer | debug | 模块依赖分析 |
-| FSMExtractor | debug | FSM 状态机提取 |
-| ConstraintExtractor | parse | 约束提取 |
-| ClassExtractor | parse | Class 提取 |
-| CoverageAdvisor | verify | 覆盖率指导 |
-| Linter | lint | 代码风格检查 |
-
-### 子项目划分
-
-| 子项目 | 源码目录 | 定位 |
-|--------|----------|------|
-| sv_ast | parse/, core/ | AST 解析 (830+ 测试) |
-| sv_trace | trace/ | 信号追踪/数据流 |
-| sv_verify | verify/, debug/ | 验证工具/调试 |
-| sv_codecheck | lint/ | 代码检查/Linting |
-
-
----
-
-## 🧠 技能发现API
-
-项目提供统一的技能注册表，支持按Tier和状态过滤。
-
-### 使用方法
-
-```bash
-# 列出所有技能
-PYTHONPATH=src python3 -m skills
-
-# 按Tier过滤
-PYTHONPATH=src python3 -m skills --tier 1
-
-# 按状态过滤
-PYTHONPATH=src python3 -m skills --status verified
-```
-
-### 技能统计
-
-| Tier | 名称 | 描述 | 数量 |
-|------|------|------|------|
-| G1 | 核心 | 经过充分测试验证 | 5 |
-| Y2 | 重要 | 已验证但需更多测试 | 6 |
-| O3 | 辅助 | 实验性功能 | 2 |
-| R4 | 探索 | 探索性功能 | 0 |
-
-### 状态说明
-
-- ✅ Verified (已验证): 经过测试验证
-- 🔬 Experimental (实验性): 正在开发
-- ⚠️ Needs Fix (需修复): 已知问题
-
-### 核心技能
-
-- **解析**: SVParser, ParameterResolver, ClassExtractor, ConstraintExtractor
-- **追踪**: DriverTracer, LoadTracer, ConnectionTracer, ControlFlowTracer, DataPathAnalyzer
-- **验证**: FSMExtractor, CoverageAdvisor
-- **检查**: Linter
-
