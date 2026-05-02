@@ -37,6 +37,7 @@ SV-Trace is a SystemVerilog static analysis library for RTL design analysis, tes
 | Document | Description |
 |----------|-------------|
 | [PARSER_SUPPORT.md](./PARSER_SUPPORT.md) | Parser support documentation |
+| [ARCHITECTURE.md](/ARCHITECTURE.md) | 架构图与模块关系
 | [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md) | Project structure |
 | [adr/README.md](./adr/README.md) | Architecture decision records |
 
