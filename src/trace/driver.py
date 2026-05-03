@@ -685,3 +685,32 @@ def collect_drivers(parser, verbose: bool = True) -> DriverCollector:
         DriverCollector: 驱动收集器实例
     """
     return DriverCollector(parser, verbose=verbose)
+
+
+    def _get_bit_range(self, node) -> Optional[Tuple[int, int]]:
+        """从节点获取位范围
+        
+        Args:
+            node: AST 节点 (bit select)
+            
+        Returns:
+            Optional[Tuple[int, int]]: (msb, lsb) or None
+        """
+        if node is None:
+            return None
+        
+        # Check for BitSelect or PartSelect
+        if hasattr(node, 'select') and node.select:
+            select = node.select
+            # PartSelect has left and right expressions
+            if hasattr(select, 'left') and hasattr(select, 'right'):
+                try:
+                    msb_str = str(select.left).strip()
+                    lsb_str = str(select.right).strip()
+                    msb = int(msb_str, 0) if msb_str else 0
+                    lsb = int(lsb_str, 0) if lsb_str else 0
+                    return (msb, lsb)
+                except (ValueError, AttributeError):
+                    pass
+        
+        return None
