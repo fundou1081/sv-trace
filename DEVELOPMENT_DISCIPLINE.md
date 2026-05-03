@@ -132,3 +132,47 @@
 - [ADR-011: 状态机提取](./docs/adr/ADR-011-fsm-extraction.md)
 - [IEEE 1800-2017 Section 40.4](./SV_FSM_Recognition.md)
 - [pyslang-spec](./docs/pyslang-spec/SKILL.md)
+
+---
+
+## 六、pyslang-spec 参考
+
+### pyslang-spec 子项目说明
+
+项目路径: `docs/pyslang-spec/`
+
+**目的**：显示 pyslang 解析后的 AST 代码范本，为后续功能开发提供参考。
+
+**使用原则**：
+- ✅ **可以参考**：查阅 AST 节点结构、SyntaxKind 名称、属性访问方式
+- ✅ **可以借鉴**：学习如何遍历 AST、如何处理特定语法结构
+- ❌ **禁止直接引用**：不得复制 pyslang-spec 中的代码作为项目功能代码
+
+**原因**：pyslang-spec 是参考文档，不是生产代码。直接引用会导致：
+- 代码与项目 Schema 不一致
+- 难以维护和追踪
+- 违背"模型即契约"原则
+
+**示例学习流程**：
+
+```
+1. 在 pyslang-spec 中查找目标 SyntaxKind (如 CaseStatement)
+2. 理解其属性结构 (expr, items, caseKeyword 等)
+3. 在项目中按相同模式实现解析逻辑
+4. 确保输出遵循 Schema 定义
+```
+
+---
+
+## 七、检查清单（新功能提交流程）
+
+- [ ] 是否使用 pyslang AST 而非正则分析源码？
+- [ ] 信号是否保留完整的位级信息？
+- [ ] 无法解析时是否返回 confidence: "uncertain"？
+- [ ] 数据字段是否都有对应的 AST 填充代码？
+- [ ] 数据模型变更是否同步更新 Schema？
+- [ ] pyslang-spec 是否仅作为参考而非直接引用？
+- [ ] 新功能是否附带边界测试用例？
+- [ ] 新增/修改是否同步更新文档？
+- [ ] API 返回是否包含 confidence 和 caveats？
+- [ ] 性能优化是否通过正确性验证？
