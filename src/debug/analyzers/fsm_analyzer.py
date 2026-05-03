@@ -2,6 +2,11 @@
 
 基于 IEEE 1800-2017 Section 40.4 标准，使用 pyslang AST 提取和分析状态机。
 
+标准优先级:
+1. Pragma: /* tool state_vector signal_name */
+2. Pragma: /* tool enum enumeration_name */
+3. Fallback: 模式匹配
+
 Example:
     >>> from debug.analyzers.fsm_analyzer import FSMAnalyzer
     >>> from parse import SVParser
@@ -51,6 +56,7 @@ class FSMInfo:
     reset_state: str = ""
     complexity_score: int = 0
     fsm_name: str = ""
+    source_type: str = "unknown"  # pragma, enum, pattern
 
 
 @dataclass
@@ -66,7 +72,7 @@ class FSMAnalysisResult:
 
 
 class FSMAnalyzer:
-    """状态机深度分析器 - 基于 pyslang AST。"""
+    """状态机深度分析器 - 基于 pyslang AST，符合 IEEE 1800-2017 Section 40.4"""
     
     def __init__(self, parser):
         self.parser = parser
@@ -99,6 +105,92 @@ class FSMAnalyzer:
                     continue
         return None
     
+    def _check_pragma(self, root) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Check for IEEE 1800-2017 Section 40.4 pragmas.
+        
+        Returns:
+            (state_vector_signal, enum_name, fsm_name)
+        """
+        pragma_state = None
+        pragma_enum = None
+        pragma_fsm = None
+        
+        # Walk and find comments (pragmas are in comments)
+        def walk_with_comments(node):
+            """Walk that also processes comment text."""
+            try:
+                for child in node:
+                    # Check if this is a comment token
+                    if hasattr(child, 'kind') and 'Comment' in child.kind.name:
+                        text = str(child).strip() if hasattr(child, 'getFirstToken') else ''
+                        if 'tool state_vector' in text:
+                            # Extract signal name
+                            import re
+                            m = re.search(r'tool state_vector\s+(\w+)', text)
+                            if m:
+                                nonlocal pragma_state
+                                pragma_state = m.group(1)
+                            # Check for enum
+                            m2 = re.search(r'tool state_vector\s+\w+\s+enum\s+(\w+)', text)
+                            if m2:
+                                nonlocal pragma_enum
+                                pragma_enum = m2.group(1)
+                            # Check for FSM name
+                            m3 = re.search(r'tool state_vector\s+\w+\s+(\w+)\s+enum', text)
+                            if m3:
+                                nonlocal pragma_fsm
+                                pragma_fsm = m3.group(1)
+                    yield child
+                    yield from walk_with_comments(child)
+            except TypeError:
+                pass
+        
+        walk_with_comments(root)
+        
+        # Also check the full source for /* tool ... */ comments
+        try:
+            text = str(root)
+            import re
+            
+            # Pattern: /* tool state_vector signal_name [enum name] [fsm_name] */
+            for m in re.finditer(r'/\*\s*tool state_vector\s+(\w+)(?:\s+(\w+))?(?:\s+enum\s+(\w+))?(?:\s+(\w+))?\s*\*/', text):
+                signal = m.group(1)
+                if not pragma_state:
+                    pragma_state = signal
+                if m.group(2) and not pragma_enum:
+                    # Could be FSM name or enum
+                    if m.group(3):
+                        pragma_enum = m.group(3)
+                        pragma_fsm = m.group(2)
+                    else:
+                        pragma_enum = m.group(2)
+                elif m.group(3) and not pragma_enum:
+                    pragma_enum = m.group(3)
+        except:
+            pass
+        
+        return pragma_state, pragma_enum, pragma_fsm
+    
+    def _check_enum(self, root, enum_name: str) -> List[str]:
+        """Extract states from enum declaration."""
+        if not enum_name:
+            return []
+        
+        states = []
+        
+        # Walk to find typedef enum
+        for node in self._walk(root):
+            if node.kind.name == 'EnumDeclaration':
+                name = str(node.name).strip() if hasattr(node, 'name') else ''
+                if name == enum_name:
+                    # Walk the enum items
+                    for child in self._walk(node):
+                        if child.kind.name == 'EnumConstant':
+                            states.append(str(child).strip())
+                    break
+        
+        return states
+    
     def _extract_target_from_clause(self, clause, next_var: str) -> Optional[str]:
         """Extract target state from a case item clause."""
         if not clause:
@@ -114,43 +206,97 @@ class FSMAnalyzer:
         return None
     
     def _extract_fsm_from_ast(self, tree) -> Optional[FSMInfo]:
-        """Extract FSM from AST - CaseStatement-first approach."""
+        """Extract FSM from AST.
+        
+        Priority per IEEE 1800-2017 Section 40.4:
+        1. Pragma: /* tool state_vector */ + /* tool enum */
+        2. Fallback: CaseStatement pattern matching
+        """
+        import re
         root = tree.root
         state_var = None
         next_var = None
         reset_state = None
         transitions = []
+        source_type = "unknown"
         
-        # Find CaseStatement - use its expr as state_var
-        for node in self._walk(root):
-            if node.kind.name == 'CaseStatement':
-                case_expr = str(node.expr).strip() if hasattr(node, 'expr') else ''
-                
-                # Skip one-hot style: case(1'b1)
-                if case_expr == "1'b1":
-                    continue
-                
-                if case_expr and (case_expr.endswith('_q') or 
-                               '_state' in case_expr.lower()):
-                    state_var = case_expr
-                    
-                    # Find next_var from always_comb/always_block
-                    for nn in self._walk(root):
-                        if nn.kind.name in ['AlwaysCombBlock', 'AlwaysBlock']:
-                            for aa in self._walk(nn):
-                                if aa.kind.name == 'AssignmentExpression':
-                                    left = str(aa.left).strip() if hasattr(aa, 'left') else ''
-                                    if left == 'state_d':
-                                        next_var = left
-                                        break
-                            if next_var:
+        # Step 1: Check for IEEE 1800-2017 Section 40.4 Pragma
+        pragma_state, pragma_enum, pragma_fsm = self._check_pragma(root)
+        
+        if pragma_state:
+            source_type = "pragma"
+            state_var = pragma_state
+            
+            # Find next_var (state_d pattern or from enum)
+            for node in self._walk(root):
+                if node.kind.name in ['AlwaysCombBlock', 'AlwaysBlock']:
+                    for aa in self._walk(node):
+                        if aa.kind.name == 'AssignmentExpression':
+                            left = str(aa.left).strip() if hasattr(aa, 'left') else ''
+                            if left == state_var.replace('_q', '_d'):
+                                next_var = left
                                 break
-                    break
+                    if next_var:
+                        break
+            
+            # Get states from enum if available
+            if pragma_enum:
+                enum_states = self._check_enum(root, pragma_enum)
+                if enum_states:
+                    # Build transitions from CaseStatement
+                    for node in self._walk(root):
+                        if node.kind.name == 'CaseStatement':
+                            case_expr = str(node.expr).strip() if hasattr(node, 'expr') else ''
+                            if case_expr == state_var:
+                                for item in self._walk(node.items):
+                                    if item.kind.name == 'StandardCaseItem':
+                                        sname = None
+                                        for expr in item.expressions:
+                                            sn = str(expr).strip()
+                                            if sn and not sn.startswith('//'):
+                                                sname = sn
+                                                break
+                                        if sname and hasattr(item, 'clause'):
+                                            target = self._extract_target_from_clause(item.clause, next_var or state_var)
+                                            if target:
+                                                transitions.append(Transition(
+                                                    from_state=sname,
+                                                    to_state=target
+                                                ))
+                                break
+        
+        # Step 2: Fallback - CaseStatement pattern matching
+        if not state_var:
+            for node in self._walk(root):
+                if node.kind.name == 'CaseStatement':
+                    case_expr = str(node.expr).strip() if hasattr(node, 'expr') else ''
+                    
+                    # Skip one-hot style: case(1'b1) - covered in later version
+                    if case_expr == "1'b1":
+                        continue
+                    
+                    if case_expr and (case_expr.endswith('_q') or 
+                                   '_state' in case_expr.lower()):
+                        source_type = "pattern"
+                        state_var = case_expr
+                        
+                        # Find next_var
+                        for nn in self._walk(root):
+                            if nn.kind.name in ['AlwaysCombBlock', 'AlwaysBlock']:
+                                for aa in self._walk(nn):
+                                    if aa.kind.name == 'AssignmentExpression':
+                                        left = str(aa.left).strip() if hasattr(aa, 'left') else ''
+                                        if left == 'state_d':
+                                            next_var = left
+                                            break
+                                if next_var:
+                                    break
+                        break
         
         if not state_var:
             return None
         
-        # Find CaseStatement again to extract transitions
+        # Find CaseStatement to extract transitions
         case_stmt = None
         for node in self._walk(root):
             if node.kind.name == 'CaseStatement':
@@ -200,7 +346,9 @@ class FSMAnalyzer:
         fsm_info = FSMInfo(
             name=state_var,
             register_signal=state_var,
-            reset_state=reset_state
+            reset_state=reset_state,
+            source_type=source_type,
+            fsm_name=pragma_fsm or ""
         )
         fsm_info.transitions = transitions
         
@@ -227,7 +375,7 @@ class FSMAnalyzer:
         return fsm_info
     
     def extract_fsm(self, module_name: str, state_register: str = None) -> Optional[FSMInfo]:
-        """Extract FSM from module using pyslang AST."""
+        """Extract FSM from module."""
         tree = self._get_module_tree(module_name)
         if not tree:
             return None
@@ -322,7 +470,8 @@ class FSMAnalyzer:
             "=" * 60,
             f"FSM ANALYSIS: {fsm.name}",
             "=" * 60,
-            f"\nStatistics: States={result.state_count}, Transitions={result.transition_count}",
+            f"\nSource Type: {fsm.source_type} (IEEE 1800-2017 Section 40.4)",
+            f"Statistics: States={result.state_count}, Transitions={result.transition_count}",
             f"Complexity={result.complexity}, Grade={result.quality_grade}",
             f"Reset State={fsm.reset_state or 'N/A'}",
         ]
