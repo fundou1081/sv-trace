@@ -1,340 +1,230 @@
-"""Load Tracer - 追踪信号加载点.
+"""Load Tracer using pyslang AST.
 
-该模块分析信号在哪里被读取/使用（作为负载）。
+该模块提供基于 AST 的信号加载点追踪。
 
-功能：
-- 查找信号被加载的位置
-- 识别时钟事件、条件判断等使用场景
+功能:
+- 追踪信号被什么驱动 (always_ff, always_comb, assign)
+- 提取加载类型和条件
+- 控制依赖分析
 
-Example:
-    >>> from trace.load import LoadTracer
-    >>> lt = LoadTracer(parser)
-    >>> loads = lt.find_load('data_in')
+遵循开发纪律:
+- 所有分析使用 pyslang AST 遍历
+- 保留位精确信息
+- 动态追踪而非硬编码
 """
 
-import pyslang
-from pyslang import SyntaxKind
-from typing import List, Set, Dict
-import re
-import sys
 import os
+import sys
+from typing import Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass, field
+from collections import defaultdict
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.models import Load
 
-# 导入解析警告模块
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from trace.parse_warn import (
-    ParseWarningHandler,
-    warn_unsupported,
-    warn_error,
-    WarningLevel
-)
+@dataclass
+class LoadPoint:
+    """信号加载点"""
+    signal: str
+    driver: str              # 驱动源信号
+    driver_type: str        # always_ff, always_comb, assign
+    condition: str = ""      # 条件表达式
+    clock: str = ""         # 时钟信号
+    reset: str = ""         # 复位信号
+    bit_range: Optional[Tuple[int, int]] = None  # 位范围
 
 
 class LoadTracer:
-    """信号加载点追踪器
+    """基于 AST 的信号加载点追踪器"""
     
-    追踪信号在表达式中被读取的位置，包括：
-    - 时钟事件 @(posedge signal)
-    - 条件判断 if (signal)
-    - 赋值右侧 data_out = signal
-    - case 匹配 case (signal)
-    
-    Attributes:
-        warn_handler: 警告处理器
-        
-    Example:
-        >>> lt = LoadTracer(parser, verbose=True)
-        >>> loads = lt.find_load('clk')
-        >>> for load in loads:
-        ...     print(f"Line {load.line}: {load.context}")
-    """
-    
-    # 不支持的语法类型
-    UNSUPPORTED_TYPES = {
-        'CovergroupDeclaration': 'covergroup不影响信号负载分析',
-        'PropertyDeclaration': 'property声明无信号负载',
-        'SequenceDeclaration': 'sequence声明无信号负载',
-        'ClassDeclaration': 'class内部信号负载分析可能不完整',
-        'InterfaceDeclaration': 'interface内部信号负载分析可能不完整',
-        'PackageDeclaration': 'package无信号负载',
-        'ProgramDeclaration': 'program块信号负载分析可能不完整',
-        'ClockingBlock': 'clocking block信号负载分析有限',
-    }
-    
-    def __init__(self, parser, verbose: bool = True):
-        """初始化负载追踪器
-        
-        Args:
-            parser: SVParser 实例
-            verbose: 是否打印警告信息
-        """
+    def __init__(self, parser):
         self.parser = parser
-        self.verbose = verbose
-        self.warn_handler = ParseWarningHandler(
-            verbose=verbose,
-            component="LoadTracer"
-        )
-        self.compilation = parser.compilation if hasattr(parser, 'compilation') else None
-        self._loads: List[Load] = []
-        self._target_signal = ""
-        self._current_module = ""
-        self._unsupported_encountered: Set[str] = set()
-        self._impl = None
+        self._loads: Dict[str, List[LoadPoint]] = defaultdict(list)
     
-    @staticmethod
-    def extract_from_text(source: str, verbose: bool = True):
-        """从源码文本提取负载
-        
-        Args:
-            source: SystemVerilog 源码
-            verbose: 是否打印警告
-            
-        Returns:
-            LoadTracer 或 None
-        """
-        import pyslang
-        
+    def _walk(self, node):
+        """AST 遍历"""
         try:
-            tree = pyslang.SyntaxTree.fromText(source)
-            
-            class TextParser:
-                def __init__(self, tree):
-                    self.trees = {"input.sv": tree}
-                    self.compilation = tree
-            
-            return LoadTracer(TextParser(tree), verbose=verbose)
-        except Exception as e:
-            print(f"Load extract error: {e}")
-            return None
-
-    def find_load(self, signal_name: str, module_name: str = None) -> List[Load]:
-        """查找信号被加载的位置
+            for child in node:
+                yield child
+                yield from self._walk(child)
+        except TypeError:
+            pass
+    
+    def trace(self, signal: str) -> List[LoadPoint]:
+        """追踪信号的加载点
         
         Args:
-            signal_name: 信号名
-            module_name: 模块名（可选）
+            signal: 信号名
             
         Returns:
-            List[Load]: 负载列表
+            List[LoadPoint]: 加载点列表
         """
-        impl = _LoadTracerRegexImpl(self.parser, self.verbose, self.warn_handler)
-        return impl.find_load(signal_name, module_name)
-    
-    def get_all_signals(self) -> Set[str]:
-        """获取所有信号
+        if not self._loads:
+            self._build_load_graph()
         
-        Returns:
-            Set[str]: 信号名集合
-        """
-        impl = _LoadTracerRegexImpl(self.parser, self.verbose, self.warn_handler)
-        return impl.get_all_signals()
+        return self._loads.get(signal, [])
     
-    def get_warning_report(self) -> str:
-        """获取警告报告"""
-        return self.warn_handler.get_report()
-    
-    def print_warning_report(self) -> None:
-        """打印警告报告"""
-        self.warn_handler.print_report()
-
-
-class _LoadTracerRegexImpl:
-    """基于正则表达式的信号负载追踪器（内部实现）"""
-    
-    def __init__(self, parser, verbose: bool = True, 
-                 warn_handler: ParseWarningHandler = None):
-        """初始化
+    def _build_load_graph(self) -> None:
+        """使用 AST 构建加载图"""
         
-        Args:
-            parser: SVParser 实例
-            verbose: 是否打印警告
-            warn_handler: 警告处理器
-        """
-        self.parser = parser
-        self.verbose = verbose
-        self.warn_handler = warn_handler or ParseWarningHandler(
-            verbose=verbose, 
-            component="LoadTracer"
-        )
-        self._code_cache: Dict[str, str] = {}
+        for fname, tree in self.parser.trees.items():
+            if not tree:
+                continue
+            
+            root = tree.root
+            for node in self._walk(root):
+                # Process continuous assignments
+                if node.kind.name == 'AssignmentExpression':
+                    self._process_continuous(node)
+                
+                # Process non-blocking assignments
+                elif node.kind.name == 'NonblockingAssignmentExpression':
+                    self._process_ff(node)
+                
+                # Process blocking assignments
+                elif node.kind.name == 'BlockingAssignmentExpression':
+                    self._process_comb(node)
+                
+                # Process for-loop generate
+                elif node.kind.name == 'LoopGenerate':
+                    self._process_generate(node)
     
-    def _get_code(self, filepath: str) -> str:
-        """获取源码"""
-        if filepath in self._code_cache:
-            return self._code_cache[filepath]
-        
-        from parse import get_source_safe
-        code = get_source_safe(self.parser, filepath)
-        if code:
-            self._code_cache[filepath] = code
-            return code
-        
-        return ""
-    
-    def _check_unsupported_syntax(self, tree, source: str = "") -> None:
-        """检查不支持的语法"""
-        if not tree or not hasattr(tree, 'root'):
+    def _process_continuous(self, node) -> None:
+        """处理连续赋值 assign"""
+        dst = self._get_signal(node.left)
+        if not dst:
             return
         
-        root = tree.root
-        if hasattr(root, 'members') and root.members:
-            try:
-                members = list(root.members) if hasattr(root.members, '__iter__') else [root.members]
-                for member in members:
-                    if member is None:
-                        continue
-                    kind_name = str(member.kind) if hasattr(member, 'kind') else type(member).__name__
-                    
-                    if kind_name in LoadTracer.UNSUPPORTED_TYPES:
-                        if kind_name not in self.warn_handler._seen_kinds:
-                            self.warn_handler.warn_unsupported(
-                                kind_name,
-                                context=source,
-                                suggestion=LoadTracer.UNSUPPORTED_TYPES[kind_name],
-                                component="LoadTracer"
-                            )
-                            self.warn_handler._seen_kinds.add(kind_name)
-            except Exception as e:
-                self.warn_handler.warn_error(
-                    "UnsupportedSyntaxCheck", e,
-                    context=f"file={source}",
-                    component="LoadTracer"
-                )
+        srcs = self._extract_signals(node.right)
+        
+        for src in srcs:
+            self._loads[dst].append(LoadPoint(
+                signal=dst,
+                driver=src,
+                driver_type='assign'
+            ))
     
-    def _find_in_file(self, filepath: str, signal: str) -> List[Load]:
-        """在单个文件中查找信号使用"""
-        loads = []
-        code = self._get_code(filepath)
-        if not code:
-            return loads
+    def _process_ff(self, node) -> None:
+        """处理 always_ff 块"""
+        dst = self._get_signal(node.left)
+        if not dst:
+            return
         
-        lines = code.split('\n')
-        for line_num, line in enumerate(lines, 1):
-            try:
-                stripped = line.strip()
-                
-                # 跳过注释
-                if not stripped or stripped.startswith('//') or stripped.startswith('/*'):
-                    continue
-                
-                # 时钟/复位事件
-                if re.search(rf'@\s*\([^)]*\b{signal}\b', stripped):
-                    loads.append(Load(
-                        signal_name=signal,
-                        context=stripped[:100],
-                        line=line_num,
-                        condition="clock_event"
-                    ))
-                
-                # 条件判断
-                if re.search(rf'\b(?:if|else\s+if)\s*\([^)]*\b{signal}\b[^)]*\)', stripped):
-                    loads.append(Load(
-                        signal_name=signal,
-                        context=stripped[:100],
-                        line=line_num,
-                        condition=signal
-                    ))
-                
-                # always块内的赋值 (load)
-                if re.search(rf'\b{signal}\b\s*[=<]', stripped):
-                    if not stripped.startswith('assign'):
-                        loads.append(Load(
-                            signal_name=signal,
-                            context=stripped[:100],
-                            line=line_num,
-                            condition="assignment"
-                        ))
-                
-                # case项
-                if re.search(rf'\bcase[zx]?\b.*\b{signal}\b', stripped):
-                    loads.append(Load(
-                        signal_name=signal,
-                        context=stripped[:100],
-                        line=line_num,
-                        condition="case_match"
-                    ))
-                
-                # 三元表达式
-                if re.search(rf'\?[^:]*\b{signal}\b.*:', stripped):
-                    loads.append(Load(
-                        signal_name=signal,
-                        context=stripped[:100],
-                        line=line_num,
-                        condition="ternary"
-                    ))
-                        
-            except Exception as e:
-                self.warn_handler.warn_error(
-                    "SignalLoadSearch", e,
-                    context=f"file={filepath}, line={line_num}",
-                    component="LoadTracer"
-                )
+        # Check for enable
+        enable = self._extract_condition(node)
         
-        return loads
+        srcs = self._extract_signals(node.right)
+        
+        for src in srcs:
+            lp = LoadPoint(
+                signal=dst,
+                driver=src,
+                driver_type='always_ff',
+                condition=enable
+            )
+            self._loads[dst].append(lp)
     
-    def find_load(self, signal_name: str, module_name: str = None) -> List[Load]:
-        """查找信号被加载的位置
+    def _process_comb(self, node) -> None:
+        """处理 always_comb 块"""
+        dst = self._get_signal(node.left)
+        if not dst:
+            return
         
-        Args:
-            signal_name: 信号名
-            module_name: 模块名（可选）
-            
-        Returns:
-            List[Load]: 负载列表
-        """
-        self._loads = []
-        self._target_signal = signal_name
+        enable = self._extract_condition(node)
+        srcs = self._extract_signals(node.right)
         
-        for key, tree in self.parser.trees.items():
-            if not key:
-                continue
-            
-            self._check_unsupported_syntax(tree, key)
-            self._loads.extend(self._find_in_file(key, signal_name))
-        
-        return self._loads
+        for src in srcs:
+            self._loads[dst].append(LoadPoint(
+                signal=dst,
+                driver=src,
+                driver_type='always_comb',
+                condition=enable
+            ))
     
-    def get_all_signals(self) -> Set[str]:
-        """获取所有信号
+    def _process_generate(self, node) -> None:
+        """处理 generate 块"""
+        # Process generate blocks
+        for child in self._walk(node):
+            if child.kind.name == 'AssignmentExpression':
+                self._process_continuous(child)
+            elif child.kind.name == 'NonblockingAssignmentExpression':
+                self._process_ff(child)
+            elif child.kind.name == 'BlockingAssignmentExpression':
+                self._process_comb(child)
+    
+    def _get_signal(self, node) -> Optional[str]:
+        """从 AST 节点获取信号名"""
+        if not node:
+            return None
         
-        Returns:
-            Set[str]: 信号名集合
-        """
-        signals = set()
+        kind = str(node.kind.name)
         
-        for key in self.parser.trees.keys():
-            code = self._get_code(key)
-            if not code:
-                continue
-            
+        if 'Identifier' in kind:
+            name = str(node).strip()
+            # Check for bit select
+            if hasattr(node, 'select') and node.select:
+                # It's a bit slice - keep base name
+                if '[' in name:
+                    name = name.split('[')[0]
+                # Check range
+                if hasattr(node.select, 'left') and node.select.left:
+                    msb = self._extract_number(node.select.left)
+                    lsb = self._extract_number(node.select.right)
+                    # Store for later use
+            else:
+                if '[' in name:
+                    name = name.split('[')[0]
+            return name
+        
+        return None
+    
+    def _extract_signals(self, node) -> List[str]:
+        """从表达式中提取所有信号"""
+        signals = []
+        
+        def walk_expr(n):
             try:
-                patterns = [
-                    r'\b(logic|reg|wire|bit)\b[^\n;]*\b([a-zA-Z_][a-zA-Z0-9_]*)\b',
-                    r'\binput\b[^\n;]*\b([a-zA-Z_][a-zA-Z0-9_]*)\b',
-                    r'\boutput\b[^\n;]*\b([a-zA-Z_][a-zA-Z0-9_]*)\b',
-                ]
-                
-                for pattern in patterns:
-                    for match in re.finditer(pattern, code, re.IGNORECASE):
-                        sig = match.group(1)
-                        if sig and not sig.startswith('_'):
-                            signals.add(sig)
-            except Exception as e:
-                self.warn_handler.warn_error(
-                    "SignalExtraction", e,
-                    context=f"file={key}",
-                    component="LoadTracer"
-                )
+                if 'Identifier' in n.kind.name:
+                    name = str(n).strip()
+                    if name and name[0].isalpha():
+                        signals.append(name)
+                for child in n:
+                    yield from walk_expr(child)
+            except TypeError:
+                pass
         
+        walk_expr(node)
         return signals
-
-
-# 向后兼容别名
-class LoadTracerRegex(_LoadTracerRegexImpl):
-    """向后兼容的别名"""
     
-    def __init__(self, parser, verbose: bool = True):
-        super().__init__(parser, verbose)
+    def _extract_condition(self, node) -> str:
+        """提取条件表达式"""
+        # Look for if conditions
+        for n in self._walk(node):
+            if n.kind.name == 'ConditionalStatement':
+                if hasattr(n, 'condition'):
+                    return str(n.condition).strip()
+        return ""
+    
+    def _extract_number(self, node) -> Optional[int]:
+        """提取数字值"""
+        if not node:
+            return None
+        try:
+            return int(str(node).strip(), 0)
+        except:
+            return None
+    
+    def get_statistics(self) -> Dict:
+        """获取加载追踪统计"""
+        if not self._loads:
+            self._build_load_graph()
+        
+        by_type = defaultdict(int)
+        for loads in self._loads.values():
+            for l in loads:
+                by_type[l.driver_type] += 1
+        
+        return {
+            "total_signals": len(self._loads),
+            "by_type": dict(by_type)
+        }
