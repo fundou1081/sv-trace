@@ -1,6 +1,16 @@
-"""
-StimulusPathFinder - 激励路径追踪器 (最终版)
-支持 if/case/Memory/FIFO 嵌套条件
+"""StimulusPathFinder - 激励路径追踪器 (最终版)。
+
+支持 if/case/Memory/FIFO 嵌套条件的激励路径追踪。
+用于查找信号目标值所需的输入激励。
+
+Example:
+    >>> from query.stimulus_path_finder import StimulusPathFinder, find_stimulus_path
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> finder = StimulusPathFinder(parser)
+    >>> result = finder.find("data_out", 42)
+    >>> print(result.visualize())
 """
 import sys
 import os
@@ -13,6 +23,13 @@ from typing import List, Dict, Set, Tuple
 
 @dataclass
 class IOInput:
+    """IO 输入数据类。
+    
+    Attributes:
+        name: 信号名
+        width: 位宽
+        ranges: 取值范围列表
+    """
     name: str
     width: int = 1
     ranges: List[Tuple[int, int]] = field(default_factory=list)
@@ -20,7 +37,15 @@ class IOInput:
 
 @dataclass
 class MemoryAccess:
-    """Memory访问"""
+    """Memory 访问数据类。
+    
+    Attributes:
+        name: 存储器名
+        access_type: 访问类型 (read/write)
+        address: 地址信号
+        data: 数据信号
+        condition: 访问条件
+    """
     name: str
     access_type: str = ""   # read/write
     address: str = ""
@@ -30,6 +55,14 @@ class MemoryAccess:
 
 @dataclass
 class PathSegment:
+    """路径段数据类。
+    
+    Attributes:
+        signal: 信号名
+        from_signal: 来源信号
+        operation: 操作类型
+        conditions: 条件列表
+    """
     signal: str = ""
     from_signal: str = ""
     operation: str = ""
@@ -38,6 +71,15 @@ class PathSegment:
 
 @dataclass
 class StimulusResult:
+    """激励结果数据类。
+    
+    Attributes:
+        target: 目标信号
+        target_value: 目标值
+        path_segments: 路径段列表
+        io_inputs: 所需 IO 输入
+        memory_accesses: 涉及的记忆访问
+    """
     target: str
     target_value: int
     path_segments: List[PathSegment] = field(default_factory=list)
@@ -45,6 +87,11 @@ class StimulusResult:
     memory_accesses: List[MemoryAccess] = field(default_factory=list)
     
     def visualize(self) -> str:
+        """可视化激励结果。
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
         lines = ["=" * 70, "STIMULUS PATH FINDER", "=" * 70]
         lines.append(f"\n🎯 Target: {self.target} = {self.target_value}")
         
@@ -82,15 +129,42 @@ class StimulusResult:
 
 
 class StimulusPathFinder:
-    """激励路径追踪器"""
+    """激励路径追踪器。
+    
+    追踪信号到其激励源的路径，支持复杂嵌套条件。
+
+    Attributes:
+        parser: SVParser 实例
+        ios: IO 信号列表
+        signal_assignments: 信号赋值映射
+        memories: 存储器列表
+    
+    Example:
+        >>> finder = StimulusPathFinder(parser)
+        >>> result = finder.find("data_out", 42)
+    """
     
     def __init__(self, parser):
+        """初始化追踪器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
         self.ios = []
         self.signal_assignments = {}
-        self.memories = []  # 存储elements
+        self.memories = []  # 存储 elements
     
     def find(self, target: str, target_value: int = None) -> StimulusResult:
+        """查找激励路径。
+        
+        Args:
+            target: 目标信号名
+            target_value: 目标值
+        
+        Returns:
+            StimulusResult: 激励结果
+        """
         result = StimulusResult(target=target, target_value=target_value or 0)
         
         self._collect_IOs()
@@ -107,6 +181,7 @@ class StimulusPathFinder:
         return result
     
     def _collect_IOs(self):
+        """收集所有 IO 信号。"""
         for fname, tree in self.parser.trees.items():
             code = self._get_code(fname)
             for line in code.split('\n'):
@@ -125,6 +200,7 @@ class StimulusPathFinder:
                         self.ios.append(IOInput(name=name, width=w))
     
     def _collect_assignments(self):
+        """收集所有信号赋值。"""
         for fname, tree in self.parser.trees.items():
             code = self._get_code(fname)
             for i, line in enumerate(code.split('\n')):
@@ -136,7 +212,7 @@ class StimulusPathFinder:
                         self.signal_assignments.setdefault(tgt, []).append((i, expr))
     
     def _collect_memories(self):
-        """收集Memory/FIFO声明"""
+        """收集 Memory/FIFO 声明。"""
         for fname, tree in self.parser.trees.items():
             code = self._get_code(fname)
             
@@ -158,14 +234,21 @@ class StimulusPathFinder:
                     pass
     
     def _find_memory_access(self, path: List[PathSegment]) -> List[MemoryAccess]:
-        """查找涉及memory的访问"""
+        """查找涉及 memory 的访问。
+        
+        Args:
+            path: 路径段列表
+        
+        Returns:
+            List[MemoryAccess]: 存储器访问列表
+        """
         accesses = []
         
         for seg in path:
             for fname, tree in self.parser.trees.items():
                 code = self._get_code(fname)
                 
-                # 查找memory读取
+                # 查找 memory 读取
                 for line in code.split('\n'):
                     if f"mem[{seg.from_signal}" in line or f"mem[{seg.signal}" in line:
                         if 'read' in line.lower() or 'write' in line.lower():
@@ -175,6 +258,16 @@ class StimulusPathFinder:
         return accesses
     
     def _trace_path(self, target: str, value: int, depth=0) -> List[PathSegment]:
+        """追踪路径。
+        
+        Args:
+            target: 目标信号
+            value: 目标值
+            depth: 递归深度
+        
+        Returns:
+            List[PathSegment]: 路径段列表
+        """
         if depth > 15:
             return []
             
@@ -203,7 +296,7 @@ class StimulusPathFinder:
                         cases = []
                         for line in self._get_code('').split('\n'):
                             if sig in line and ':' in line:
-                                # 提取case值
+                                # 提取 case 值
                                 c = line.split(':')[0].strip()
                                 cases.append({'type': 'case', 'value': c})
                         seg.conditions = cases
@@ -226,6 +319,15 @@ class StimulusPathFinder:
         return path
     
     def _calculate_requirements(self, path: List[PathSegment], value: int) -> List[IOInput]:
+        """计算所需输入。
+        
+        Args:
+            path: 路径段列表
+            value: 目标值
+        
+        Returns:
+            List[IOInput]: 所需 IO 输入列表
+        """
         ios = []
         
         for seg in path:
@@ -243,6 +345,14 @@ class StimulusPathFinder:
         return ios
     
     def _get_code(self, fname: str) -> str:
+        """获取源码。
+        
+        Args:
+            fname: 文件名
+        
+        Returns:
+            str: 源代码字符串
+        """
         for fname, tree in self.parser.trees.items():
             if hasattr(tree, 'source'):
                 return tree.source
@@ -250,4 +360,14 @@ class StimulusPathFinder:
 
 
 def find_stimulus_path(parser, target: str, value: int = None):
+    """便捷函数：查找激励路径。
+    
+    Args:
+        parser: SVParser 实例
+        target: 目标信号名
+        value: 目标值
+    
+    Returns:
+        StimulusResult: 激励结果
+    """
     return StimulusPathFinder(parser).find(target, value)

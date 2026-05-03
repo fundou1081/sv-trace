@@ -1,5 +1,15 @@
-"""
-Signal Query - 统一信号查询接口
+"""Signal Query - SystemVerilog 统一信号查询接口。
+
+提供信号的查找、过滤和详细信息查询功能。
+
+Example:
+    >>> from query.signal import SignalQuery
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> sq = SignalQuery(parser)
+    >>> sig = sq.find_signal("clk", "top")
+    >>> print(f"Found: {sig.name} [{sig.width} bits]")
 """
 import sys
 import os
@@ -14,12 +24,40 @@ from typing import List, Optional
 
 
 class SignalQuery:
+    """信号查询器。
+    
+    提供信号查找和查询功能，支持按名称和模块名过滤。
+
+    Attributes:
+        parser: SVParser 实例
+        param_resolver: 参数解析器
+    
+    Example:
+        >>> sq = SignalQuery(parser)
+        >>> sig = sq.find_signal("clk", "top")
+    """
+    
     def __init__(self, parser):
+        """初始化信号查询器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
         self.param_resolver = ParameterResolver(parser)
     
     def find_signal(self, name: str, module_name: str = None) -> Optional[Signal]:
-        """查找信号"""
+        """查找信号。
+        
+        在指定模块中查找信号，首先搜索端口，然后搜索内部信号声明。
+
+        Args:
+            name: 信号名称
+            module_name: 可选的模块名过滤
+        
+        Returns:
+            Signal: 找到的信号对象，未找到返回 None
+        """
         from core.models import Signal
         
         # 遍历所有解析的树
@@ -119,11 +157,26 @@ class SignalQuery:
         return None
     
     def query_signal(self, name: str, module_name: str = None) -> Optional[Signal]:
-        """查询信号的详细信息"""
+        """查询信号的详细信息。
+        
+        Args:
+            name: 信号名称
+            module_name: 可选的模块名过滤
+        
+        Returns:
+            Signal: 信号对象，未找到返回 None
+        """
         return self.find_signal(name, module_name)
     
     def get_all_signals(self, module_name: str = None) -> List[Signal]:
-        """获取所有信号"""
+        """获取所有信号。
+        
+        Args:
+            module_name: 可选的模块名过滤
+        
+        Returns:
+            List[Signal]: 信号列表
+        """
         signals = []
         
         for key, tree in self.parser.trees.items():
@@ -220,7 +273,16 @@ class SignalQuery:
 
 
 def query_signals(source: str):
-    """从源码文本查询信号"""
+    """从源码文本查询信号。
+    
+    便捷函数，从源码字符串创建信号查询器。
+
+    Args:
+        source: SystemVerilog 源代码字符串
+    
+    Returns:
+        SignalQuery: 查询器实例，失败返回 None
+    """
     try:
         import pyslang
         tree = pyslang.SyntaxTree.fromText(source)

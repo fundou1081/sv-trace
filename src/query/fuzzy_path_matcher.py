@@ -1,6 +1,16 @@
-"""
-FuzzyPathMatcher - Hier Path 模糊匹配搜索
-用户输入可能不完整的path，搜索最接近的准确path
+"""FuzzyPathMatcher - Hier Path 模糊匹配搜索。
+
+用户输入可能不完整的 path，搜索最接近的准确 path。
+用于信号路径的智能提示和自动补全。
+
+Example:
+    >>> from query.fuzzy_path_matcher import FuzzyPathMatcher
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> matcher = FuzzyPathMatcher(parser)
+    >>> result = matcher.match("top.sub.data")
+    >>> print(result.visualize())
 """
 import sys
 import os
@@ -12,7 +22,14 @@ from typing import List, Tuple
 
 @dataclass
 class PathCandidate:
-    """路径候选"""
+    """路径候选数据类。
+    
+    Attributes:
+        path: 完整路径
+        score: 匹配分数 (0-1)
+        matched_parts: 匹配的部分
+        missing_parts: 缺失的部分
+    """
     path: str
     score: float = 0.0
     matched_parts: List[str] = field(default_factory=list)
@@ -21,12 +38,23 @@ class PathCandidate:
 
 @dataclass
 class FuzzyMatchResult:
-    """匹配结果"""
+    """模糊匹配结果数据类。
+    
+    Attributes:
+        input_path: 输入路径
+        candidates: 候选路径列表
+        exact_match: 是否精确匹配
+    """
     input_path: str
     candidates: List[PathCandidate] = field(default_factory=list)
     exact_match: bool = False
     
     def visualize(self) -> str:
+        """可视化匹配结果。
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
         lines = []
         lines.append("=" * 60)
         lines.append(f"Fuzzy Match: {self.input_path}")
@@ -49,20 +77,35 @@ class FuzzyMatchResult:
 
 
 class FuzzyPathMatcher:
-    """Hier Path 模糊匹配"""
+    """Hier Path 模糊匹配器。
+    
+    提供层次路径的模糊搜索和自动补全功能。
+
+    Attributes:
+        parser: SVParser 实例
+        all_paths: 所有已知路径列表
+    
+    Example:
+        >>> matcher = FuzzyPathMatcher(parser)
+        >>> result = matcher.match("top.sub.dat")
+    """
     
     def __init__(self, parser):
+        """初始化匹配器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
         self.all_paths = []
         self._collect_all_paths()
     
     def _collect_all_paths(self):
-        """收集所有可能的hier path"""
-        
+        """收集所有可能的 hier path。"""
         def get_paths(node, prefix=""):
             paths = []
             
-            # 收集当前层的ports/signals
+            # 收集当前层的 ports/signals
             if hasattr(node, 'members') and node.members:
                 for m in node.members:
                     if hasattr(m, 'name') and m.name:
@@ -76,15 +119,22 @@ class FuzzyPathMatcher:
             
             return paths
         
-        # 从所有module收集
+        # 从所有 module 收集
         for fname, tree in self.parser.trees.items():
             if tree and hasattr(tree, 'root'):
                 paths = get_paths(tree.root)
                 self.all_paths.extend(paths)
     
     def match(self, input_path: str, top_n: int = 10) -> FuzzyMatchResult:
-        """模糊匹配"""
+        """模糊匹配路径。
         
+        Args:
+            input_path: 输入的部分路径
+            top_n: 返回的最多候选数
+        
+        Returns:
+            FuzzyMatchResult: 匹配结果
+        """
         result = FuzzyMatchResult(input_path=input_path)
         
         # 1. 检查完全匹配
@@ -116,15 +166,22 @@ class FuzzyPathMatcher:
                     missing_parts=missing
                 ))
         
-        # 3. 排序并返回top N
+        # 3. 排序并返回 top N
         result.candidates.sort(key=lambda c: c.score, reverse=True)
         result.candidates = result.candidates[:top_n]
         
         return result
     
     def _calculate_score(self, input_parts: List[str], path_parts: List[str]) -> Tuple[float, List[str], List[str]]:
-        """计算相似度"""
+        """计算相似度。
         
+        Args:
+            input_parts: 输入路径的各部分
+            path_parts: 候选路径的各部分
+        
+        Returns:
+            Tuple[float, List[str], List[str]]: (分数, 匹配部分, 缺失部分)
+        """
         matched = []
         missing = []
         
@@ -166,7 +223,14 @@ class FuzzyPathMatcher:
         return score, matched, missing
     
     def suggest_correction(self, input_path: str) -> List[str]:
-        """建议纠错"""
+        """建议纠错。
+        
+        Args:
+            input_path: 输入路径
+        
+        Returns:
+            List[str]: 可能的正确路径建议
+        """
         result = self.match(input_path, top_n=5)
         
         suggestions = []
@@ -178,6 +242,15 @@ class FuzzyPathMatcher:
 
 
 def fuzzy_match_path(parser, input_path: str, top_n: int = 10) -> FuzzyMatchResult:
-    """便捷函数"""
+    """便捷函数：模糊匹配路径。
+    
+    Args:
+        parser: SVParser 实例
+        input_path: 输入路径
+        top_n: 返回候选数
+    
+    Returns:
+        FuzzyMatchResult: 匹配结果
+    """
     matcher = FuzzyPathMatcher(parser)
     return matcher.match(input_path, top_n)

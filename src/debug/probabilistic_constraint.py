@@ -1,6 +1,13 @@
-"""Probabilistic Constraint Analysis - 寻找低概率×高影响组合
+"""ProbabilisticConstraintAnalyzer - 概率约束分析器。
 
-核心思路: 在依赖图上附加概率信息，找出"高影响×低概率"的危险组合
+寻找"低概率×高影响"的危险约束组合。
+在依赖图上附加概率信息，找出可能被忽视的边界情况。
+
+Example:
+    >>> from debug.probabilistic_constraint import ProbabilisticConstraintAnalyzer
+    >>> analyzer = ProbabilisticConstraintAnalyzer(constraints, dependencies)
+    >>> result = analyzer.analyze()
+    >>> print(analyzer.get_report())
 """
 
 import re
@@ -8,10 +15,23 @@ from typing import Dict, List, Set
 
 
 class ProbabilisticConstraintAnalyzer:
-    """概率约束分析器"""
+    """概率约束分析器。
+    
+    分析约束的激活概率，找出低概率高风险的组合。
+
+    Attributes:
+        constraints: 约束字典
+        dependencies: 依赖关系列表
+        probs: 约束激活概率字典
+    
+    Example:
+        >>> analyzer = ProbabilisticConstraintAnalyzer(constraints, deps)
+        >>> print(analyzer.get_report())
+    """
     
     def __init__(self, constraints: Dict, dependencies: List):
-        """
+        """初始化分析器。
+        
         Args:
             constraints: Dict[constraint_key -> ConstraintDetail]
             dependencies: List[ConstraintDependency]
@@ -22,12 +42,19 @@ class ProbabilisticConstraintAnalyzer:
         self._estimate_all_probabilities()
     
     def _estimate_all_probabilities(self):
-        """为每个约束估计激活概率"""
+        """为每个约束估计激活概率。"""
         for key, const in self.constraints.items():
             self.probs[key] = self._estimate_one(const)
     
     def _estimate_one(self, const) -> float:
-        """基于约束类型和模式估计先验概率"""
+        """基于约束类型和模式估计先验概率。
+        
+        Args:
+            const: 约束对象
+        
+        Returns:
+            float: 估计的激活概率 (0-1)
+        """
         raw = const.raw_expression
         if not raw:
             return 0.5
@@ -59,7 +86,11 @@ class ProbabilisticConstraintAnalyzer:
         return 0.5
     
     def analyze(self) -> Dict:
-        """完整分析"""
+        """完整分析。
+        
+        Returns:
+            Dict: 包含 rare_dependencies, danger_zones, rare_paths, critical_rare
+        """
         return {
             'rare_dependencies': self._find_rare_dependencies(),
             'danger_zones': self._find_danger_zones(),
@@ -68,7 +99,11 @@ class ProbabilisticConstraintAnalyzer:
         }
     
     def _find_rare_dependencies(self) -> List[Dict]:
-        """找低概率依赖边 (P(A) × P(B) < threshold)"""
+        """找低概率依赖边 (P(A) × P(B) < threshold)。
+        
+        Returns:
+            List[Dict]: 低概率依赖列表
+        """
         rare = []
         for dep in self.dependencies:
             if dep.dependency_type == 'variable':
@@ -88,7 +123,11 @@ class ProbabilisticConstraintAnalyzer:
         return sorted(rare, key=lambda x: x['joint_prob'])[:10]
     
     def _find_danger_zones(self) -> List[Dict]:
-        """找危险区域 - 入度高但激活概率低"""
+        """找危险区域 - 入度高但激活概率低。
+        
+        Returns:
+            List[Dict]: 危险区域列表
+        """
         in_degree = {}
         for dep in self.dependencies:
             in_degree[dep.to_constraint] = in_degree.get(dep.to_constraint, 0) + 1
@@ -110,7 +149,11 @@ class ProbabilisticConstraintAnalyzer:
         return sorted(danger, key=lambda x: -x['risk_score'])[:10]
     
     def _find_rare_paths(self) -> List[Dict]:
-        """找低概率长路径"""
+        """找低概率长路径。
+        
+        Returns:
+            List[Dict]: 低概率路径列表
+        """
         # 构建邻接表
         adj = {}
         for dep in self.dependencies:
@@ -144,7 +187,11 @@ class ProbabilisticConstraintAnalyzer:
         return sorted(rare_paths, key=lambda x: x['joint_prob'])[:10]
     
     def _find_critical_rare(self) -> List[Dict]:
-        """找高影响力×低概率的枢纽"""
+        """找高影响力×低概率的枢纽。
+        
+        Returns:
+            List[Dict]: 关键低概率约束列表
+        """
         # 计算入度作为影响力
         in_degree = {}
         for dep in self.dependencies:
@@ -165,7 +212,11 @@ class ProbabilisticConstraintAnalyzer:
         return sorted(critical, key=lambda x: -x['risk'])[:5]
     
     def get_report(self) -> str:
-        """生成分析报告"""
+        """生成分析报告。
+        
+        Returns:
+            str: 格式化的分析报告字符串
+        """
         results = self.analyze()
         
         lines = [

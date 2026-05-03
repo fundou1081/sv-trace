@@ -1,8 +1,22 @@
-"""
-CodeQuality - 代码质量综合检查
-整合多驱动检测、死代码检测等功能
+"""CodeQuality - SystemVerilog 代码质量综合检查。
 
-增强版: 添加解析警告，显式打印不支持的语法结构
+整合多项代码质量检查功能：
+- 多驱动检测
+- 死代码检测
+- 未使用信号检测
+- Latch 推断检测
+- 组合逻辑环检测
+
+增强版：添加解析警告，显式打印不支持的语法结构。
+
+Example:
+    >>> from lint.code_quality import CodeQualityChecker
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> checker = CodeQualityChecker(parser)
+    >>> report = checker.analyze()
+    >>> print(checker.generate_report(report))
 """
 import sys
 import os
@@ -26,6 +40,16 @@ from trace.parse_warn import (
 
 
 class IssueType(Enum):
+    """代码质量问题类型枚举。
+    
+    Attributes:
+        MULTI_DRIVER: 多驱动
+        DEAD_CODE: 死代码
+        UNUSED_SIGNAL: 未使用信号
+        LATCH_INFERENCE: Latch 推断
+        COMBINATIONAL_LOOP: 组合逻辑环
+        UNINITIALIZED: 未初始化
+    """
     MULTI_DRIVER = "multi_driver"
     DEAD_CODE = "dead_code"
     UNUSED_SIGNAL = "unused_signal"
@@ -35,6 +59,15 @@ class IssueType(Enum):
 
 
 class Severity(Enum):
+    """问题严重级别枚举。
+    
+    Attributes:
+        CRITICAL: 严重
+        HIGH: 高
+        MEDIUM: 中
+        LOW: 低
+        INFO: 信息
+    """
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -44,7 +77,18 @@ class Severity(Enum):
 
 @dataclass
 class QualityIssue:
-    """代码质量问题"""
+    """代码质量问题数据类。
+    
+    Attributes:
+        issue_type: 问题类型
+        severity: 严重级别
+        signal: 相关信号名
+        module: 所属模块
+        file: 文件路径
+        line: 行号
+        description: 问题描述
+        suggestion: 修复建议
+    """
     issue_type: IssueType
     severity: Severity
     signal: str = ""
@@ -57,27 +101,50 @@ class QualityIssue:
 
 @dataclass
 class QualityReport:
-    """质量报告"""
+    """代码质量报告数据类。
+    
+    Attributes:
+        issues: 问题列表
+        statistics: 统计数据
+    
+    Example:
+        >>> report = QualityReport()
+        >>> report.issues.append(issue)
+        >>> print(f"Critical: {report.critical_count}")
+    """
     issues: List[QualityIssue] = field(default_factory=list)
     statistics: Dict = field(default_factory=dict)
     
     @property
     def critical_count(self) -> int:
+        """严重问题数量。"""
         return sum(1 for i in self.issues if i.severity == Severity.CRITICAL)
     
     @property
     def high_count(self) -> int:
+        """高优先级问题数量。"""
         return sum(1 for i in self.issues if i.severity == Severity.HIGH)
     
     @property
     def total_count(self) -> int:
+        """问题总数。"""
         return len(self.issues)
 
 
 class CodeQualityChecker:
-    """代码质量检查器
+    """代码质量检查器。
     
-    增强: 添加解析警告
+    提供综合的代码质量检查功能。
+
+    Attributes:
+        parser: SVParser 实例
+        verbose: 是否输出详细信息
+    
+    Example:
+        >>> parser = SVParser()
+        >>> parser.parse_file("design.sv")
+        >>> checker = CodeQualityChecker(parser)
+        >>> report = checker.analyze()
     """
     
     # 不支持的语法类型
@@ -93,6 +160,12 @@ class CodeQualityChecker:
     }
     
     def __init__(self, parser: SVParser = None, verbose: bool = True):
+        """初始化检查器。
+        
+        Args:
+            parser: SVParser 实例
+            verbose: 是否打印详细信息
+        """
         self.parser = parser
         self.verbose = verbose
         # 创建警告处理器
@@ -104,7 +177,7 @@ class CodeQualityChecker:
         self._unsupported_encountered = set()
     
     def _check_unsupported_syntax(self):
-        """检查不支持的语法"""
+        """检查不支持的语法。"""
         if not self.parser:
             return
         
@@ -139,7 +212,14 @@ class CodeQualityChecker:
                     )
     
     def check_multi_driver(self, parser: SVParser = None) -> List[QualityIssue]:
-        """检测多驱动问题"""
+        """检测多驱动问题。
+        
+        Args:
+            parser: 可选的 SVParser 实例
+        
+        Returns:
+            List[QualityIssue]: 问题列表
+        """
         if parser is None:
             parser = self.parser
         
@@ -197,7 +277,14 @@ class CodeQualityChecker:
         return issues
     
     def check_unused_signals(self, parser: SVParser = None) -> List[QualityIssue]:
-        """检测未使用信号"""
+        """检测未使用信号。
+        
+        Args:
+            parser: 可选的 SVParser 实例
+        
+        Returns:
+            List[QualityIssue]: 问题列表
+        """
         if parser is None:
             parser = self.parser
         
@@ -235,7 +322,14 @@ class CodeQualityChecker:
         return issues
     
     def check_latch_inference(self, parser: SVParser = None) -> List[QualityIssue]:
-        """检测latch推断"""
+        """检测 latch 推断。
+        
+        Args:
+            parser: 可选的 SVParser 实例
+        
+        Returns:
+            List[QualityIssue]: 问题列表
+        """
         if parser is None:
             parser = self.parser
         
@@ -275,7 +369,14 @@ class CodeQualityChecker:
         return issues
     
     def analyze(self, parser: SVParser = None) -> QualityReport:
-        """综合分析"""
+        """综合分析代码质量。
+        
+        Args:
+            parser: 可选的 SVParser 实例
+        
+        Returns:
+            QualityReport: 质量报告
+        """
         if parser is None:
             parser = self.parser
         
@@ -333,7 +434,15 @@ class CodeQualityChecker:
         return QualityReport(issues=all_issues, statistics=statistics)
     
     def generate_report(self, report: QualityReport, title: str = "Code Quality Report") -> str:
-        """生成报告"""
+        """生成报告。
+        
+        Args:
+            report: QualityReport 实例
+            title: 报告标题
+        
+        Returns:
+            str: 格式化报告
+        """
         lines = []
         lines.append("=" * 70)
         lines.append(title)
@@ -364,7 +473,7 @@ class CodeQualityChecker:
                 if issue.signal:
                     lines.append(f"      信号: {issue.signal}")
                 if issue.suggestion:
-                    lines.append(f"      建议: {issue.suggestion}")
+                    lines.append(f"      ���议: {issue.suggestion}")
             
             if len(issues) > 10:
                 lines.append(f"  ... 还有 {len(issues) - 10} 个")
@@ -380,16 +489,27 @@ class CodeQualityChecker:
         return "\n".join(lines)
     
     def get_warning_report(self) -> str:
-        """获取警告报告"""
+        """获取警告报告。
+        
+        Returns:
+            str: 警告报告
+        """
         return self.warn_handler.get_report()
     
     def print_warning_report(self):
-        """打印警告报告"""
+        """打印警告报告。"""
         self.warn_handler.print_report()
 
 
 def check_quality(source: str):
-    """代码质量检查"""
+    """简单的代码质量检查。
+    
+    Args:
+        source: SystemVerilog 源代码
+    
+    Returns:
+        dict: 检查结果
+    """
     issues = []
     
     # 检查常见的 code smell

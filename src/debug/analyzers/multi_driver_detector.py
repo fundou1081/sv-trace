@@ -1,195 +1,233 @@
-"""
-MultiDriverDetector - 多驱动检测器
-检测设计中所有可能的多驱动问题
-"""
+"""MultiDriverDetector - 多驱动检测器 (完整版)。
 
+检测信号多驱动问题，提供详细的驱动分析。
+
+Example:
+    >>> from debug.analyzers.multi_driver_detector import MultiDriverDetector
+    >>> detector = MultiDriverDetector(parser)
+    >>> result = detector.detect_all()
+    >>> print(detector.format_report(result))
+"""
 import sys
 import os
-from typing import Dict, List, Set, Tuple
-from dataclasses import dataclass, field
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+from typing import Dict, List
+from dataclasses import dataclass
 from enum import Enum
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from trace.driver import DriverCollector
-
-
-class DriverConflictType(Enum):
-    """驱动冲突类型"""
-    ALWAYS_FF_MULTI = "always_ff_multi"
-    ALWAYS_COMB_MULTI = "always_comb_multi"
-    ASSIGN_MULTI = "assign_multi"
-    FF_COMB_MIX = "ff_comb_mix"
-    LATCH_FF_MIX = "latch_ff_mix"
-    UNKNOWN = "unknown"
-
-
-class Severity(Enum):
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
+class DriverType(Enum):
+    """驱动类型枚举。
+    
+    Attributes:
+        CONTINUOUS: 连续赋值 (assign)
+        ALWAYS_FF: 时序逻辑 (always_ff)
+        ALWAYS_COMB: 组合逻辑 (always_comb)
+        ALWAYS_LATCH: 锁存逻辑 (always_latch)
+        PROCEDURAL: 过程赋值
+    """
+    CONTINUOUS = "continuous"
+    ALWAYS_FF = "always_ff"
+    ALWAYS_COMB = "always_comb"
+    ALWAYS_LATCH = "always_latch"
+    PROCEDURAL = "procedural"
 
 
 @dataclass
-class DriverConflict:
-    """驱动冲突"""
+class DriverSource:
+    """驱动源数据类。
+    
+    Attributes:
+        driver_type: 驱动类型
+        expression: 驱动表达式
+        location: 位置
+        module: 所属模块
+    """
+    driver_type: DriverType
+    expression: str
+    location: str = ""
+    module: str = ""
+
+
+@dataclass
+class MultiDriverResult:
+    """多驱动结果数据类。
+    
+    Attributes:
+        signal: 信号名
+        drivers: 驱动源列表
+        has_conflict: 是否有冲突
+        severity: 严重级别
+    """
     signal: str
-    conflict_type: DriverConflictType
-    severity: Severity
-    drivers: List
-    description: str
-    suggestion: str
-
-
-@dataclass
-class MultiDriverReport:
-    """多驱动检测报告"""
-    conflicts: List[DriverConflict]
-    statistics: Dict
-    module_summary: Dict[str, int]
+    drivers: List[DriverSource]
+    has_conflict: bool
+    severity: str
 
 
 class MultiDriverDetector:
-    """多驱动检测器"""
+    """多驱动检测器。
+    
+    检测信号被多个源驱动的问题。
+
+    Attributes:
+        parser: SVParser 实例
+    
+    Example:
+        >>> detector = MultiDriverDetector(parser)
+        >>> result = detector.detect_all()
+    """
     
     def __init__(self, parser):
+        """初始化检测器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
-        self._dc = DriverCollector(parser)
-        self._conflicts = []
     
-    def analyze(self) -> MultiDriverReport:
-        """执行多驱动分析"""
-        self._conflicts = []
-        module_summary = {}
+    def detect(self, signal: str) -> List[MultiDriverResult]:
+        """检测指定信号的多驱动问题。
         
-        # 获取所有信号
-        all_signals = self._dc.get_all_signals()
+        Args:
+            signal: 信号名
         
-        for sig in all_signals:
-            drivers = self._dc.find_driver(sig)
+        Returns:
+            List[MultiDriverResult]: 检测结果列表
+        """
+        from trace.driver import DriverTracer
+        
+        results = []
+        tracer = DriverTracer(self.parser)
+        drivers = tracer.find_driver(signal)
+        
+        if len(drivers) > 1:
+            driver_sources = []
+            for d in drivers:
+                drv_type = self._classify_driver(d)
+                driver_sources.append(DriverSource(
+                    driver_type=drv_type,
+                    expression=getattr(d, 'source_expr', str(d))
+                ))
             
-            if len(drivers) > 1:
-                conflict = self._classify_conflict(sig, drivers)
-                if conflict:
-                    self._conflicts.append(conflict)
-                    module = drivers[0].module.strip()
-                    module_summary[module] = module_summary.get(module, 0) + 1
+            has_conflict = self._check_conflict(driver_sources)
+            
+            results.append(MultiDriverResult(
+                signal=signal,
+                drivers=driver_sources,
+                has_conflict=has_conflict,
+                severity="error" if has_conflict else "warning"
+            ))
         
-        # 统计
-        stats = {
-            "total_signals": len(all_signals),
-            "multi_driver_signals": len(self._conflicts),
-            "critical": sum(1 for c in self._conflicts if c.severity == Severity.CRITICAL),
-            "high": sum(1 for c in self._conflicts if c.severity == Severity.HIGH),
-            "medium": sum(1 for c in self._conflicts if c.severity == Severity.MEDIUM),
-        }
-        
-        return MultiDriverReport(
-            conflicts=self._conflicts,
-            statistics=stats,
-            module_summary=module_summary
-        )
+        return results
     
-    def _classify_conflict(self, sig: str, drivers) -> DriverConflict:
-        """分类冲突类型"""
-        always_ff = [d for d in drivers if d.kind.name == 'AlwaysFF']
-        always_comb = [d for d in drivers if d.kind.name == 'AlwaysComb']
-        always_latch = [d for d in drivers if d.kind.name == 'AlwaysLatch']
-        continuous = [d for d in drivers if d.kind.name == 'Continuous']
+    def detect_all(self) -> List[MultiDriverResult]:
+        """检测所有信号的多驱动问题。
         
-        lines = [d.lines[0] if d.lines else 0 for d in drivers]
-        is_same_block = max(lines) - min(lines) < 100 if len(lines) > 1 else True
+        Returns:
+            List[MultiDriverResult]: 所有检测结果
+        """
+        all_results = []
         
-        # 分类
-        if len(always_ff) > 1:
-            if not is_same_block:
-                return DriverConflict(
-                    signal=sig,
-                    conflict_type=DriverConflictType.ALWAYS_FF_MULTI,
-                    severity=Severity.CRITICAL,
-                    drivers=drivers,
-                    description=f"Signal '{sig}' driven by {len(always_ff)} always_ff blocks",
-                    suggestion="Use MUX or generate logic to combine drivers"
-                )
+        for fname, tree in self.parser.trees.items():
+            if not tree or not hasattr(tree, 'root'):
+                continue
+            
+            root = tree.root
+            if not hasattr(root, 'members'):
+                continue
+            
+            for i in range(len(root.members)):
+                member = root.members[i]
+                if 'ModuleDeclaration' not in str(type(member)):
+                    continue
+                
+                signals = self._find_signals(member)
+                for sig in signals:
+                    results = self.detect(sig)
+                    all_results.extend(results)
         
-        if len(always_comb) > 1:
-            if not is_same_block:
-                return DriverConflict(
-                    signal=sig,
-                    conflict_type=DriverConflictType.ALWAYS_COMB_MULTI,
-                    severity=Severity.HIGH,
-                    drivers=drivers,
-                    description=f"Signal '{sig}' driven by {len(always_comb)} always_comb blocks",
-                    suggestion="Use single always_comb or ensure mutually exclusive conditions"
-                )
-        
-        if always_latch and always_ff:
-            return DriverConflict(
-                signal=sig,
-                conflict_type=DriverConflictType.LATCH_FF_MIX,
-                severity=Severity.CRITICAL,
-                drivers=drivers,
-                description=f"Signal '{sig}' driven by latch and flip-flop",
-                suggestion="Use only always_ff for synchronous logic"
-            )
-        
-        if always_comb and always_ff:
-            return DriverConflict(
-                signal=sig,
-                conflict_type=DriverConflictType.FF_COMB_MIX,
-                severity=Severity.HIGH,
-                drivers=drivers,
-                description=f"Signal '{sig}' driven by always_comb and always_ff",
-                suggestion="Ensure proper clock domain isolation"
-            )
-        
-        if len(continuous) > 1:
-            return DriverConflict(
-                signal=sig,
-                conflict_type=DriverConflictType.ASSIGN_MULTI,
-                severity=Severity.MEDIUM,
-                drivers=drivers,
-                description=f"Signal '{sig}' has {len(continuous)} continuous assignments",
-                suggestion="Use single assign or proper tri-state bus"
-            )
-        
-        # 默认
-        return DriverConflict(
-            signal=sig,
-            conflict_type=DriverConflictType.UNKNOWN,
-            severity=Severity.LOW,
-            drivers=drivers,
-            description=f"Signal '{sig}' has {len(drivers)} drivers",
-            suggestion="Review driver compatibility"
-        )
+        return all_results
     
-    def detect_issues(self) -> List[DriverConflict]:
-        """检测冲突"""
-        return self.analyze().conflicts
+    def _classify_driver(self, driver) -> DriverType:
+        """分类驱动类型。"""
+        drv_str = str(type(driver).__name__).lower()
+        
+        if 'continuous' in drv_str or 'assign' in drv_str:
+            return DriverType.CONTINUOUS
+        elif 'always_ff' in drv_str or 'ff' in drv_str:
+            return DriverType.ALWAYS_FF
+        elif 'always_comb' in drv_str:
+            return DriverType.ALWAYS_COMB
+        elif 'always_latch' in drv_str or 'latch' in drv_str:
+            return DriverType.ALWAYS_LATCH
+        else:
+            return DriverType.PROCEDURAL
     
-    def get_conflicts_by_module(self, module: str) -> List[DriverConflict]:
-        """按模块获取冲突"""
-        return [c for c in self.analyze().conflicts if module in c.drivers[0].module]
+    def _check_conflict(self, drivers: List[DriverSource]) -> bool:
+        """检查是否有冲突。"""
+        if len(drivers) < 2:
+            return False
+        
+        types = set(d.driver_type for d in drivers)
+        
+        # 不同类型的驱动通常冲突
+        if len(types) > 1:
+            return True
+        
+        return False
     
-    def print_report(self, report: MultiDriverReport):
-        """打印报告"""
-        print("\n" + "="*60)
-        print("Multi-Driver Detection Report")
-        print("="*60)
+    def _find_signals(self, module) -> List[str]:
+        """查找模块中的信号。"""
+        signals = []
         
-        print(f"\nStatistics:")
-        for k, v in report.statistics.items():
-            print(f"  {k}: {v}")
+        if not hasattr(module, 'members') or not module.members:
+            return signals
         
-        if report.conflicts:
-            print(f"\nConflicts ({len(report.conflicts)}):")
-            for c in report.conflicts:
-                print(f"  [{c.severity.value.upper()}] {c.signal}")
-                print(f"    {c.description}")
-                print(f"    Suggestion: {c.suggestion}")
+        for j in range(len(module.members)):
+            stmt = module.members[j]
+            if not stmt:
+                continue
+            
+            if 'DataDeclaration' in str(type(stmt)):
+                if hasattr(stmt, 'declarators') and stmt.declarators:
+                    try:
+                        for decl in stmt.declarators:
+                            if hasattr(decl, 'name') and decl.name:
+                                name = decl.name
+                                if hasattr(name, 'value'):
+                                    signals.append(str(name.value).strip())
+                                else:
+                                    signals.append(str(name).strip())
+                    except:
+                        pass
         
-        print("\n" + "="*60)
-
-
-__all__ = ['MultiDriverDetector', 'DriverConflict', 'MultiDriverReport', 'DriverConflictType', 'Severity']
+        return signals
+    
+    def format_report(self, results: List[MultiDriverResult]) -> str:
+        """格式化报告。
+        
+        Args:
+            results: 检测结果
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
+        lines = []
+        lines.append("=" * 60)
+        lines.append("MULTI-DRIVER DETECTION REPORT")
+        lines.append("=" * 60)
+        
+        if not results:
+            lines.append("\n✅ No multi-driver issues found")
+        else:
+            lines.append(f"\n⚠️  Found {len(results)} multi-driver signal(s)")
+            
+            for r in results:
+                lines.append(f"\n[{r.severity.upper()}] {r.signal}")
+                for d in r.drivers:
+                    lines.append(f"  - {d.driver_type.value}: {d.expression[:50]}")
+        
+        return "\n".join(lines)

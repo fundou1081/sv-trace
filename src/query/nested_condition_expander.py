@@ -1,6 +1,13 @@
-"""
-NestedConditionExpander - 嵌套条件完全展开
-将嵌套if展开到最底层
+"""NestedConditionExpander - 嵌套条件完全展开。
+
+将嵌套 if 展开到最底层，生成独立的条件组合。
+用于 coverage bin 生成。
+
+Example:
+    >>> from query.nested_condition_expander import NestedConditionExpander
+    >>> expander = NestedConditionExpander(parser)
+    >>> result = expander.expand("a && (b || c)")
+    >>> print(result.visualize())
 """
 import sys
 import os
@@ -12,7 +19,13 @@ from typing import List
 
 @dataclass
 class ExpandedCondition:
-    """展开后的条件"""
+    """展开后的条件数据类。
+    
+    Attributes:
+        expression: 完整表达式
+        level: 嵌套层级
+        is_leaf: 是否为叶子条件
+    """
     expression: str
     level: int = 0
     is_leaf: bool = False
@@ -20,12 +33,23 @@ class ExpandedCondition:
 
 @dataclass
 class ExpandedResult:
-    """展开结果"""
+    """展开结果数据类。
+    
+    Attributes:
+        original: 原始表达式
+        expanded: 展开后的条件列表
+        total_bins: 总 bin 数
+    """
     original: str
     expanded: List[ExpandedCondition] = field(default_factory=list)
     total_bins: int = 0
     
     def visualize(self) -> str:
+        """可视化展开结果。
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
         lines = []
         lines.append("=" * 60)
         lines.append(f"NESTED IF EXPANSION")
@@ -42,14 +66,35 @@ class ExpandedResult:
 
 
 class NestedConditionExpander:
-    """嵌套条件展开器"""
+    """嵌套条件展开器。
+    
+    将嵌套的条件表达式展开为独立的条件组合。
+
+    Attributes:
+        parser: SVParser 实例
+    
+    Example:
+        >>> expander = NestedConditionExpander(parser)
+        >>> result = expander.expand("a && (b || c)")
+    """
     
     def __init__(self, parser):
+        """初始化展开器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
     
     def expand(self, condition_expr: str) -> ExpandedResult:
-        """展开嵌套条件"""
+        """展开嵌套条件。
         
+        Args:
+            condition_expr: 条件表达式字符串
+        
+        Returns:
+            ExpandedResult: 展开结果
+        """
         result = ExpandedResult(original=condition_expr)
         
         # 简单展开: 递归展开嵌套的组合逻辑
@@ -61,8 +106,15 @@ class NestedConditionExpander:
         return result
     
     def _expand_recursive(self, expr: str, level: int) -> List[ExpandedCondition]:
-        """递归展开"""
+        """递归展开。
         
+        Args:
+            expr: 表达式字符串
+            level: 当前层级
+        
+        Returns:
+            List[ExpandedCondition]: 展开后的条件列表
+        """
         results = []
         
         # 1. 检测嵌套的 &&
@@ -100,8 +152,15 @@ class NestedConditionExpander:
         return results
     
     def _expand_single(self, expr: str, level: int) -> List[ExpandedCondition]:
-        """展开单个表达式"""
+        """展开单个表达式。
         
+        Args:
+            expr: 表达式字符串
+            level: 当前层级
+        
+        Returns:
+            List[ExpandedCondition]: 展开后的条件列表
+        """
         results = []
         
         # 移除括号
@@ -139,5 +198,14 @@ class NestedConditionExpander:
 
 
 def expand_nested_condition(parser, condition: str) -> ExpandedResult:
+    """便捷函数：展开嵌套条件。
+    
+    Args:
+        parser: SVParser 实例
+        condition: 条件表达式
+    
+    Returns:
+        ExpandedResult: 展开结果
+    """
     expander = NestedConditionExpander(parser)
     return expander.expand(condition)

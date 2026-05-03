@@ -1,7 +1,21 @@
-"""
-Lint 静态检查 - SystemVerilog 代码质量检查
+"""Lint 静态检查 - SystemVerilog 代码质量检查。
 
-增强版: 添加解析警告，显式打印不支持的语法结构
+提供静态检查功能，包括：
+- 未使用信号检测
+- 多驱动检测  
+- 常量信号检测
+- 未初始化寄存器检测
+
+增强版：添加解析警告，显式打印不支持的语法结构。
+
+Example:
+    >>> from lint.linter import SVLinter
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> linter = SVLinter(parser)
+    >>> report = linter.run_all()
+    >>> print(report.visualize())
 """
 import sys
 import os
@@ -24,6 +38,13 @@ from trace.parse_warn import (
 
 
 class IssueSeverity(Enum):
+    """问题严重级别枚举。
+    
+    Attributes:
+        ERROR: 错误级别
+        WARNING: 警告级别
+        INFO: 信息级别
+    """
     ERROR = auto()
     WARNING = auto()
     INFO = auto()
@@ -31,6 +52,16 @@ class IssueSeverity(Enum):
 
 @dataclass
 class LintIssue:
+    """Lint 检查问题数据类。
+    
+    Attributes:
+        severity: 问题严重级别
+        message: 问题描述信息
+        file: 所在文件路径
+        line: 所在行号
+        signal: 相关信号名
+        issue_type: 问题类型
+    """
     severity: IssueSeverity
     message: str
     file: str = ""
@@ -41,16 +72,41 @@ class LintIssue:
 
 @dataclass
 class LintReport:
+    """Lint 检查报告数据类。
+    
+    Attributes:
+        issues: 问题列表
+    
+    Example:
+        >>> report = LintReport()
+        >>> report.add(IssueSeverity.ERROR, "Signal 'clk' has multiple drivers")
+        >>> print(report.visualize())
+    """
     issues: List[LintIssue] = field(default_factory=list)
     
     def add(self, severity: IssueSeverity, message: str, 
             file: str = "", line: int = 0, signal: str = "", issue_type: str = ""):
+        """添加一个问题到报告。
+        
+        Args:
+            severity: 严重级别
+            message: 问题描述
+            file: 文件路径
+            line: 行号
+            signal: 信号名
+            issue_type: 问题类型
+        """
         self.issues.append(LintIssue(
             severity=severity, message=message,
             file=file, line=line, signal=signal, issue_type=issue_type
         ))
     
     def visualize(self) -> str:
+        """可视化报告为字符串。
+        
+        Returns:
+            格式化的报告字符串
+        """
         lines = ["=== Lint Report ==="]
         if not self.issues:
             lines.append("✅ No issues found!")
@@ -77,9 +133,19 @@ class LintReport:
 
 
 class SVLinter:
-    """SystemVerilog Linter
+    """SystemVerilog Linter。
     
-    增强: 解析过程中显式打印不支持的语法结构
+    提供静态代码检查功能，检测常见的设计问题。
+
+    Attributes:
+        parser: SVParser 实例
+        verbose: 是否输出详细信息
+    
+    Example:
+        >>> parser = SVParser()
+        >>> parser.parse_file("design.sv")
+        >>> linter = SVLinter(parser)
+        >>> report = linter.run_all()
     """
     
     # 已知的 lint 不支持的语法类型
@@ -96,6 +162,12 @@ class SVLinter:
     }
     
     def __init__(self, parser, verbose: bool = True):
+        """初始化 Linter。
+        
+        Args:
+            parser: SVParser 实例
+            verbose: 是否打印详细信息
+        """
         self.parser = parser
         self.verbose = verbose
         # 创建警告处理器
@@ -108,7 +180,7 @@ class SVLinter:
         self._collect_signals()
     
     def _collect_signals(self):
-        """收集所有信号定义"""
+        """收集所有信号定义。"""
         for path, tree in self.parser.trees.items():
             if not tree or not hasattr(tree, 'root'):
                 self.warn_handler.warn_info(
@@ -160,7 +232,12 @@ class SVLinter:
                             )
     
     def _check_unsupported_member(self, member, source: str = ""):
-        """检查不支持的成员类型"""
+        """检查不支持的成员类型。
+        
+        Args:
+            member: 语法节点
+            source: 来源文件
+        """
         kind_name = type(member).__name__
         
         if kind_name in self.UNSUPPORTED_KINDS:
@@ -184,7 +261,11 @@ class SVLinter:
                 self._unsupported_encountered.add(kind_name)
     
     def check_unused_signals(self) -> LintReport:
-        """检查未使用信号"""
+        """检查未使用信号。
+        
+        Returns:
+            LintReport: 检查报告
+        """
         report = LintReport()
         
         try:
@@ -228,7 +309,11 @@ class SVLinter:
         return report
     
     def check_multiple_drivers(self) -> LintReport:
-        """检查多驱动"""
+        """检查多驱动信号。
+        
+        Returns:
+            LintReport: 检查报告
+        """
         report = LintReport()
         
         try:
@@ -263,7 +348,11 @@ class SVLinter:
         return report
     
     def check_constant_signals(self) -> LintReport:
-        """检查常量信号"""
+        """检查常量信号。
+        
+        Returns:
+            LintReport: 检查报告
+        """
         report = LintReport()
         
         try:
@@ -299,6 +388,14 @@ class SVLinter:
         return report
     
     def _is_constant_expression(self, expr: str) -> bool:
+        """判断是否为常量表达式。
+        
+        Args:
+            expr: 表达式字符串
+        
+        Returns:
+            bool: 是否为常量表达式
+        """
         if not expr:
             return False
         patterns = [r"^\d+['][bhd][0-9a-fA-F_]+$", r"^['][01]$", r"^\d+$", r"^[01][']?[bhd]?[0-9a-fA-F_]+$"]
@@ -308,7 +405,11 @@ class SVLinter:
         return False
     
     def check_uninitialized_registers(self) -> LintReport:
-        """检测没有复位的 always_ff 寄存器"""
+        """检查未初始化的寄存器。
+        
+        Returns:
+            LintReport: 检查报告
+        """
         report = LintReport()
         
         try:
@@ -350,7 +451,11 @@ class SVLinter:
         return report
     
     def run_all(self) -> LintReport:
-        """运行所有检查"""
+        """运行所有检查。
+        
+        Returns:
+            LintReport: 综合检查报告
+        """
         report = LintReport()
         for check in [self.check_unused_signals, self.check_multiple_drivers, 
                       self.check_constant_signals, self.check_uninitialized_registers]:
@@ -367,14 +472,25 @@ class SVLinter:
         return report
     
     def get_warning_report(self) -> str:
-        """获取解析警告报告"""
+        """获取解析警告报告。
+        
+        Returns:
+            str: 警告报告字符串
+        """
         return self.warn_handler.get_report()
     
     def print_warning_report(self):
-        """打印解析警告报告"""
+        """打印解析警告报告。"""
         self.warn_handler.print_report()
 
 
 def lint_code(source: str):
-    """代码检查"""
+    """简单的代码检查。
+    
+    Args:
+        source: SystemVerilog 源代码
+    
+    Returns:
+        dict: 检查结果
+    """
     return check_quality(source)

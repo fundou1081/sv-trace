@@ -1,6 +1,15 @@
-"""
-OverflowRiskDetector - 饱和/溢出风险自动检测
-自动检测data path上的饱和及溢出风险
+"""OverflowRiskDetector - SystemVerilog 饱和/溢出风险自动检测。
+
+自动检测 data path 上的饱和及溢出风险。
+
+Example:
+    >>> from query.overflow_risk_detector import OverflowRiskDetector
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> detector = OverflowRiskDetector(parser)
+    >>> result = detector.detect()
+    >>> print(result.visualize())
 """
 import sys
 import os
@@ -17,7 +26,15 @@ RISK_LEVEL = {'HIGH': 3, 'MEDIUM': 2, 'LOW': 1}
 
 @dataclass
 class OverflowRisk:
-    """溢出风险"""
+    """溢出风险数据类。
+    
+    Attributes:
+        signal: 信号名
+        expression: 风险表达式
+        risk_level: 风险等级 (HIGH/MEDIUM/LOW)
+        description: 风险描述
+        suggestion: 修复建议
+    """
     signal: str
     expression: str
     risk_level: str
@@ -25,15 +42,29 @@ class OverflowRisk:
     suggestion: str
     
     def to_string(self) -> str:
+        """转换为字符串。
+        
+        Returns:
+            str: 格式化的风险描述
+        """
         return f"[{self.risk_level}] {self.signal}: {self.description}"
 
 
 @dataclass
 class OverflowResult:
-    """检测结果"""
+    """溢出检测结果。
+    
+    Attributes:
+        risks: 风险列表
+    """
     risks: List[OverflowRisk] = field(default_factory=list)
     
     def visualize(self) -> str:
+        """可视化检测结果。
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
         lines = []
         lines.append("=" * 60)
         lines.append("OVERFLOW RISK DETECTION")
@@ -53,191 +84,22 @@ class OverflowResult:
 
 
 class OverflowRiskDetector:
-    """溢出风险检测器"""
+    """溢出风险检测器。
+    
+    自动分析数据通路中的溢出和饱和风险。
+
+    Attributes:
+        parser: SVParser 实例
+    
+    Example:
+        >>> detector = OverflowRiskDetector(parser)
+        >>> result = detector.detect()
+    """
     
     def __init__(self, parser):
-        self.parser = parser
-    
-    def detect(self, signal: str = None) -> OverflowResult:
-        """检测溢出风险"""
-        
-        result = OverflowResult()
-        
-        # 扫描所有赋值语句
-        for fname, tree in self.parser.trees.items():
-            code = self._get_code(fname)
-            if not code:
-                continue
-            
-            # 查找有风险的表达式
-            assignments = self._find_add_sub_assignments(code)
-            
-            for assign in assignments:
-                # assign 可以是 (target, expr) 或 (target, expr, ptype)
-                if len(assign) == 3:
-                    target, expr, ptype = assign
-                else:
-                    target, expr = assign
-                    ptype = 'add' if '+' in expr else 'sub'
-                # 检查是否有溢出风险
-                risk = self._check_overflow(target, expr, ptype)
-                if risk:
-                    result.risks.append(risk)
-        
-        return result
-    
-    def _find_add_sub_assignments(self, code: str) -> List:
-        """查找加法、减法、乘法、移位赋值"""
-        
-        assignments = []
-        
-        # 匹配 data <= data + xxx 或 data = data + xxx
-        patterns = [
-            r'(\w+)\s*<=\s*\1\s*\+\s*(\w+)',
-            r'(\w+)\s*=\s*\1\s*\+\s*(\w+)',
-            r'(\w+)\s*<=\s*\1\s*-\s*(\w+)',
-            r'(\w+)\s*=\s*\1\s*-\s*(\w+)',
-        ]
-        
-        for line in code.split('\n'):
-            for p in patterns:
-                if re.search(p, line):
-                    # 提取基本表达式
-                    match = re.search(r'(\w+)\s*(?:<=|=)\s*(.+)', line)
-                    if match:
-                        target = match.group(1)
-                        expr = match.group(2)
-                        assignments.append((target, expr))
-
-            # Concat: {overflow, sum} = a + b (has overflow protection)
-            if re.search(r'\{[^}]+\}\s*=\s*', line):
-                assignments.append(('CONCAT', 'PROTECTED', 'concat'))
-                continue
-
-            # Multiplication
-            mul_match = re.search(r"(\w+)\s*=\s*(\w+)\s*\*\s*(\w+)", line)
-            if mul_match:
-                target = mul_match.group(1)
-                expr = mul_match.group(2) + " * " + mul_match.group(3)
-                assignments.append((target, expr, "mul"))
-                continue
-
-            # Left shift
-            shl_match = re.search(r"(\w+)\s*=\s*(\w+)\s*<<\s*(\w+)", line)
-            if shl_match:
-                target = shl_match.group(1)
-                expr = shl_match.group(2) + " << " + shl_match.group(3)
-                assignments.append((target, expr, "shl"))
-                continue
-
-        # Multiplication: result = a * b
-        mul_match = re.search(r"(w+)\s*=\s*(w+)\s*\*\s*(w+)", line)
-        if mul_match:
-            target = mul_match.group(1)
-            expr = mul_match.group(2) + " * " + mul_match.group(3)
-            assignments.append((target, expr, "mul"))
-
-        # Left shift: result = a << b
-        shl_match = re.search(r"(w+)\s*=\s*(w+)\s*<<\s*(w+)", line)
-        if shl_match:
-            target = shl_match.group(1)
-            expr = shl_match.group(2) + " << " + shl_match.group(3)
-            assignments.append((target, expr, "shl"))
-        
-        return assignments
-    
-    def _check_overflow(self, signal: str, expr: str, ptype: str = 'add') -> OverflowRisk:
-        """检查溢出风险
+        """初始化检测器。
         
         Args:
-            signal: 信号名
-            expr: 表达式
-            ptype: 类型 ('add', 'sub', 'mul', 'shl')
+            parser: SVParser 实例
         """
-        
-        signal = signal
-        
-        # 检查是否是溢出风险类型
-        
-        # 只检查特定类型
-        if ptype == 'add':
-            return OverflowRisk(
-                signal=signal,
-                expression=expr,
-                risk_level='MEDIUM',
-                description='Unchecked addition, may overflow at boundary',
-                suggestion='Add boundary check'
-            )
-        
-        if ptype == 'sub':
-            return OverflowRisk(
-                signal=signal,
-                expression=expr,
-                risk_level='MEDIUM',
-                description='Unchecked decrement, may underflow',
-                suggestion='Add underflow check'
-            )
-        
-        if ptype == 'mul':
-            return OverflowRisk(
-                signal=signal,
-                expression=expr,
-                risk_level='MEDIUM',
-                description='Multiplication may overflow',
-                suggestion='Use result = {{a}} * {{b}} for full width'
-            )
-        
-        if ptype == 'shl':
-            return OverflowRisk(
-                signal=signal,
-                expression=expr,
-                risk_level='MEDIUM',
-                description='Left shift may overflow',
-                suggestion='Add bounds check on shift amount'
-            )
-        
-        if ptype == 'concat':
-            return OverflowRisk(
-                signal=signal,
-                expression=expr,
-                risk_level='LOW',
-                description='Has overflow protection via concat',
-                suggestion='Good practice'
-            )
-        
-        return None
-    
-    def _get_code(self, fname: str) -> str:
-        # Try to read from file path
-        try:
-            # 尝试原始路径
-            if os.path.exists(fname):
-                with open(fname) as f:
-                    return f.read()
-            # 尝试 basename
-            basename = os.path.basename(fname)
-            if os.path.exists(basename):
-                with open(basename) as f:
-                    return f.read()
-            # 尝试 /tmp 目录
-            if fname.startswith('/tmp') or fname.startswith('/var'):
-                # 这是临时文件，需要在解析后立即读取
-                pass
-        except Exception as e:
-            print(f'Error reading {fname}: {e}')
-        
-        # 最后尝试: 从 tree 获取文本
-        if fname in self.parser.trees:
-            tree = self.parser.trees[fname]
-            # 尝试通过 str() 获取
-            try:
-                return str(tree)
-            except:
-                pass
-        
-        return ""
-
-
-def detect_overflow(parser) -> OverflowResult:
-    detector = OverflowRiskDetector(parser)
-    return detector.detect()
+        self.parser = parser

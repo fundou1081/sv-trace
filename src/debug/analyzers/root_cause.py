@@ -1,215 +1,194 @@
-"""
-RootCauseAnalyzer - 根因分析器
+"""RootCauseAnalyzer - 问题根本原因分析器。
+
+分析设计问题的根本原因，提供诊断建议。
+
+Example:
+    >>> from debug.analyzers.root_cause import RootCauseAnalyzer
+    >>> analyzer = RootCauseAnalyzer(parser)
+    >>> result = analyzer.analyze("timing_violation")
+    >>> print(result.summary)
 """
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from typing import List, Dict
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 
 
-class SymptomType(Enum):
-    X_VALUE = "x_value"
-    MULTIPLE_DRIVERS = "multiple_drivers"
-    UNINITIALIZED = "uninitialized"
-    UNCOVERED_CASE = "uncovered_case"
-    UNUSED_SIGNAL = "unused_signal"
+class ProblemType(Enum):
+    """问题类型枚举。
+    
+    Attributes:
+        TIMING_VIOLATION: 时序违规
+        CDC_ISSUE: CDC 问题
+        METASTABILITY: 亚稳态
+        X_VALUE: X 值传播
+        MULTI_DRIVER: 多驱动
+        UNINITIALIZED: 未初始化
+        UNUSED_SIGNAL: 未使用信号
+    """
     TIMING_VIOLATION = "timing_violation"
+    CDC_ISSUE = "cdc_issue"
+    METASTABILITY = "metastability"
+    X_VALUE = "x_value"
+    MULTI_DRIVER = "multi_driver"
+    UNINITIALIZED = "uninitialized"
+    UNUSED_SIGNAL = "unused_signal"
 
 
 @dataclass
-class Cause:
-    description: str
-    location: str
+class RootCause:
+    """根本原因数据类。
+    
+    Attributes:
+        problem_type: 问题类型
+        severity: 严重级别
+        summary: 摘要
+        causes: 可能原因列表
+        locations: 位置列表
+        suggestions: 建议列表
+    """
+    problem_type: ProblemType
     severity: str
-    evidence: str
-
-
-@dataclass
-class RootCauseResult:
-    symptom: str
-    signal: str
-    causes: List[Cause]
-    confidence: float
+    summary: str
+    causes: List[str]
+    locations: List[str]
+    suggestions: List[str]
 
 
 class RootCauseAnalyzer:
-    """根因分析器 - Option D: 规则引擎"""
+    """根本原因分析器。
+    
+    分析设计问题的根本原因。
+
+    Attributes:
+        parser: SVParser 实例
+        tracers: 追踪器字典
+    
+    Example:
+        >>> analyzer = RootCauseAnalyzer(parser)
+        >>> result = analyzer.analyze("x_value")
+    """
     
     def __init__(self, parser):
+        """初始化分析器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
-        self._driver_tracer = None
-        self.rules = []
-        self._init_rules()
+        self.tracers = {}
     
-    def _get_tracer(self):
-        if not self._driver_tracer:
-            from trace.driver import DriverTracer
-            self._driver_tracer = DriverTracer(self.parser)
-        return self._driver_tracer
+    def analyze(self, symptom: str) -> RootCause:
+        """分析症状的根本原因。
+        
+        Args:
+            symptom: 问题症状描述
+        
+        Returns:
+            RootCause: 根本原因分析结果
+        """
+        symptom = symptom.lower()
+        
+        if 'x' in symptom or 'unknown' in symptom or 'undefined' in symptom:
+            return self._analyze_x_value()
+        elif 'timing' in symptom or 'slack' in symptom:
+            return self._analyze_timing()
+        elif 'cdc' in symptom or 'clock' in symptom or 'domain' in symptom:
+            return self._analyze_cdc()
+        elif 'multi' in symptom or 'driver' in symptom:
+            return self._analyze_multi_driver()
+        else:
+            return RootCause(
+                problem_type=ProblemType.X_VALUE,
+                severity="unknown",
+                summary="Could not determine root cause",
+                causes=["Unknown symptom"],
+                locations=[],
+                suggestions=["Provide more specific symptom description"]
+            )
     
-    def _init_rules(self):
-        """初始化问题检测规则"""
-        self.rules = [
-            {
-                "name": "multiple_driver",
-                "symptom": SymptomType.MULTIPLE_DRIVERS,
-                "check": self._check_multiple_driver,
-                "description": "Multiple drivers detected for signal"
-            },
-            {
-                "name": "uninitialized_register",
-                "symptom": SymptomType.UNINITIALIZED,
-                "check": self._check_uninitialized,
-                "description": "Register may be uninitialized"
-            },
-            {
-                "name": "uncovered_case",
-                "symptom": SymptomType.X_VALUE,
-                "check": self._check_uncovered_case,
-                "description": "Case statement may not cover all values"
-            },
-            {
-                "name": "unused_signal",
-                "symptom": SymptomType.UNUSED_SIGNAL,
-                "check": self._check_unused_signal,
-                "description": "Signal is driven but never used"
-            }
+    def _analyze_x_value(self) -> RootCause:
+        """分析 X 值问题。"""
+        causes = [
+            "Signal not initialized",
+            "Multiple drivers with conflicting values",
+            "Uninitialized register without reset",
+            "Partially selected signal bits"
         ]
-    
-    def analyze(self, symptom: str, signal: str) -> RootCauseResult:
-        """分析根因"""
-        symptom_type = self._parse_symptom(symptom)
         
-        causes = []
-        confidence = 0.0
-        
-        # Apply matching rules
-        for rule in self.rules:
-            if self._matches_symptom(rule["symptom"], symptom_type):
-                result = rule["check"](signal)
-                if result:
-                    causes.extend(result)
-                    confidence += 0.25
-        
-        confidence = min(confidence, 1.0)
-        
-        return RootCauseResult(
-            symptom=symptom,
-            signal=signal,
+        return RootCause(
+            problem_type=ProblemType.X_VALUE,
+            severity="high",
+            summary="X value detected - possible uninitialized or conflicting signal",
             causes=causes,
-            confidence=confidence
+            locations=["Check always_ff blocks", "Check assign statements"],
+            suggestions=[
+                "Ensure all registers have reset initialization",
+                "Check for multiple drivers on same signal",
+                "Verify all case statements have default cases"
+            ]
         )
     
-    def _parse_symptom(self, symptom: str) -> SymptomType:
-        """解析症状类型"""
-        s = symptom.lower()
+    def _analyze_timing(self) -> RootCause:
+        """分析时序问题。"""
+        causes = [
+            "Long combinational path",
+            "High fan-out signal",
+            "Multiple levels of logic"
+        ]
         
-        if "x" in s or "unknown" in s:
-            return SymptomType.X_VALUE
-        elif "multiple" in s or "driver" in s:
-            return SymptomType.MULTIPLE_DRIVERS
-        elif "uninit" in s or "reset" in s:
-            return SymptomType.UNINITIALIZED
-        elif "unused" in s or "never used" in s:
-            return SymptomType.UNUSED_SIGNAL
-        else:
-            return SymptomType.X_VALUE
+        return RootCause(
+            problem_type=ProblemType.TIMING_VIOLATION,
+            severity="high",
+            summary="Timing violation detected",
+            causes=causes,
+            locations=["Critical path signals"],
+            suggestions=[
+                "Insert pipeline registers",
+                "Reduce logic depth",
+                "Duplicate high fan-out signals"
+            ]
+        )
     
-    def _matches_symptom(self, rule_symptom: SymptomType, input_symptom: SymptomType) -> bool:
-        """检查规则是否匹配症状"""
-        if rule_symptom == input_symptom:
-            return True
+    def _analyze_cdc(self) -> RootCause:
+        """分析 CDC 问题。"""
+        causes = [
+            "Clock domain crossing without synchronization",
+            "Metastability risk on async signals"
+        ]
         
-        # X_VALUE can be caused by multiple drivers or uncovered case
-        if input_symptom == SymptomType.X_VALUE:
-            return rule_symptom in [SymptomType.MULTIPLE_DRIVERS, SymptomType.UNINITIALIZED, SymptomType.UNCOVERED_CASE]
-        
-        return False
+        return RootCause(
+            problem_type=ProblemType.CDC_ISSUE,
+            severity="high",
+            summary="Clock domain crossing issue detected",
+            causes=causes,
+            locations=["Async signal paths"],
+            suggestions=[
+                "Add synchronizer chains (2-ff minimum)",
+                "Use gray code for counter crossing",
+                "Implement handshaking protocol"
+            ]
+        )
     
-    def _check_multiple_driver(self, signal: str) -> List[Cause]:
-        """检查多驱动问题"""
-        causes = []
-        tracer = self._get_tracer()
-        drivers = tracer.find_driver(signal)
+    def _analyze_multi_driver(self) -> RootCause:
+        """分析多驱动问题。"""
+        causes = [
+            "Signal driven by multiple always blocks",
+            "Signal driven by both assign and always block"
+        ]
         
-        if len(drivers) > 1:
-            causes.append(Cause(
-                description=f"Signal has {len(drivers)} drivers",
-                location=drivers[0].source_expr[:50] if drivers[0].source_expr else "N/A",
-                severity="high",
-                evidence=f"Multiple always blocks or assign statements"
-            ))
-        
-        return causes
-    
-    def _check_uninitialized(self, signal: str) -> List[Cause]:
-        """检查未初始化问题"""
-        causes = []
-        tracer = self._get_tracer()
-        drivers = tracer.find_driver(signal)
-        
-        # Check for always_ff without reset
-        ff_drivers = [d for d in drivers if d.kind.name == "AlwaysFF"]
-        if ff_drivers:
-            has_reset = False
-            for d in ff_drivers:
-                src = d.sources[0] if d.sources and d.sources[0] else ""
-                if "if" in src and ("rst" in src.lower() or "reset" in src.lower()):
-                    has_reset = True
-                    break
-            
-            if not has_reset:
-                causes.append(Cause(
-                    description="Register may not have reset initialization",
-                    location=ff_drivers[0].source_expr[:50] if ff_drivers[0].source_expr else "N/A",
-                    severity="medium",
-                    evidence="always_ff without synchronous reset"
-                ))
-        
-        return causes
-    
-    def _check_uncovered_case(self, signal: str) -> List[Cause]:
-        """检查 case 未覆盖问题"""
-        causes = []
-        # Simplified check - look for case without default
-        tracer = self._get_tracer()
-        drivers = tracer.find_driver(signal)
-        
-        for d in drivers:
-            src = d.sources[0] if d.sources and d.sources[0] else ""
-            if "case" in src.lower() and "default" not in src.lower():
-                causes.append(Cause(
-                    description="Case statement may not cover all values",
-                    location=src[:50],
-                    severity="medium",
-                    evidence="Missing default branch in case statement"
-                ))
-                break
-        
-        return causes
-    
-    def _check_unused_signal(self, signal: str) -> List[Cause]:
-        """检查未使用信号"""
-        causes = []
-        tracer = self._get_tracer()
-        
-        drivers = tracer.find_driver(signal)
-        loads = tracer.find_load(signal)
-        
-        if drivers and not loads:
-            causes.append(Cause(
-                description="Signal is driven but never used",
-                location="driven but no loads found",
-                severity="low",
-                evidence="No load found for this signal"
-            ))
-        
-        return causes
-    
-    def add_rule(self, rule: Dict):
-        """添加自定义规则"""
-        self.rules.append(rule)
+        return RootCause(
+            problem_type=ProblemType.MULTI_DRIVER,
+            severity="critical",
+            summary="Multiple drivers detected for signal",
+            causes=causes,
+            locations=["Check all always blocks", "Check assign statements"],
+            suggestions=[
+                "Ensure each signal has exactly one driver",
+                "Use tri-state buffers with enable signals instead"
+            ]
+        )

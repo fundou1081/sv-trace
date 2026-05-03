@@ -1,6 +1,16 @@
-"""
-DataPathBoundaryAnalyzer - Data Path 边界值推导
-根据信号定义的值域和运算，推导出边界和特征点
+"""DataPathBoundaryAnalyzer - Data Path 边界值推导。
+
+根据信号定义的值域和运算，推导出边界和特征点。
+用于 coverage bin 生成和边界测试。
+
+Example:
+    >>> from query.datapath_boundary_analyzer import DataPathBoundaryAnalyzer
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> analyzer = DataPathBoundaryAnalyzer(parser)
+    >>> result = analyzer.analyze("data_out", "data_out = a + b")
+    >>> print(result.visualize())
 """
 import sys
 import os
@@ -13,7 +23,14 @@ from typing import List
 
 @dataclass
 class BoundaryBin:
-    """边界bin"""
+    """边界 bin 数据类。
+    
+    Attributes:
+        name: bin 名称
+        range_expr: 范围表达式
+        value: 边界值
+        is_edge: 是否为边界点
+    """
     name: str
     range_expr: str
     value: int = 0
@@ -22,13 +39,25 @@ class BoundaryBin:
 
 @dataclass
 class BoundaryResult:
-    """边界分析结果"""
+    """边界分析结果数据类。
+    
+    Attributes:
+        signal: 信号名
+        width: 信号位宽
+        signed: 是否有符号
+        bins: 边界 bin 列表
+    """
     signal: str
     width: int = 0
     signed: bool = False
     bins: List[BoundaryBin] = field(default_factory=list)
     
     def visualize(self) -> str:
+        """可视化边界分析结果。
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
         lines = []
         lines.append("=" * 60)
         lines.append(f"BOUNDARY ANALYSIS: {self.signal}")
@@ -43,10 +72,17 @@ class BoundaryResult:
         
         lines.append("=" * 60)
         return '\n'.join(lines)
-
-
+    
+    @staticmethod
     def extract_from_text(source: str):
-        """从源码文本提取datapath边界"""
+        """从源码文本提取 datapath 边界。
+        
+        Args:
+            source: SystemVerilog 源代码字符串
+        
+        Returns:
+            DataPathBoundaryAnalyzer: 分析器实例
+        """
         try:
             tree = pyslang.SyntaxTree.fromText(source)
             
@@ -60,15 +96,38 @@ class BoundaryResult:
             print(f"DataPath error: {e}")
             return None
 
+
 class DataPathBoundaryAnalyzer:
-    """Data Path 边界分析"""
+    """Data Path 边界分析器。
+    
+    分析数据通路的信号边界，生成 coverage bins。
+
+    Attributes:
+        parser: SVParser 实例
+    
+    Example:
+        >>> analyzer = DataPathBoundaryAnalyzer(parser)
+        >>> result = analyzer.analyze("data_out", "data_out = a + b")
+    """
     
     def __init__(self, parser):
+        """初始化分析器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
     
     def analyze(self, signal: str, assignment_expr: str = "") -> BoundaryResult:
-        """分析信号的边界"""
+        """分析信号的边界。
         
+        Args:
+            signal: 信号名
+            assignment_expr: 可选的赋值表达式
+        
+        Returns:
+            BoundaryResult: 边界分析结果
+        """
         result = BoundaryResult(signal=signal)
         
         # 1. 解析信号宽度
@@ -93,7 +152,14 @@ class DataPathBoundaryAnalyzer:
         return result
     
     def _parse_width(self, signal: str) -> int:
-        """解析信号宽度"""
+        """解析信号宽度。
+        
+        Args:
+            signal: 信号名或信号定义
+        
+        Returns:
+            int: 位宽值
+        """
         # 查找 [N:M]
         match = re.search(r'\[(\d+):', signal)
         if match:
@@ -101,7 +167,14 @@ class DataPathBoundaryAnalyzer:
         return 8
     
     def _parse_operation(self, expr: str) -> str:
-        """解析运算类型"""
+        """解析运算类型。
+        
+        Args:
+            expr: 表达式字符串
+        
+        Returns:
+            str: 运算类型 (add/sub/mul/shift_left/shift_right/pass)
+        """
         if '+' in expr and '=' in expr:
             return 'add'
         elif '-' in expr and '=' in expr:
@@ -115,8 +188,16 @@ class DataPathBoundaryAnalyzer:
         return 'pass'
     
     def _generate_bins(self, width: int, signed: bool, operation: str) -> List[BoundaryBin]:
-        """根据运算生成bins"""
+        """根据运算生成 bins。
         
+        Args:
+            width: 位宽
+            signed: 是否有符号
+            operation: 运算类型
+        
+        Returns:
+            List[BoundaryBin]: 边界 bin 列表
+        """
         bins = []
         w = width
         
@@ -176,8 +257,15 @@ class DataPathBoundaryAnalyzer:
         return bins
     
     def _generate_default_bins(self, width: int, signed: bool) -> List[BoundaryBin]:
-        """生成默认bins"""
+        """生成默认 bins。
         
+        Args:
+            width: 位宽
+            signed: 是否有符号
+        
+        Returns:
+            List[BoundaryBin]: 边界 bin 列表
+        """
         bins = []
         w = width
         max_val = (2 ** w) - 1
@@ -195,5 +283,14 @@ class DataPathBoundaryAnalyzer:
 
 
 def analyze_datapath_boundary(parser, signal: str) -> BoundaryResult:
+    """便捷函数：分析信号边界。
+    
+    Args:
+        parser: SVParser 实例
+        signal: 信号名
+    
+    Returns:
+        BoundaryResult: 边界分析结果
+    """
     analyzer = DataPathBoundaryAnalyzer(parser)
     return analyzer.analyze(signal)

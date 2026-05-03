@@ -1,18 +1,46 @@
-"""
-Path & Hierarchy Query - 路径与层级查询
+"""Path & Hierarchy Query - 路径与层级查询。
+
+提供层次化路径解析和模块实例查询功能。
+
+Example:
+    >>> from query.path import PathQuery, HierarchyQuery
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> pq = PathQuery(parser)
+    >>> path = pq.get_hierarchical_path(symbol)
 """
 from typing import List, Dict, Optional, Any
 import pyslang
 
 
 class PathQuery:
-    """路径查询"""
+    """路径查询。
+    
+    提供符号的层次化路径查询功能。
+
+    Attributes:
+        parser: SVParser 实例
+    """
     
     def __init__(self, parser):
+        """初始化路径查询器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
     
     def get_hierarchical_path(self, symbol, instance_path: str = "") -> str:
-        """获取层次化路径"""
+        """获取层次化路径。
+        
+        Args:
+            symbol: 符号对象
+            instance_path: 实例路径前缀
+        
+        Returns:
+            str: 层次化路径字符串，格式为 "instance.submodule.signal"
+        """
         parts = []
         
         if instance_path:
@@ -24,7 +52,14 @@ class PathQuery:
         return ".".join(parts)
     
     def resolve_path(self, path: str) -> Optional[Any]:
-        """解析层次路径"""
+        """解析层次路径。
+        
+        Args:
+            path: 层次路径字符串
+        
+        Returns:
+            解析后的对象，如果未找到则返回 None
+        """
         parts = path.split(".")
         
         # 从根开始查找
@@ -42,13 +77,31 @@ class PathQuery:
 
 
 class HierarchyQuery:
-    """层级查询"""
+    """层级查询。
+    
+    提供模块实例的查找和层级关系查询功能。
+
+    Attributes:
+        parser: SVParser 实例
+    """
     
     def __init__(self, parser):
+        """初始化层级查询器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
     
     def get_instances(self, module_name: str = None) -> List[Dict[str, Any]]:
-        """获取模块实例"""
+        """获取模块实例。
+        
+        Args:
+            module_name: 可选的模块名过滤条件
+        
+        Returns:
+            List[Dict]: 实例信息列表，每项包含 name/module/parameters
+        """
         instances = []
         
         # 搜索所有模块
@@ -61,7 +114,15 @@ class HierarchyQuery:
         return instances
     
     def _find_instantiations(self, module, target_name: str = None) -> List[Dict[str, Any]]:
-        """查找模块实例化"""
+        """查找模块实例化。
+        
+        Args:
+            module: 模块语法节点
+            target_name: 目标模块名
+        
+        Returns:
+            List[Dict]: 实例信息列表
+        """
         instances = []
         
         if not hasattr(module, 'body'):
@@ -86,7 +147,14 @@ class HierarchyQuery:
         return instances
     
     def _extract_parameters(self, inst) -> List[str]:
-        """提取参数"""
+        """提取参数。
+        
+        Args:
+            inst: 实例化语法节点
+        
+        Returns:
+            List[str]: 参数名列表
+        """
         params = []
         if hasattr(inst, 'connections'):
             for conn in inst.connections:

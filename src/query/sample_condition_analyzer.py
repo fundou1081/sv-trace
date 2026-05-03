@@ -1,6 +1,16 @@
-"""
-SampleConditionAnalyzer - 采样条件智能识别
-用户在写coverage时需要知道信号什么时候稳定，根据什么条件进行sample
+"""SampleConditionAnalyzer - 采样条件智能识别。
+
+用户在写 coverage 时需要知道信号什么时候稳定，根据什么条件进行 sample。
+自动识别 @(posedge clk) 和 valid/ready 握手条件。
+
+Example:
+    >>> from query.sample_condition_analyzer import SampleConditionAnalyzer
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> analyzer = SampleConditionAnalyzer(parser)
+    >>> result = analyzer.analyze("data_out")
+    >>> print(result.visualize())
 """
 import sys
 import os
@@ -13,7 +23,15 @@ from typing import List, Optional
 
 @dataclass
 class SampleCondition:
-    """采样条件"""
+    """采样条件数据类。
+    
+    Attributes:
+        signal: 信号名
+        clock_edge: 时钟沿类型 (posedge/negedge)
+        condition: 额外采样条件，如 valid==1
+        is_valid_ready: 是否为 valid/ready 握手
+        is_conditional: 是否有条件限制
+    """
     signal: str
     clock_edge: str = "posedge"      # posedge/negedge
     condition: str = ""              # 额外条件 e.g. valid==1
@@ -21,6 +39,11 @@ class SampleCondition:
     is_conditional: bool = False
     
     def to_string(self) -> str:
+        """转换为字符串。
+        
+        Returns:
+            str: 格式化的采样条件字符串
+        """
         if self.condition:
             return f"@({self.clock_edge} {self.signal}) iff ({self.condition})"
         return f"@({self.clock_edge} {self.signal})"
@@ -28,13 +51,25 @@ class SampleCondition:
 
 @dataclass
 class SampleResult:
-    """采样分析结果"""
+    """采样分析结果数据类。
+    
+    Attributes:
+        signal: 信号名
+        sample_conditions: 发现的采样条件列表
+        recommended: 推荐的采样条件
+        alternatives: 备选采样条件
+    """
     signal: str
     sample_conditions: List[SampleCondition] = field(default_factory=list)
     recommended: Optional[SampleCondition] = None
     alternatives: List[SampleCondition] = field(default_factory=list)
     
     def visualize(self) -> str:
+        """可视化分析结果。
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
         lines = []
         lines.append("=" * 60)
         lines.append(f"SAMPLE ANALYSIS: {self.signal}")
@@ -59,18 +94,42 @@ class SampleResult:
 
 
 class SampleConditionAnalyzer:
-    """采样条件分析器"""
+    """采样条件分析器。
     
-    # 常见valid/ready关键字
+    分析信号的采样条件，识别时钟沿和 valid/ready 握手。
+
+    Attributes:
+        parser: SVParser 实例
+        VALID_KW: valid 关键字列表
+        READY_KW: ready 关键字列表
+    
+    Example:
+        >>> analyzer = SampleConditionAnalyzer(parser)
+        >>> result = analyzer.analyze("data_out")
+    """
+    
+    # 常见 valid/ready 关键字
     VALID_KW = ['valid', 'vld', 'v', 'data_valid']
     READY_KW = ['ready', 'rdy', 'r', 'data_ready']
     
     def __init__(self, parser):
+        """初始化分析器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
     
     def analyze(self, signal: str, module: str = None) -> SampleResult:
-        """分析信号的采样条件"""
+        """分析信号的采样条件。
         
+        Args:
+            signal: 信号名
+            module: 可选的模块名过滤
+        
+        Returns:
+            SampleResult: 分析结果
+        """
         result = SampleResult(signal=signal)
         
         # 从代码中查找相关信号及采样条件
@@ -79,7 +138,7 @@ class SampleConditionAnalyzer:
             if not code:
                 continue
             
-            # 1. 找always_ff块
+            # 1. 找 always_ff 块
             for line in code.split('\n'):
                 stripped = line.strip()
                 
@@ -88,7 +147,7 @@ class SampleConditionAnalyzer:
                 if edge_match:
                     clock_sig = edge_match.group(1)
                     
-                    # 检测always_ff块中的赋值
+                    # 检测 always_ff 块中的赋值
                     if 'always_ff' in stripped:
                         result.sample_conditions.append(SampleCondition(
                             signal=signal,
@@ -96,10 +155,10 @@ class SampleConditionAnalyzer:
                             condition=''
                         ))
                 
-                # 2. 检测valid/ready握手采样
+                # 2. 检测 valid/ready 握手采样
                 pattern = rf'(\w*{signal}\w*)\s*(?:<=|<)\s*\w*.*?(?:@\(|\bif\b)'
                 if re.search(pattern, line):
-                    # 检查有没有valid条件
+                    # 检查有没有 valid 条件
                     for kw in self.VALID_KW:
                         if kw in line.lower():
                             result.sample_conditions.append(SampleCondition(
@@ -109,7 +168,7 @@ class SampleConditionAnalyzer:
                                 is_valid_ready=True
                             ))
                     
-                    # 检查有没有ready条件
+                    # 检查有没有 ready 条件
                     for kw in self.READY_KW:
                         if kw in line.lower():
                             result.sample_conditions.append(SampleCondition(
@@ -136,8 +195,14 @@ class SampleConditionAnalyzer:
         return result
     
     def _select_recommended(self, conditions: List[SampleCondition]) -> SampleCondition:
-        """选择最合适的采样条件"""
+        """选择最合适的采样条件。
         
+        Args:
+            conditions: 条件列表
+        
+        Returns:
+            SampleCondition: 推荐的采样条件
+        """
         # 优先级:
         # 1. valid_ready 条件
         # 2. 有额外条件
@@ -154,6 +219,14 @@ class SampleConditionAnalyzer:
         return conditions[0] if conditions else SampleCondition(signal="")
     
     def _get_code(self, fname: str) -> str:
+        """获取源码。
+        
+        Args:
+            fname: 文件名
+        
+        Returns:
+            str: 源代码字符串
+        """
         if fname in self.parser.trees:
             t = self.parser.trees[fname]
             if hasattr(t, 'source'):
@@ -166,5 +239,14 @@ class SampleConditionAnalyzer:
 
 
 def analyze_sample_condition(parser, signal: str) -> SampleResult:
+    """便捷函数：分析采样条件。
+    
+    Args:
+        parser: SVParser 实例
+        signal: 信号名
+    
+    Returns:
+        SampleResult: 分析结果
+    """
     analyzer = SampleConditionAnalyzer(parser)
     return analyzer.analyze(signal)

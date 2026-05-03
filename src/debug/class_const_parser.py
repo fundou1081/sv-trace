@@ -1,12 +1,18 @@
-"""Constraint AST parser for SystemVerilog.
+"""ConstraintParser - SystemVerilog 约束 AST 解析器。
 
-Parses constraint expressions to extract:
-- Variables referenced
-- Variable relationships (>, <, ==, etc.)
-- Constraint types (simple, implication, soft, dist)
-- Cross-variable constraints
+解析约束表达式，提取：
+- 引用的变量
+- 变量关系 (>, <, ==, 等)
+- 约束类型 (simple, implication, soft, dist)
+- 跨变量约束
+
+Example:
+    >>> from debug.class_const_parser import ConstraintParser
+    >>> from debug.class_extractor import ClassExtractor
+    >>> ce = ClassExtractor(parser)
+    >>> cp = ConstraintParser(ce)
+    >>> print(cp.get_report())
 """
-
 import sys
 import re
 from typing import Dict, List, Set, Optional, Tuple
@@ -18,7 +24,13 @@ from .class_extractor import ClassExtractor
 
 @dataclass
 class ConstraintVariable:
-    """A variable reference in a constraint."""
+    """约束变量引用数据类。
+    
+    Attributes:
+        name: 变量名
+        data_type: 数据类型
+        is_rand: 是否为随机变量
+    """
     name: str
     data_type: str = ""
     is_rand: bool = False
@@ -26,7 +38,14 @@ class ConstraintVariable:
 
 @dataclass
 class ConstraintExpression:
-    """A constraint expression."""
+    """约束表达式数据类。
+    
+    Attributes:
+        left_var: 左侧变量
+        operator: 运算符
+        right_value: 右侧值
+        expression_str: 完整表达式字符串
+    """
     left_var: str
     operator: str
     right_value: str
@@ -35,7 +54,18 @@ class ConstraintExpression:
 
 @dataclass
 class ConstraintDetail:
-    """Detailed constraint information."""
+    """详细约束信息数据类。
+    
+    Attributes:
+        name: 约束名
+        class_name: 所属类名
+        constraint_type: 约束类型
+        variables: 涉及的变量列表
+        expressions: 表达式列表
+        line_number: 行号
+        is_overridden: 是否被覆盖
+        parent_class: 父类名
+    """
     name: str
     class_name: str
     constraint_type: str  # "simple", "implication", "soft", "dist"
@@ -47,9 +77,26 @@ class ConstraintDetail:
 
 
 class ConstraintParser:
-    """Parse constraint AST for class properties."""
+    """约束 AST 解析器。
+    
+    解析类约束的抽象语法树，提取变量和表达式信息。
+
+    Attributes:
+        class_extractor: 类提取器
+        classes: 类信息字典
+        constraints: 约束详情字典
+    
+    Example:
+        >>> cp = ConstraintParser(ce)
+        >>> print(cp.get_report())
+    """
     
     def __init__(self, class_extractor: ClassExtractor):
+        """初始化解析器。
+        
+        Args:
+            class_extractor: ClassExtractor 实例
+        """
         self.class_extractor = class_extractor
         self.classes = class_extractor.classes
         self.constraints: Dict[str, ConstraintDetail] = {}  # class.constraint -> detail
@@ -57,14 +104,19 @@ class ConstraintParser:
         self._parse_all_constraints()
     
     def _parse_all_constraints(self):
-        """Parse constraints for all classes."""
+        """解析所有类的约束。"""
         for class_name, cls in self.classes.items():
             if cls.constraints:
                 for const in cls.constraints:
                     self._parse_constraint(class_name, const)
     
     def _parse_constraint(self, class_name: str, const: ClassConstraintInfo):
-        """Parse a single constraint."""
+        """解析单个约束。
+        
+        Args:
+            class_name: 类名
+            const: 约束信息对象
+        """
         detail = ConstraintDetail(
             name=const.name,
             class_name=class_name,
@@ -107,7 +159,12 @@ class ConstraintParser:
         self.constraints[key] = detail
     
     def _parse_expressions(self, expr_str: str, detail: ConstraintDetail):
-        """Parse constraint expressions."""
+        """解析约束表达式。
+        
+        Args:
+            expr_str: 表达式字符串
+            detail: 约束详情对象
+        """
         # Remove constraint keywords for cleaner parsing
         expr = re.sub(r'\binside\b.*?\{.*?\}', '', expr_str)  # Remove inside {...}
         expr = re.sub(r'\bdist\b.*?\{.*?\}', '', expr)      # Remove dist {...}
@@ -126,12 +183,27 @@ class ConstraintParser:
                 ))
     
     def get_constraint_variables(self, class_name: str, constraint_name: str) -> List[ConstraintVariable]:
-        """Get all variables used in a constraint."""
+        """获取约束中使用的所有变量。
+        
+        Args:
+            class_name: 类名
+            constraint_name: 约束名
+        
+        Returns:
+            List[ConstraintVariable]: 变量列表
+        """
         key = f"{class_name}.{constraint_name}"
         return self.constraints.get(key, ConstraintDetail("", "", "")).variables
     
     def get_cross_variable_constraints(self, class_name: str) -> Set[Tuple[str, str]]:
-        """Find constraints that relate multiple class properties."""
+        """查找涉及多个类属性的约束。
+        
+        Args:
+            class_name: 类名
+        
+        Returns:
+            Set[Tuple[str, str]]: 变量对集合
+        """
         results = set()
         
         if class_name not in self.classes:
@@ -159,7 +231,11 @@ class ConstraintParser:
         return results
     
     def get_constraint_type_summary(self) -> Dict[str, int]:
-        """Get summary of constraint types."""
+        """获取约束类型统计。
+        
+        Returns:
+            Dict[str, int]: 类型到数量的映射
+        """
         summary = {}
         
         for key, detail in self.constraints.items():
@@ -169,7 +245,11 @@ class ConstraintParser:
         return summary
     
     def find_overridden_constraints(self) -> List[ConstraintDetail]:
-        """Find constraints that are overridden in subclasses."""
+        """查找被子类覆盖的约束。
+        
+        Returns:
+            List[ConstraintDetail]: 被覆盖的约束列表
+        """
         overridden = []
         
         for class_name, cls in self.classes.items():
@@ -189,7 +269,11 @@ class ConstraintParser:
         return overridden
     
     def get_report(self) -> str:
-        """Get constraint analysis report."""
+        """获取约束分析报告。
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
         lines = []
         lines.append("=" * 60)
         lines.append("CONSTRAINT ANALYSIS")

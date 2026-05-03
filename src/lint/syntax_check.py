@@ -1,8 +1,19 @@
-"""
-SyntaxCompatibility - 语法兼容性检查
-检查SystemVerilog代码在不同仿真器间的兼容性
+"""SyntaxCompatibility - SystemVerilog 语法兼容性检查。
 
-增强版: 添加解析警告，显式打印不支持的语法结构
+检查 SystemVerilog 代码在不同仿真器间的兼容性：
+- VCS
+- Verilator
+- ModelSim
+- NCVerilog
+- Iverilog
+
+增强版：添加解析警告，显式打印不支持的语法结构。
+
+Example:
+    >>> from lint.syntax_check import SyntaxCompatibilityChecker
+    >>> checker = SyntaxCompatibilityChecker()
+    >>> results = checker.check_project("./design")
+    >>> print(checker.generate_report(results))
 """
 import re
 import os
@@ -22,6 +33,15 @@ from trace.parse_warn import (
 
 
 class Simulator(Enum):
+    """目标仿真器枚举。
+    
+    Attributes:
+        VCS: Synopsys VCS
+        VERILATOR: Verilator
+        MODELSIM: Mentor ModelSim
+        NCVERILOG: Cadence NCVerilog
+        IVERILOG: Icarus Verilog
+    """
     VCS = "vcs"
     VERILATOR = "verilator"
     MODELSIM = "modelsim"
@@ -31,7 +51,16 @@ class Simulator(Enum):
 
 @dataclass
 class CompatibilityIssue:
-    """兼容性问题"""
+    """兼容性问题数据类。
+    
+    Attributes:
+        file: 文件路径
+        line: 行号
+        feature: 不兼容的特性
+        severity: 严重级别
+        incompatible_simulators: 不兼容的仿真器列表
+        suggestion: 修复建议
+    """
     file: str
     line: int
     feature: str
@@ -41,9 +70,16 @@ class CompatibilityIssue:
 
 
 class SyntaxCompatibilityChecker:
-    """语法兼容性检查器
+    """语法兼容性检查器。
     
-    增强: 添加解析警告
+    检查代码在不同仿真器间的兼容性问题。
+
+    Attributes:
+        verbose: 是否输出详细信息
+    
+    Example:
+        >>> checker = SyntaxCompatibilityChecker()
+        >>> checker.check_file("design.sv")
     """
     
     # 各仿真器不支持的特性
@@ -71,6 +107,11 @@ class SyntaxCompatibilityChecker:
     }
     
     def __init__(self, verbose: bool = True):
+        """初始化检查器。
+        
+        Args:
+            verbose: 是否打印详细信息
+        """
         self.verbose = verbose
         # 创建警告处理器
         self.warn_handler = ParseWarningHandler(
@@ -81,7 +122,14 @@ class SyntaxCompatibilityChecker:
         self._unsupported_encountered = set()
     
     def check_file(self, filepath: str) -> List[CompatibilityIssue]:
-        """检查文件"""
+        """检查单个文件。
+        
+        Args:
+            filepath: 文件路径
+        
+        Returns:
+            List[CompatibilityIssue]: 问题列表
+        """
         if not filepath.endswith(('.sv', '.v')):
             return []
         
@@ -131,7 +179,14 @@ class SyntaxCompatibilityChecker:
         return issues
     
     def check_project(self, project_path: str) -> Dict[str, List]:
-        """检查整个项目"""
+        """检查整个项目。
+        
+        Args:
+            project_path: 项目路径
+        
+        Returns:
+            Dict: 文件到问题列表的映射
+        """
         import os
         
         results = {}
@@ -155,7 +210,14 @@ class SyntaxCompatibilityChecker:
         return results
     
     def generate_report(self, results: Dict) -> str:
-        """生成报告"""
+        """生成报告。
+        
+        Args:
+            results: check_project 返回的结果
+        
+        Returns:
+            str: 格式化报告
+        """
         lines = []
         lines.append("=" * 60)
         lines.append("语法兼容性检查报告")
@@ -184,18 +246,27 @@ class SyntaxCompatibilityChecker:
         return '\n'.join(lines)
     
     def get_warning_report(self) -> str:
-        """获取警告报告"""
+        """获取警告报告。
+        
+        Returns:
+            str: 警告报告
+        """
         return self.warn_handler.get_report()
     
     def print_warning_report(self):
-        """打印警告报告"""
+        """打印警告报告。"""
         self.warn_handler.print_report()
 
 
 def check_syntax(source: str, verbose: bool = True):
-    """语法检查
+    """简单的语法检查。
     
-    增强: 添加解析警告
+    Args:
+        source: SystemVerilog 源代码
+        verbose: 是否打印详细信息
+    
+    Returns:
+        dict: 检查结果
     """
     import pyslang
     

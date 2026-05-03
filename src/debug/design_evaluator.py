@@ -1,6 +1,15 @@
-"""
-DesignEvaluator - 综合设计评估入口
-整合模块依赖、圈复杂度等多项指标
+"""DesignEvaluator - 综合设计评估入口。
+
+整合模块依赖、圈复杂度等多项指标，生成综合设计质量报告。
+
+Example:
+    >>> from debug.design_evaluator import DesignEvaluator
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> evaluator = DesignEvaluator(parser)
+    >>> result = evaluator.evaluate()
+    >>> print(evaluator.get_summary())
 """
 import sys
 import os
@@ -13,15 +22,38 @@ from .complexity import CyclomaticComplexityAnalyzer
 
 
 class DesignEvaluator:
-    """综合设计评估器"""
+    """综合设计评估器。
+    
+    整合多个分析器，提供完整的设计质量评估。
+
+    Attributes:
+        parser: SVParser 实例
+        results: 评估结果缓存
+    
+    Example:
+        >>> evaluator = DesignEvaluator(parser)
+        >>> evaluator.evaluate()
+        >>> print(evaluator.get_summary())
+    """
     
     def __init__(self, parser):
+        """初始化评估器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
         self.results = {}
     
     def evaluate(self, module_name: str = None) -> Dict:
-        """执行完整评估"""
+        """执行完整评估。
         
+        Args:
+            module_name: 可选的模块名过滤
+        
+        Returns:
+            Dict: 评估结果字典
+        """
         # 1. 模块依赖分析
         dep_analyzer = ModuleDependencyAnalyzer(self.parser)
         dep_graph = dep_analyzer.analyze()
@@ -52,7 +84,11 @@ class DesignEvaluator:
         return self.results
     
     def get_summary(self) -> str:
-        """生成评估摘要"""
+        """生成评估摘要。
+        
+        Returns:
+            str: 格式化的评估报告字符串
+        """
         if not self.results:
             self.evaluate()
         
@@ -140,7 +176,11 @@ class DesignEvaluator:
         return "\n".join(lines)
     
     def get_mermaid_graph(self) -> str:
-        """获取 Mermaid 依赖图"""
+        """获取 Mermaid 依赖图。
+        
+        Returns:
+            str: Mermaid 格式的依赖图
+        """
         if not self.results:
             self.evaluate()
         
@@ -149,7 +189,11 @@ class DesignEvaluator:
         return dep_analyzer.to_mermaid()
     
     def get_full_report(self) -> str:
-        """获取完整评估报告"""
+        """获取完整评估报告。
+        
+        Returns:
+            str: 完整的评估报告
+        """
         if not self.results:
             self.evaluate()
         
@@ -172,12 +216,28 @@ class DesignEvaluator:
 
 
 def evaluate_design(parser, module_name: str = None) -> Dict:
-    """便捷函数：评估设计"""
+    """便捷函数：评估设计。
+    
+    Args:
+        parser: SVParser 实例
+        module_name: 可选的模块名
+    
+    Returns:
+        Dict: 评估结果
+    """
     evaluator = DesignEvaluator(parser)
     return evaluator.evaluate(module_name)
 
 
 def print_evaluation(parser, module_name: str = None) -> str:
-    """便捷函数：打印评估报告"""
+    """便捷函数：打印评估报告。
+    
+    Args:
+        parser: SVParser 实例
+        module_name: 可选的模块名
+    
+    Returns:
+        str: 评估报告字符串
+    """
     evaluator = DesignEvaluator(parser)
     return evaluator.get_full_report()

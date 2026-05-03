@@ -1,5 +1,15 @@
-"""Class instantiation tracer for SystemVerilog modules."""
+"""ClassUsage - SystemVerilog 类实例追踪器。
 
+追踪模块中的类实例化和使用情况。
+
+Example:
+    >>> from debug.class_usage import ClassInstantiationTracer
+    >>> from debug.class_extractor import ClassExtractor
+    >>> ce = ClassExtractor(parser)
+    >>> tracer = ClassInstantiationTracer(parser, ce)
+    >>> instances = tracer.get_all_instances_of_class("Packet")
+    >>> print(f"Found {len(instances)} instances")
+"""
 import sys
 import re
 from typing import List, Dict, Optional, Set
@@ -11,7 +21,16 @@ from .class_extractor import ClassExtractor
 
 @dataclass
 class ClassInstanceInfo:
-    """Information about a class instance in a module."""
+    """类实例信息数据类。
+    
+    Attributes:
+        instance_name: 实例名
+        class_name: 类名
+        handle_type: 句柄类型 (handle/new/null)
+        constructor_args: 构造参数列表
+        line_number: 行号
+        file_name: 文件名
+    """
     instance_name: str
     class_name: str
     handle_type: str = "handle"  # handle, null, new
@@ -22,29 +41,59 @@ class ClassInstanceInfo:
 
 @dataclass
 class ClassUsageInfo:
-    """Complete class usage information in a design."""
+    """类的使用信息数据类。
+    
+    Attributes:
+        module_name: 模块名
+        instances: 实例列表
+        method_calls: 方法调用列表
+    """
     module_name: str
     instances: List[ClassInstanceInfo] = field(default_factory=list)
     method_calls: List[str] = field(default_factory=list)
 
 
 class ClassInstantiationTracer:
-    """Trace class instantiations and usage in modules."""
+    """类实例化追踪器。
+    
+    追踪模块中的类实例化和方法调用。
 
+    Attributes:
+        parser: SVParser 实例
+        class_extractor: 类提取器
+        classes: 类信息字典
+        usages: 模块使用信息字典
+    
+    Example:
+        >>> tracer = ClassInstantiationTracer(parser, ce)
+        >>> usages = tracer.get_all_instances_of_class("Packet")
+    """
+    
     def __init__(self, parser, class_extractor: ClassExtractor):
+        """初始化追踪器。
+        
+        Args:
+            parser: SVParser 实例
+            class_extractor: ClassExtractor 实例
+        """
         self.parser = parser
         self.class_extractor = class_extractor
         self.classes: Dict[str, ClassInfo] = class_extractor.classes
         self.usages: Dict[str, ClassUsageInfo] = {}
         self._trace_usages()
-
+    
     def _trace_usages(self):
-        """Scan all parsed trees for class usage in modules."""
+        """追踪所有使用情况。"""
         for fname, tree in self.parser.trees.items():
             self._scan_tree_for_usage(tree, fname)
-
+    
     def _scan_tree_for_usage(self, tree, filename: str):
-        """Scan a syntax tree for class instantiations."""
+        """扫描语法树查找类实例。
+        
+        Args:
+            tree: 语法树
+            filename: 文件名
+        """
         root = tree.root
         
         if not hasattr(root, 'members') or not root.members:
@@ -68,12 +117,19 @@ class ClassInstantiationTracer:
                 for j in range(len(member.members)):
                     stmt = member.members[j]
                     self._analyze_statement_recursive(stmt, usage, filename)
-
+            
             if usage.instances or usage.method_calls:
                 self.usages[module_name] = usage
-
+    
     def _get_module_name(self, module_node) -> str:
-        """Get module name from module declaration."""
+        """获取模块名。
+        
+        Args:
+            module_node: 模块节点
+        
+        Returns:
+            str: 模块名
+        """
         if hasattr(module_node, 'header') and module_node.header:
             header = module_node.header
             if hasattr(header, 'name') and header.name:
@@ -82,9 +138,15 @@ class ClassInstantiationTracer:
                     return str(name.value).strip()
                 return str(name).strip()
         return ""
-
+    
     def _analyze_statement_recursive(self, stmt, usage: ClassUsageInfo, filename: str):
-        """Recursively analyze a statement and its children for class usage."""
+        """递归分析语句查找类使用。
+        
+        Args:
+            stmt: 语句节点
+            usage: 使用信息对象
+            filename: 文件名
+        """
         if stmt is None:
             return
         
@@ -133,12 +195,12 @@ class ClassInstantiationTracer:
                 self._analyze_statement_recursive(stmt.statement, usage, filename)
             return
         
-        # DataDeclaration - class handle declaration (with optional = new())
+        # DataDeclaration - class handle declaration
         if 'DataDeclaration' in stmt_type:
             self._analyze_data_declaration(stmt, usage, filename)
             return
         
-        # ExpressionStatement - method calls like obj.randomize()
+        # ExpressionStatement - method calls
         if 'ExpressionStatement' in stmt_type or 'VoidCasted' in stmt_type:
             self._analyze_expression_statement(stmt, usage)
             return
@@ -147,21 +209,30 @@ class ClassInstantiationTracer:
         if 'Assignment' in stmt_type:
             self._analyze_assignment(stmt, usage)
             return
-
+    
     def _clean_type_string(self, type_str: str) -> str:
-        """Clean a type string by removing comments and whitespace."""
-        # Remove line comments
+        """清理类型字符串。
+        
+        Args:
+            type_str: 原始类型字符串
+        
+        Returns:
+            str: 清理后的字符串
+        """
         type_str = re.sub(r'//.*$', '', type_str, flags=re.MULTILINE)
-        # Remove block comments
         type_str = re.sub(r'/\*.*?\*/', '', type_str, flags=re.DOTALL)
-        # Remove extra whitespace and newlines
         type_str = ' '.join(type_str.split())
         return type_str.strip()
-
+    
     def _analyze_data_declaration(self, decl, usage: ClassUsageInfo, filename: str):
-        """Analyze a data declaration for class handles."""
+        """分析数据声明查找类句柄。
+        
+        Args:
+            decl: 数据声明节点
+            usage: 使用信息对象
+            filename: 文件名
+        """
         try:
-            # Check if this is a class type declaration
             if not hasattr(decl, 'type') or not decl.type:
                 return
             
@@ -172,7 +243,6 @@ class ClassInstantiationTracer:
             if not class_name:
                 return
             
-            # Get variable name(s)
             if hasattr(decl, 'declarators') and decl.declarators:
                 declarators = decl.declarators
                 try:
@@ -180,7 +250,6 @@ class ClassInstantiationTracer:
                         dec = declarators[i]
                         var_name = self._get_name(dec.name)
                         if var_name:
-                            # Check if this is a new() instantiation
                             handle_type = "handle"
                             if hasattr(dec, 'initializer') and dec.initializer:
                                 init_str = str(dec.initializer).strip()
@@ -196,58 +265,63 @@ class ClassInstantiationTracer:
                             usage.instances.append(instance)
                 except:
                     pass
-                    
         except Exception as e:
             print(f"Error analyzing data declaration: {e}")
-
+    
     def _analyze_expression_statement(self, stmt, usage: ClassUsageInfo):
-        """Analyze expression statements for method calls."""
+        """分析表达式语句。
+        
+        Args:
+            stmt: 语句节点
+            usage: 使用信息对象
+        """
         try:
             stmt_str = str(stmt)
-            
-            # Look for method calls like obj.randomize(), obj.constraint_mode()
             method_pattern = r'(\w+)\.(\w+)\s*\('
             matches = re.findall(method_pattern, stmt_str)
             
             for obj_name, method_name in matches:
-                # Skip built-in types
                 if obj_name in ('this', 'super'):
                     continue
-                
                 full_call = f"{obj_name}.{method_name}()"
                 if full_call not in usage.method_calls:
                     usage.method_calls.append(full_call)
-                    
         except Exception as e:
             print(f"Error analyzing expression statement: {e}")
-
+    
     def _analyze_assignment(self, stmt, usage: ClassUsageInfo):
-        """Analyze assignments for class handle operations."""
+        """分析赋值语句。
+        
+        Args:
+            stmt: 语句节点
+            usage: 使用信息对象
+        """
         try:
             stmt_str = str(stmt)
-            
-            # Look for method calls on objects
             method_pattern = r'(\w+)\.(\w+)\s*\('
             matches = re.findall(method_pattern, stmt_str)
             
             for obj_name, method_name in matches:
                 if obj_name in ('this', 'super'):
                     continue
-                
                 full_call = f"{obj_name}.{method_name}()"
                 if full_call not in usage.method_calls:
                     usage.method_calls.append(full_call)
-                    
         except Exception as e:
             print(f"Error analyzing assignment: {e}")
-
+    
     def _resolve_class_name(self, type_str: str) -> Optional[str]:
-        """Resolve a type string to a class name if it's a known class."""
-        # Direct match
+        """解析类型字符串为类名。
+        
+        Args:
+            type_str: 类型字符串
+        
+        Returns:
+            str: 类名，未找到返回 None
+        """
         if type_str in self.classes:
             return type_str
         
-        # Check without namespace/path
         parts = type_str.split('::')
         if len(parts) > 1:
             potential = parts[-1]
@@ -255,30 +329,55 @@ class ClassInstantiationTracer:
                 return potential
         
         return None
-
+    
     def _get_name(self, name_node) -> str:
-        """Get name from a name node."""
+        """从节点获取名称。
+        
+        Args:
+            name_node: 名称节点
+        
+        Returns:
+            str: 名称字符串
+        """
         if not name_node:
             return ""
         if hasattr(name_node, 'value'):
             return str(name_node.value).strip()
         return str(name_node).strip()
-
+    
     def get_module_usages(self, module_name: str) -> Optional[ClassUsageInfo]:
-        """Get class usage info for a specific module."""
+        """获取模块的类使用信息。
+        
+        Args:
+            module_name: 模块名
+        
+        Returns:
+            ClassUsageInfo: 使用信息，未找到返回 None
+        """
         return self.usages.get(module_name)
-
+    
     def get_all_instances_of_class(self, class_name: str) -> List[ClassInstanceInfo]:
-        """Find all instances of a specific class across all modules."""
+        """获取所有指定类的实例。
+        
+        Args:
+            class_name: 类名
+        
+        Returns:
+            List[ClassInstanceInfo]: 实例列表
+        """
         instances = []
         for usage in self.usages.values():
             for inst in usage.instances:
                 if inst.class_name == class_name:
                     instances.append(inst)
         return instances
-
+    
     def get_class_usage_summary(self) -> Dict[str, int]:
-        """Get a summary of class usage counts."""
+        """获取类使用统计。
+        
+        Returns:
+            Dict[str, int]: 类名到实例数量的映射
+        """
         summary = {}
         for usage in self.usages.values():
             for inst in usage.instances:

@@ -1,12 +1,21 @@
-"""Class extractor for SystemVerilog.
+"""ClassExtractor - SystemVerilog 类提取器。
 
-Extracts:
-- Class declarations
-- Properties (variables)
-- Constraints
-- Methods
+从 SystemVerilog 代码中提取类定义信息：
+- 类声明
+- 属性 (variables)
+- 约束 (constraints)
+- 方法 (methods)
+
+Example:
+    >>> from debug.class_extractor import ClassExtractor
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> extractor = ClassExtractor(parser)
+    >>> for name, cls in extractor.classes.items():
+    ...     print(f"Class: {name}, extends: {cls.extends}")
+    >>> print(f"Total: {len(extractor.classes)} classes")
 """
-
 import sys
 import re
 from typing import Dict, List
@@ -19,64 +28,116 @@ from .class_info import (
 
 
 class ClassExtractor:
-    """Extract SystemVerilog class information from parsed AST."""
+    """SystemVerilog 类提取器。
+    
+    使用 pyslang AST 解析器提取类定义信息。
+
+    Attributes:
+        parser: SVParser 实例
+        classes: 类名字典 (name -> ClassInfo)
+    
+    Example:
+        >>> extractor = ClassExtractor(parser)
+        >>> print(f"Found {len(extractor.classes)} classes")
+    """
     
     def __init__(self, parser):
+        """初始化提取器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
         self.classes: Dict[str, ClassInfo] = {}
-        self._extract()
+        self._extract_all()
     
-    def extract(self) -> Dict[str, ClassInfo]:
-        """Return extracted classes dict."""
-        return self.classes
-    
-    def _extract(self):
-        """Extract classes from all parsed trees."""
+    def _extract_all(self):
+        """提取所有类定义。"""
         for fname, tree in self.parser.trees.items():
-            if tree and hasattr(tree, 'root') and tree.root:
-                self._extract_from_tree(tree.root, fname)
+            if not tree or not hasattr(tree, 'root'):
+                continue
+            self._scan_tree(tree)
     
-    def _extract_from_tree(self, node, filename: str):
-        """Recursively traverse AST to find class declarations."""
-        if node is None:
+    def _scan_tree(self, tree):
+        """扫描语法树提取类。
+        
+        Args:
+            tree: SyntaxTree 对象
+        """
+        root = tree.root
+        
+        if not hasattr(root, 'members') or not root.members:
             return
         
-        node_type = type(node).__name__
-        
-        if 'ClassDeclaration' in node_type:
-            self._extract_class(node, filename)
-        
-        if hasattr(node, 'members') and node.members:
-            for child in node.members:
-                self._extract_from_tree(child, filename)
+        for i in range(len(root.members)):
+            member = root.members[i]
+            if member is None:
+                continue
+            
+            member_type = str(type(member).__name__)
+            
+            if 'ClassDeclaration' in member_type:
+                info = self._extract_class(member)
+                if info:
+                    self.classes[info.name] = info
     
-    def _extract_class(self, class_node, filename: str):
-        """Extract complete class information."""
-        try:
-            name = str(class_node.name).strip() if hasattr(class_node, 'name') and class_node.name else ""
-            if not name:
-                return
-            
-            info = ClassInfo(name=name, line_number=0)
-            
-            if hasattr(class_node, 'extendsClause') and class_node.extendsClause:
-                extends_str = str(class_node.extendsClause).strip()
-                if extends_str.startswith('extends '):
-                    info.extends = extends_str[8:].split('#')[0].strip()
-            
-            if hasattr(class_node, 'parameters') and class_node.parameters:
-                self._extract_parameters(class_node.parameters, info)
-            
-            if hasattr(class_node, 'items') and class_node.items:
-                self._extract_class_items(class_node.items, info)
-            
-            self.classes[name] = info
-            
-        except Exception as e:
-            print(f"Error extracting class: {e}")
+    def _extract_class(self, class_node) -> ClassInfo:
+        """提取单个类。
+        
+        Args:
+            class_node: 类声明节点
+        
+        Returns:
+            ClassInfo: 类信息对象
+        """
+        info = ClassInfo(name="")
+        
+        # Get class name
+        if hasattr(class_node, 'header') and class_node.header:
+            if hasattr(class_node.header, 'name') and class_node.header.name:
+                name_val = class_node.header.name
+                if hasattr(name_val, 'value'):
+                    info.name = str(name_val.value).strip()
+                else:
+                    info.name = str(name_val).strip()
+        
+        if not info.name:
+            return info
+        
+        # Check for extends (inheritance)
+        if hasattr(class_node, 'header') and class_node.header:
+            if hasattr(class_node.header, 'extends') and class_node.header.extends:
+                extends_node = class_node.header.extends
+                if hasattr(extends_node, 'name') and extends_node.name:
+                    info.extends = str(extends_node.name).strip()
+        
+        # Check virtual/abstract
+        if hasattr(class_node, 'qualifiers') and class_node.qualifiers:
+            quals_str = str(class_node.qualifiers).lower()
+            if 'virtual' in quals_str:
+                info.is_virtual = True
+            if 'abstract' in quals_str:
+                info.is_abstract = True
+        
+        # Extract parameters
+        if hasattr(class_node, 'parameters') and class_node.parameters:
+            self._extract_parameters(class_node.parameters, info)
+        
+        # Extract class items (body)
+        if hasattr(class_node, 'items') and class_node.items:
+            self._extract_class_items(class_node.items, info)
+        elif hasattr(class_node, 'members') and class_node.members:
+            self._extract_class_items(class_node.members, info)
+        
+        return info
     
     def _extract_parameters(self, params_node, info: ClassInfo):
-        """Extract class type parameters."""
+        """提取类型参数和值参数。
+        
+        Args:
+            params_node: 参数节点
+            info: ClassInfo 对象
+        """
         try:
             if not hasattr(params_node, 'declarations'):
                 return
@@ -119,7 +180,12 @@ class ClassExtractor:
             print(f"Error extracting parameters: {e}")
     
     def _extract_class_items(self, items, info: ClassInfo):
-        """Extract properties, constraints, methods from class items."""
+        """提取属性、约束、方法。
+        
+        Args:
+            items: 类项列表
+            info: ClassInfo 对象
+        """
         if not items:
             return
         
@@ -138,7 +204,12 @@ class ClassExtractor:
             print(f"Error extracting class items: {e}")
     
     def _extract_property(self, prop_node, info: ClassInfo):
-        """Extract a class property."""
+        """提取类属性。
+        
+        Args:
+            prop_node: 属性节点
+            info: ClassInfo 对象
+        """
         try:
             data_type = "logic"
             prop_name = ""
@@ -198,7 +269,12 @@ class ClassExtractor:
             print(f"Error extracting property: {e}")
     
     def _extract_constraint(self, const_node, info: ClassInfo):
-        """Extract a constraint."""
+        """提取类约束。
+        
+        Args:
+            const_node: 约束节点
+            info: ClassInfo 对象
+        """
         try:
             const_name = ""
             const_type = "simple"
@@ -264,7 +340,12 @@ class ClassExtractor:
             print(f"Error extracting constraint: {e}")
     
     def _extract_method(self, method_node, info: ClassInfo):
-        """Extract a class method."""
+        """提取类方法。
+        
+        Args:
+            method_node: 方法节点
+            info: ClassInfo 对象
+        """
         try:
             method_name = ""
             qualifiers = []

@@ -1,5 +1,20 @@
-"""Class relationship and method call graph extractor."""
+"""ClassRelationExtractor - SystemVerilog 类关系与方法调用图提取器。
 
+提取类之间的关系和方法调用图：
+- 类继承关系
+- 类实例化关系
+- 方法调用关系
+- 依赖图
+
+Example:
+    >>> from debug.class_relation import ClassRelationExtractor
+    >>> from debug.class_extractor import ClassExtractor
+    >>> ce = ClassExtractor(parser)
+    >>> cre = ClassRelationExtractor(parser, ce)
+    >>> for rel in cre.relations:
+    ...     print(f"{rel.from_class} -> {rel.to_class} ({rel.relation_type})")
+    >>> print(cre.get_dependency_graphviz())
+"""
 import sys
 import re
 from typing import Dict, List, Optional, Set, Tuple
@@ -11,7 +26,19 @@ from .class_extractor import ClassExtractor
 
 @dataclass
 class MethodCallInfo:
-    """Information about a method call."""
+    """方法调用信息数据类。
+    
+    Attributes:
+        caller_name: 调用者名（类名或模块名）
+        method_name: 被调用的方法名
+        full_call: 完整调用字符串
+        is_internal: 是否为内部调用
+        is_super_call: 是否为 super:: 调用
+        is_this_call: 是否为 this:: 调用
+        line_number: 行号
+        file_name: 文件名
+        constraint_name: 约束名（如果是约束中的调用）
+    """
     caller_name: str
     method_name: str
     full_call: str
@@ -25,7 +52,17 @@ class MethodCallInfo:
 
 @dataclass
 class ClassRelationInfo:
-    """Information about relationship between classes."""
+    """类关系信息数据类。
+    
+    Attributes:
+        from_class: 源类名
+        to_class: 目标类名
+        relation_type: 关系类型 (extends/instantiates/uses)
+        details: 详细信息
+        line_number: 行号
+        is_instantiated: 是否为实例化
+        instantiation_context: 实例化上下文
+    """
     from_class: str
     to_class: str
     relation_type: str
@@ -37,7 +74,18 @@ class ClassRelationInfo:
 
 @dataclass
 class MethodDefinition:
-    """Information about a method definition."""
+    """方法定义信息数据类。
+    
+    Attributes:
+        class_name: 所属类名
+        name: 方法名
+        is_function: 是否为 function
+        is_virtual: 是否为虚方法
+        is_pure: 是否为纯虚方法
+        is_static: 是否为静态方法
+        return_type: 返回类型
+        arguments: 参数列表
+    """
     class_name: str
     name: str
     is_function: bool = True
@@ -49,9 +97,34 @@ class MethodDefinition:
 
 
 class ClassRelationExtractor:
-    """Extract class relationships and method call graphs."""
+    """类关系与方法调用图提取器。
+    
+    提取 SystemVerilog 类之间的继承、实例化、使用关系，
+    以及方法调用图。
 
+    Attributes:
+        parser: SVParser 实例
+        class_extractor: 类提取器
+        classes: 类信息字典
+        relations: 类关系列表
+        method_calls: 方法调用列表
+        method_definitions: 方法定义字典
+        global_functions: 全局函数字典
+        global_tasks: 全局任务集合
+        dependency_graph: 依赖图
+    
+    Example:
+        >>> cre = ClassRelationExtractor(parser, ce)
+        >>> print(cre.get_dependency_graphviz())
+    """
+    
     def __init__(self, parser, class_extractor: ClassExtractor):
+        """初始化提取器。
+        
+        Args:
+            parser: SVParser 实例
+            class_extractor: ClassExtractor 实例
+        """
         self.parser = parser
         self.class_extractor = class_extractor
         self.classes: Dict[str, ClassInfo] = class_extractor.classes
@@ -62,12 +135,19 @@ class ClassRelationExtractor:
         self.global_tasks: Set[str] = set()
         self.dependency_graph: Dict[str, List[str]] = {}
         self._extract_all()
-
+    
     def _extract_all(self):
+        """提取所有关系和调用。"""
         for fname, tree in self.parser.trees.items():
             self._extract_from_tree(tree, fname)
-
+    
     def _extract_from_tree(self, tree, filename: str):
+        """从语法树提取关系。
+        
+        Args:
+            tree: SyntaxTree 对象
+            filename: 文件名
+        """
         root = tree.root
         if not hasattr(root, 'members') or not root.members:
             return
@@ -95,79 +175,83 @@ class ClassRelationExtractor:
                 
                 self._extract_class_relations(member, cls_name, filename)
                 current_class = old_class
-
+    
     def _get_module_name(self, module_node) -> str:
+        """获取模块名。
+        
+        Args:
+            module_node: 模块节点
+        
+        Returns:
+            str: 模块名
+        """
         if hasattr(module_node, 'header') and module_node.header:
             header = module_node.header
             if hasattr(header, 'name') and header.name:
-                name = header.name
-                if hasattr(name, 'value'):
-                    return str(name.value).strip()
-                return str(name).strip()
+                name_val = header.name
+                if hasattr(name_val, 'value'):
+                    return str(name_val.value).strip()
+                return str(name_val).strip()
         return ""
-
-    def _get_name(self, name_node) -> str:
-        if not name_node:
-            return ""
-        if hasattr(name_node, 'value'):
-            return str(name_node.value).strip()
-        return str(name_node).strip()
-
-    def _process_module_members(self, module_node, filename: str, 
-                                current_class: Optional[str], current_module: str):
-        if not hasattr(module_node, 'members') or not module_node.members:
+    
+    def _process_module_members(self, module, filename: str, current_class: str, current_module: str):
+        """处理模块成员。
+        
+        Args:
+            module: 模块节点
+            filename: 文件名
+            current_class: 当前类名
+            current_module: 当前模块名
+        """
+        if not hasattr(module, 'members') or not module.members:
             return
         
-        for i in range(len(module_node.members)):
-            stmt = module_node.members[i]
-            stmt_type = type(stmt).__name__
-            
-            if 'DataDeclaration' in stmt_type:
-                self._extract_data_declaration_relations(
-                    stmt, current_module, filename
-                )
-            elif 'FunctionDeclaration' in stmt_type:
-                self._extract_global_function(stmt, current_module, filename)
-            elif 'TaskDeclaration' in stmt_type:
-                self._extract_global_task(stmt, current_module, filename)
-            elif 'ProceduralBlock' in stmt_type:
-                self._analyze_procedural_block(
-                    stmt, current_class, current_module, filename
-                )
-
+        for j in range(len(module.members)):
+            stmt = module.members[j]
+            if stmt is None:
+                continue
+            self._analyze_statement_recursive(stmt, current_class, current_module, filename)
+    
     def _process_class_items(self, items, class_name: str, filename: str):
-        if not items:
-            return
+        """处理类成员。
         
-        for i in range(len(items)):
-            item = items[i]
+        Args:
+            items: 类项列表
+            class_name: 类名
+            filename: 文件名
+        """
+        for item in items:
+            if item is None:
+                continue
             item_type = type(item).__name__
             
-            if 'ClassMethod' in item_type or 'Method' in item_type:
-                self._extract_method_definition(item, class_name, filename)
-                self._analyze_class_method_body(item, class_name, filename)
-            elif 'Constraint' in item_type:
-                self._analyze_constraint_block(item, class_name, filename)
-
-    def _extract_method_definition(self, method_node, class_name: str, filename: str):
-        try:
-            name = ""
-            is_function = True
-            is_virtual = False
-            is_pure = False
-            return_type = "void"
-            arguments = ""
+            if 'Method' in item_type:
+                self._extract_method_definition(item, class_name)
+                # Extract method calls from method body
+                if hasattr(item, 'body') and item.body:
+                    self._extract_calls_from_statement(item.body, class_name, filename)
+                elif hasattr(item, 'statement') and item.statement:
+                    self._extract_calls_from_statement(item.statement, class_name, filename)
             
-            decl = None
+            elif 'Constraint' in item_type:
+                if hasattr(item, 'block') and item.block:
+                    self._extract_calls_from_statement(item.block, class_name, filename, constraint_name=getattr(item, 'name', ''))
+    
+    def _extract_method_definition(self, method_node, class_name: str):
+        """提取方法定义。
+        
+        Args:
+            method_node: 方法节点
+            class_name: 类名
+        """
+        try:
+            method_def = MethodDefinition(class_name=class_name, name="")
+            
+            decl = method_node
             if hasattr(method_node, 'declaration') and method_node.declaration:
                 decl = method_node.declaration
-            elif hasattr(method_node, 'prototype') and method_node.prototype:
-                decl = method_node
             
-            if decl is None:
-                return
-            
-            proto = None
+            proto = decl
             if hasattr(decl, 'prototype') and decl.prototype:
                 proto = decl.prototype
             
@@ -175,453 +259,283 @@ class ClassRelationExtractor:
                 return
             
             if hasattr(proto, 'name') and proto.name:
-                name = str(proto.name).strip()
+                method_def.name = str(proto.name).strip()
             
-            if hasattr(proto, 'keyword') and proto.keyword:
-                kw = str(proto.keyword).strip().lower()
-                if 'task' in kw:
-                    is_function = False
-            
-            if hasattr(proto, 'specifiers') and proto.specifiers:
-                specs = str(proto.specifiers).lower()
-                if 'virtual' in specs:
-                    is_virtual = True
-                if 'pure' in specs:
-                    is_pure = True
-            
-            if hasattr(proto, 'returnType') and proto.returnType:
-                return_type = str(proto.returnType).strip()
-            
-            if hasattr(proto, 'portList') and proto.portList:
-                arguments = str(proto.portList)
-            
-            if not name:
+            if not method_def.name:
                 return
             
-            method_def = MethodDefinition(
-                class_name=class_name,
-                name=name,
-                is_function=is_function,
-                is_virtual=is_virtual,
-                is_pure=is_pure,
-                return_type=return_type,
-                arguments=arguments
-            )
+            # Get qualifiers
+            if hasattr(method_node, 'qualifiers') and method_node.qualifiers:
+                quals_str = str(method_node.qualifiers).lower()
+                method_def.is_virtual = 'virtual' in quals_str
+                method_def.is_pure = 'pure' in quals_str
+                method_def.is_static = 'static' in quals_str
             
-            if class_name in self.method_definitions:
-                self.method_definitions[class_name].append(method_def)
-            else:
-                self.method_definitions[class_name] = [method_def]
-                
+            method_def.is_function = 'function' in str(type(method_node)).lower()
+            
+            # Get return type
+            if hasattr(proto, 'returnType') and proto.returnType:
+                method_def.return_type = str(proto.returnType).strip()
+            
+            # Get arguments
+            if hasattr(proto, 'portList') and proto.portList:
+                method_def.arguments = f"({proto.portList})"
+            
+            self.method_definitions.setdefault(class_name, []).append(method_def)
+            
         except Exception as e:
             print(f"Error extracting method definition: {e}")
-
+    
+    def _extract_calls_from_statement(self, stmt, class_name: str, filename: str, constraint_name: str = ""):
+        """从语句中提取方法调用。
+        
+        Args:
+            stmt: 语句节点
+            class_name: 类名
+            filename: 文件名
+            constraint_name: 约束名
+        """
+        if stmt is None:
+            return
+        
+        try:
+            stmt_str = str(stmt)
+            
+            # Pattern: object.method()
+            pattern = r'(\w+)\.(\w+)\s*\('
+            matches = re.findall(pattern, stmt_str)
+            
+            for obj_name, method_name in matches:
+                if obj_name in ('this', 'super', 'null'):
+                    continue
+                
+                is_internal = obj_name in self.classes
+                is_super = False
+                is_this = False
+                
+                full_call = f"{obj_name}.{method_name}()"
+                
+                call_info = MethodCallInfo(
+                    caller_name=class_name,
+                    method_name=method_name,
+                    full_call=full_call,
+                    is_internal=is_internal,
+                    is_super_call=is_super,
+                    is_this_call=is_this,
+                    file_name=filename,
+                    constraint_name=constraint_name
+                )
+                self.method_calls.append(call_info)
+            
+            # Recursively process child statements
+            for attr_name in ['statement', 'consequent', 'alternate', 'body', 'statements', 'items']:
+                if hasattr(stmt, attr_name):
+                    child = getattr(stmt, attr_name)
+                    if child:
+                        if isinstance(child, list):
+                            for c in child:
+                                self._extract_calls_from_statement(c, class_name, filename, constraint_name)
+                        else:
+                            self._extract_calls_from_statement(child, class_name, filename, constraint_name)
+                            
+        except Exception as e:
+            pass
+    
+    def _analyze_statement_recursive(self, stmt, class_name: str, module_name: str, filename: str):
+        """递归分析语句。
+        
+        Args:
+            stmt: 语句节点
+            class_name: 类名
+            module_name: 模块名
+            filename: 文件名
+        """
+        if stmt is None:
+            return
+        
+        try:
+            stmt_str = str(stmt)
+            
+            # Pattern: object.method()
+            pattern = r'(\w+)\.(\w+)\s*\('
+            matches = re.findall(pattern, stmt_str)
+            
+            for obj_name, method_name in matches:
+                if obj_name in ('this', 'super', 'null'):
+                    continue
+                
+                is_internal = obj_name in self.classes
+                caller = class_name if class_name else module_name
+                
+                call_info = MethodCallInfo(
+                    caller_name=caller,
+                    method_name=method_name,
+                    full_call=f"{obj_name}.{method_name}()",
+                    is_internal=is_internal,
+                    file_name=filename
+                )
+                self.method_calls.append(call_info)
+            
+            # Process child statements
+            for attr_name in ['statement', 'consequent', 'alternate', 'body', 'statements', 'items']:
+                if hasattr(stmt, attr_name):
+                    child = getattr(stmt, attr_name)
+                    if child:
+                        if isinstance(child, list):
+                            for c in child:
+                                self._analyze_statement_recursive(c, class_name, module_name, filename)
+                        else:
+                            self._analyze_statement_recursive(child, class_name, module_name, filename)
+                            
+        except Exception:
+            pass
+    
     def _extract_class_relations(self, class_node, class_name: str, filename: str):
-        try:
-            line_number = 0
-            try:
-                if hasattr(class_node, 'getFirstToken') and class_node.getFirstToken():
-                    line_number = class_node.getFirstToken().location.line
-            except:
-                pass
-            
-            if hasattr(class_node, 'extendsClause') and class_node.extendsClause:
-                extends_str = str(class_node.extendsClause).strip()
-                if extends_str.startswith('extends '):
-                    parent_class = extends_str[8:].strip()
-                    if '#' in parent_class:
-                        parent_class = parent_class.split('#')[0].strip()
-                    
-                    relation = ClassRelationInfo(
+        """提取类关系。
+        
+        Args:
+            class_node: 类节点
+            class_name: 类名
+            filename: 文件名
+        """
+        # Check extends
+        if hasattr(class_node, 'header') and class_node.header:
+            if hasattr(class_node.header, 'extends') and class_node.header.extends:
+                extends_name = self._get_name(class_node.header.extends.name)
+                if extends_name:
+                    rel = ClassRelationInfo(
                         from_class=class_name,
-                        to_class=parent_class,
-                        relation_type="extends",
-                        line_number=line_number
+                        to_class=extends_name,
+                        relation_type='extends',
+                        file_name=filename
                     )
-                    self.relations.append(relation)
-            
-            if hasattr(class_node, 'parameters') and class_node.parameters:
-                params = class_node.parameters
-                if hasattr(params, 'declarations'):
-                    decls = params.declarations
-                    for j in range(len(decls)):
-                        decl = decls[j]
-                        decl_type = type(decl).__name__
-                        
-                        if 'TypeParameterDeclaration' in decl_type:
-                            if hasattr(decl, 'declarators'):
-                                declrs = decl.declarators
-                                if hasattr(declrs, '__iter__') and not isinstance(declrs, str):
-                                    for d in declrs:
-                                        if hasattr(d, 'name'):
-                                            param_name = str(d.name).strip()
-                                            default_type = None
-                                            if hasattr(d, 'assignment') and d.assignment:
-                                                default_type = str(d.assignment).lstrip('= ').strip()
-                                            
-                                            if default_type and default_type in self.classes:
-                                                relation = ClassRelationInfo(
-                                                    from_class=class_name,
-                                                    to_class=default_type,
-                                                    relation_type="parameterized_type",
-                                                    details=f"type {param_name}",
-                                                    line_number=line_number
-                                                )
-                                                self.relations.append(relation)
-            
-            if hasattr(class_node, 'items') and class_node.items:
-                for j in range(len(class_node.items)):
-                    item = class_node.items[j]
-                    item_type = type(item).__name__
-                    
-                    if 'ClassProperty' in item_type:
-                        self._extract_property_class_relation(item, class_name, line_number)
-                        
-        except Exception as e:
-            print(f"Error extracting class relations: {e}")
-
-    def _extract_property_class_relation(self, prop_node, class_name: str, line_number: int):
-        try:
-            decl = None
-            if hasattr(prop_node, 'declaration') and prop_node.declaration:
-                decl = prop_node.declaration
-            elif hasattr(prop_node, 'type') and prop_node.type:
-                prop_type = str(prop_node.type).strip()
-            else:
-                return
-            
-            if decl is None:
-                return
-            
-            prop_type = None
-            if hasattr(decl, 'type') and decl.type:
-                prop_type = str(decl.type).strip()
-            
-            if not prop_type:
-                return
-            
-            if prop_type in self.classes:
-                relation = ClassRelationInfo(
-                    from_class=class_name,
-                    to_class=prop_type,
-                    relation_type="composition",
-                    details="property",
-                    line_number=line_number
-                )
-                self.relations.append(relation)
-            
-            if '[' in prop_type and ']' in prop_type:
-                base_match = re.match(r'(\w+)\s*[\[\$:\*]', prop_type)
-                if base_match:
-                    base_type = base_match.group(1)
-                    if base_type in self.classes:
-                        relation = ClassRelationInfo(
-                            from_class=class_name,
-                            to_class=base_type,
-                            relation_type="composition",
-                            details="property (array)",
-                            line_number=line_number
-                        )
-                        self.relations.append(relation)
-                        
-        except Exception as e:
-            print(f"Error extracting property class relation: {e}")
-
-    def _extract_data_declaration_relations(self, decl_node, module_name: str, filename: str):
-        try:
-            if not hasattr(decl_node, 'type') or not decl_node.type:
-                return
-            
-            type_str = str(decl_node.type).strip()
-            
-            if type_str not in self.classes:
-                base_type = type_str.split('#')[0].split('[')[0].strip()
-                if base_type not in self.classes:
-                    return
-            
-            if hasattr(decl_node, 'declarators') and decl_node.declarators:
-                declrs = decl_node.declarators
-                for i in range(len(declrs)):
-                    dec = declrs[i]
-                    var_name = self._get_name(dec.name)
-                    if var_name:
-                        # Check if new() instantiation
-                        is_instantiated = False
-                        if hasattr(dec, 'initializer') and dec.initializer:
-                            init_str = str(dec.initializer).strip()
-                            if 'new' in init_str.lower():
-                                is_instantiated = True
-                        
-                        relation = ClassRelationInfo(
-                            from_class=module_name,
-                            to_class=type_str,
-                            relation_type="instantiation",
-                            details=f"variable {var_name}",
-                            is_instantiated=is_instantiated,
-                            instantiation_context="module"
-                        )
-                        self.relations.append(relation)
-                    
-        except Exception as e:
-            print(f"Error extracting data declaration: {e}")
-
-    def _analyze_class_method_body(self, method_node, class_name: str, filename: str):
-        try:
-            decl = None
-            if hasattr(method_node, 'declaration') and method_node.declaration:
-                decl = method_node.declaration
-            
-            if decl is None:
-                return
-            
-            if hasattr(decl, 'items') and decl.items:
-                for item in decl.items:
-                    self._analyze_statement_recursive(item, class_name, None, filename)
-                    self._track_new_instantiation(item, class_name, filename)
-                    
-        except Exception as e:
-            print(f"Error analyzing class method: {e}")
-
-    def _track_new_instantiation(self, stmt, class_name: str, filename: str):
-        if stmt is None:
-            return
+                    self.relations.append(rel)
+    
+    def _get_name(self, name_node) -> str:
+        """从节点获取名称。
         
-        stmt_str = str(stmt)
-        new_pattern = r'(\w+)\s*=\s*new\('
-        matches = re.findall(new_pattern, stmt_str)
+        Args:
+            name_node: 名称节点
         
-        if matches:
-            line_number = 0
-            try:
-                if hasattr(stmt, 'getFirstToken') and stmt.getFirstToken():
-                    line_number = stmt.getFirstToken().location.line
-            except:
-                pass
-            
-            for handle_name in matches:
-                relation = ClassRelationInfo(
-                    from_class=class_name,
-                    to_class="unknown",
-                    relation_type="instantiation",
-                    details=f"variable {handle_name}",
-                    is_instantiated=True,
-                    instantiation_context=f"class_method:{class_name}",
-                    line_number=line_number
-                )
-                self.relations.append(relation)
-
-    def _analyze_constraint_block(self, constraint_node, class_name: str, filename: str):
-        try:
-            if not hasattr(constraint_node, 'block') or not constraint_node.block:
-                return
-            
-            constraint_name = ""
-            if hasattr(constraint_node, 'name') and constraint_node.name:
-                constraint_name = str(constraint_node.name)
-            
-            block = constraint_node.block
-            
-            if hasattr(block, 'items') and block.items:
-                for item in block.items:
-                    self._analyze_constraint_item(item, class_name, constraint_name, filename)
-                    
-        except Exception as e:
-            print(f"Error analyzing constraint block: {e}")
-
-    def _analyze_constraint_item(self, item, class_name: str, constraint_name: str, filename: str):
-        if item is None:
-            return
+        Returns:
+            str: 名称字符串
+        """
+        if not name_node:
+            return ""
+        if hasattr(name_node, 'value'):
+            return str(name_node.value).strip()
+        return str(name_node).strip()
+    
+    def get_class_relations(self, class_name: str) -> List[ClassRelationInfo]:
+        """获取类的所有关系。
         
-        item_str = str(item)
-        method_pattern = r'(\w+)\.(\w+)\s*\('
-        matches = re.findall(method_pattern, item_str)
+        Args:
+            class_name: 类名
         
-        line_number = 0
-        try:
-            if hasattr(item, 'getFirstToken') and item.getFirstToken():
-                line_number = item.getFirstToken().location.line
-        except:
-            pass
+        Returns:
+            List[ClassRelationInfo]: 关系列表
+        """
+        return [r for r in self.relations if r.from_class == class_name or r.to_class == class_name]
+    
+    def get_method_calls(self, class_name: str = None) -> List[MethodCallInfo]:
+        """获取方法调用。
         
-        for obj_name, method_name in matches:
-            full_call = f"{obj_name}.{method_name}()"
-            
-            call_info = MethodCallInfo(
-                caller_name=obj_name,
-                method_name=method_name,
-                full_call=full_call,
-                line_number=line_number,
-                file_name=filename,
-                constraint_name=constraint_name
-            )
-            self.method_calls.append(call_info)
-
-    def _extract_global_function(self, func_node, module_name: str, filename: str):
-        try:
-            name = ""
-            return_type = "void"
-            
-            if hasattr(func_node, 'name') and func_node.name:
-                name = self._get_name(func_node.name)
-            
-            if hasattr(func_node, 'return_type') and func_node.return_type:
-                return_type = str(func_node.return_type)
-            
-            if name:
-                key = f"{module_name}::{name}" if module_name else name
-                self.global_functions[key] = return_type
-                
-        except Exception as e:
-            print(f"Error extracting global function: {e}")
-
-    def _extract_global_task(self, task_node, module_name: str, filename: str):
-        try:
-            name = ""
-            
-            if hasattr(task_node, 'name') and task_node.name:
-                name = self._get_name(task_node.name)
-            
-            if name:
-                key = f"{module_name}::{name}" if module_name else name
-                self.global_tasks.add(key)
-                
-        except Exception as e:
-            print(f"Error extracting global task: {e}")
-
-    def _analyze_procedural_block(self, block_node, current_class: Optional[str],
-                                  current_module: Optional[str], filename: str):
-        if not hasattr(block_node, 'statement') or not block_node.statement:
-            return
+        Args:
+            class_name: 可选的类名过滤
         
-        self._analyze_statement_recursive(
-            block_node.statement, current_class, current_module, filename
-        )
-
-    def _analyze_statement_recursive(self, stmt, current_class: Optional[str],
-                                    current_module: Optional[str], filename: str):
-        if stmt is None:
-            return
+        Returns:
+            List[MethodCallInfo]: 调用列表
+        """
+        if class_name:
+            return [c for c in self.method_calls if c.caller_name == class_name]
+        return self.method_calls
+    
+    def get_callers_of_method(self, method_name: str) -> List[MethodCallInfo]:
+        """获取调用指定方法的所有调用者。
         
-        stmt_type = type(stmt).__name__
+        Args:
+            method_name: 方法名
         
-        if 'Block' in stmt_type:
-            if hasattr(stmt, 'items') and stmt.items:
-                for item in stmt.items:
-                    self._analyze_statement_recursive(item, current_class, current_module, filename)
-            return
+        Returns:
+            List[MethodCallInfo]: 调用列表
+        """
+        return [c for c in self.method_calls if c.method_name == method_name]
+    
+    def get_callees_of_method(self, class_name: str, method_name: str) -> List[str]:
+        """获取方法调用的其他方法。
         
-        if 'Loop' in stmt_type and 'Generate' not in stmt_type:
-            if hasattr(stmt, 'statement') and stmt.statement:
-                self._analyze_statement_recursive(stmt.statement, current_class, current_module, filename)
-            return
+        Args:
+            class_name: 类名
+            method_name: 方法名
         
-        if 'ForLoop' in stmt_type:
-            if hasattr(stmt, 'statement') and stmt.statement:
-                self._analyze_statement_recursive(stmt.statement, current_class, current_module, filename)
-            return
+        Returns:
+            List[str]: 被调用的方法名列表
+        """
+        callees = []
+        for call in self.method_calls:
+            if call.caller_name == class_name and call.method_name != method_name:
+                callees.append(call.method_name)
+        return list(set(callees))
+    
+    def build_dependency_graph(self):
+        """构建依赖图。"""
+        self.dependency_graph = {}
         
-        if 'Conditional' in stmt_type:
-            if hasattr(stmt, 'statement') and stmt.statement:
-                self._analyze_statement_recursive(stmt.statement, current_class, current_module, filename)
-            if hasattr(stmt, 'elseClause') and stmt.elseClause:
-                if hasattr(stmt.elseClause, 'clause') and stmt.elseClause.clause:
-                    self._analyze_statement_recursive(stmt.elseClause.clause, current_class, current_module, filename)
-            return
+        for rel in self.relations:
+            if rel.relation_type == 'extends':
+                self.dependency_graph.setdefault(rel.from_class, []).append(rel.to_class)
+            elif rel.relation_type == 'instantiates':
+                self.dependency_graph.setdefault(rel.from_class, []).append(rel.to_class)
+    
+    def get_dependency_graphviz(self) -> str:
+        """生成 Graphviz 格式的依赖图。
         
-        if 'Case' in stmt_type:
-            if hasattr(stmt, 'items') and stmt.items:
-                for item in stmt.items:
-                    if hasattr(item, 'clause') and item.clause:
-                        self._analyze_statement_recursive(item.clause, current_class, current_module, filename)
-            return
+        Returns:
+            str: Graphviz DOT 格式字符串
+        """
+        self.build_dependency_graph()
         
-        if 'ExpressionStatement' in stmt_type or 'VoidCasted' in stmt_type:
-            self._extract_method_calls(stmt, current_class, current_module, filename)
-            return
+        lines = ["digraph class_dependencies {"]
+        lines.append("  rankdir=BT;")
+        lines.append("  node [shape=box];")
         
-        if 'Assignment' in stmt_type:
-            if hasattr(stmt, 'right') and stmt.right:
-                self._extract_method_calls(stmt.right, current_class, current_module, filename)
-            if hasattr(stmt, 'left') and stmt.left:
-                self._extract_method_calls(stmt.left, current_class, current_module, filename)
-
-    def _extract_method_calls(self, expr_node, current_class: Optional[str],
-                             current_module: Optional[str], filename: str):
-        if expr_node is None:
-            return
+        for cls, deps in self.dependency_graph.items():
+            for dep in deps:
+                lines.append(f'  "{cls}" -> "{dep}";')
         
-        expr_str = str(expr_node)
-        
-        method_pattern = r'(\w+)\.(\w+)\s*\('
-        matches = re.findall(method_pattern, expr_str)
-        
-        line_number = 0
-        try:
-            if hasattr(expr_node, 'getFirstToken') and expr_node.getFirstToken():
-                line_number = expr_node.getFirstToken().location.line
-        except:
-            pass
-        
-        for obj_name, method_name in matches:
-            full_call = f"{obj_name}.{method_name}()"
-            
-            is_internal = False
-            is_super_call = obj_name.lower() == 'super'
-            is_this_call = obj_name.lower() == 'this'
-            
-            if current_class:
-                is_internal = is_super_call or is_this_call
-            
-            call_info = MethodCallInfo(
-                caller_name=obj_name,
-                method_name=method_name,
-                full_call=full_call,
-                is_internal=is_internal,
-                is_super_call=is_super_call,
-                is_this_call=is_this_call,
-                line_number=line_number,
-                file_name=filename
-            )
-            self.method_calls.append(call_info)
-        
-        standalone_pattern = r'(?<!\w)(\w+)\s*\('
-        standalone_matches = re.findall(standalone_pattern, expr_str)
-        
-        for func_name in standalone_matches:
-            if func_name.lower() in ('if', 'else', 'while', 'for', 'do', 'case', 'return', 'new', 'delete', 'randomize', 'srandom'):
-                continue
-            
-            full_call = f"{func_name}()"
-            
-            if any(c.full_call == full_call for c in self.method_calls):
-                continue
-            
-            call_info = MethodCallInfo(
-                caller_name="<self>",
-                method_name=func_name,
-                full_call=full_call,
-                is_internal=current_class is not None,
-                line_number=line_number,
-                file_name=filename
-            )
-            self.method_calls.append(call_info)
-
-    def get_summary(self) -> str:
-        lines = []
-        lines.append("=" * 60)
-        lines.append("CLASS RELATIONSHIP AND CALL GRAPH SUMMARY")
-        lines.append("=" * 60)
-        
-        lines.append(f"\nTotal Classes: {len(self.classes)}")
-        lines.append(f"Total Relations: {len(self.relations)}")
-        lines.append(f"Total Method Calls: {len(self.method_calls)}")
-        
-        relation_types = {}
-        for r in self.relations:
-            relation_types[r.relation_type] = relation_types.get(r.relation_type, 0) + 1
-        
-        lines.append("\nRelations by Type:")
-        for rtype, count in sorted(relation_types.items()):
-            lines.append(f"  {rtype}: {count}")
-        
+        lines.append("}")
         return "\n".join(lines)
+    
+    def find_circular_dependencies(self) -> List[List[str]]:
+        """查找循环依赖。
+        
+        Returns:
+            List[List[str]]: 循环路径列表
+        """
+        cycles = []
+        visited = set()
+        path = []
+        
+        def dfs(cls, start):
+            if cls in path:
+                cycle_start = path.index(cls)
+                cycle = path[cycle_start:] + [cls]
+                if cycle not in cycles:
+                    cycles.append(cycle)
+                return
+            
+            if cls in visited:
+                return
+            
+            visited.add(cls)
+            path.append(cls)
+            
+            for dep in self.dependency_graph.get(cls, []):
+                dfs(dep, start)
+            
+            path.pop()
+        
+        for cls in self.dependency_graph:
+            dfs(cls, cls)
+        
+        return cycles

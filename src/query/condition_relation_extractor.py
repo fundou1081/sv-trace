@@ -1,6 +1,16 @@
-"""
-ConditionRelationExtractor - if/case 条件关系自动提取
-用户在写data path coverage时，需要知道信号的条件关系
+"""ConditionRelationExtractor - if/case 条件关系自动提取。
+
+用户在写 data path coverage 时，需要知道信号的条件关系。
+自动提取条件表达式和嵌套关系。
+
+Example:
+    >>> from query.condition_relation_extractor import ConditionRelationExtractor
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> extractor = ConditionRelationExtractor(parser)
+    >>> relation = extractor.extract("data_out")
+    >>> print(relation.visualize())
 """
 import sys
 import os
@@ -13,7 +23,15 @@ from typing import List, Dict, Set
 
 @dataclass
 class Condition:
-    """条件"""
+    """条件数据类。
+    
+    Attributes:
+        type: 条件类型 (if/else if/case/literal/assignment)
+        condition: 条件表达式
+        depth: 嵌套深度
+        value: case 值
+        children: 子条件列表
+    """
     type: str = ""           # if/else if/case
     condition: str = ""       # 条件表达式
     depth: int = 0           # 嵌套深度
@@ -23,12 +41,23 @@ class Condition:
 
 @dataclass
 class ConditionRelation:
-    """条件关系"""
+    """条件关系数据类。
+    
+    Attributes:
+        target_signal: 目标信号名
+        conditions: 条件列表
+        cross_bins: 交叉区间列表
+    """
     target_signal: str
     conditions: List[Condition] = field(default_factory=list)
     cross_bins: List[str] = field(default_factory=list)
     
     def visualize(self) -> str:
+        """可视化条件关系。
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
         lines = []
         lines.append("=" * 60)
         lines.append(f"CONDITION RELATION: {self.target_signal}")
@@ -58,14 +87,36 @@ class ConditionRelation:
 
 
 class ConditionRelationExtractor:
-    """条件关系提取器"""
+    """条件关系提取器。
+    
+    从代码中提取信号的条件关系，支持 if/case 嵌套。
+
+    Attributes:
+        parser: SVParser 实例
+    
+    Example:
+        >>> extractor = ConditionRelationExtractor(parser)
+        >>> relation = extractor.extract("data_out")
+    """
     
     def __init__(self, parser):
+        """初始化提取器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
     
     def extract(self, signal: str, module: str = None) -> ConditionRelation:
-        """提取信号的条件关系"""
+        """提取信号的条件关系。
         
+        Args:
+            signal: 目标信号名
+            module: 可选的模块名过滤
+        
+        Returns:
+            ConditionRelation: 条件关系对象
+        """
         result = ConditionRelation(target_signal=signal)
         
         # 从代码中查找该信号的所有赋值
@@ -87,8 +138,15 @@ class ConditionRelationExtractor:
         return result
     
     def _find_assignments(self, code: str, signal: str) -> List[str]:
-        """查找信号的所有赋值"""
+        """查找信号的所有赋值。
         
+        Args:
+            code: 源代码
+            signal: 信号名
+        
+        Returns:
+            List[str]: 赋值表达式列表
+        """
         assignments = []
         
         # 查找 signal <= xxx 或 signal = xxx
@@ -104,8 +162,15 @@ class ConditionRelationExtractor:
         return assignments
     
     def _extract_conditions(self, assignments: List[str], full_code: str = None) -> List[Condition]:
-        """提取条件"""
+        """提取条件。
         
+        Args:
+            assignments: 赋值表达式列表
+            full_code: 完整源代码
+        
+        Returns:
+            List[Condition]: 条件列表
+        """
         conditions = []
         
         for assign in assignments:
@@ -158,8 +223,14 @@ class ConditionRelationExtractor:
         return conditions
     
     def _generate_cross_bins(self, conditions: List[Condition]) -> List[str]:
-        """生成cross bins"""
+        """生成 cross bins。
         
+        Args:
+            conditions: 条件列表
+        
+        Returns:
+            List[str]: 交叉区间列表
+        """
         bins = []
         
         # 收集所有条件值
@@ -183,6 +254,14 @@ class ConditionRelationExtractor:
         return bins[:20]
     
     def _get_code(self, fname: str) -> str:
+        """获取源码。
+        
+        Args:
+            fname: 文件名
+        
+        Returns:
+            str: 源代码字符串
+        """
         # Use parser's get_source method if available
         if hasattr(self.parser, 'get_source'):
             source = self.parser.get_source(fname)
@@ -201,5 +280,14 @@ class ConditionRelationExtractor:
 
 
 def extract_condition_relation(parser, signal: str) -> ConditionRelation:
+    """便捷函数：提取信号的条件关系。
+    
+    Args:
+        parser: SVParser 实例
+        signal: 信号名
+    
+    Returns:
+        ConditionRelation: 条件关系对象
+    """
     extractor = ConditionRelationExtractor(parser)
     return extractor.extract(signal)

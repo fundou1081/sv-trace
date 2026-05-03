@@ -1,5 +1,15 @@
-"""Class hierarchy builder for SystemVerilog class inheritance."""
+"""ClassHierarchy - SystemVerilog 类继承层级构建器。
 
+构建和分析类的继承层级关系。
+
+Example:
+    >>> from debug.class_hierarchy import ClassHierarchyBuilder
+    >>> from debug.class_extractor import ClassExtractor
+    >>> ce = ClassExtractor(parser)
+    >>> builder = ClassHierarchyBuilder(ce)
+    >>> roots = builder.get_root_classes()
+    >>> print(builder.get_hierarchy_tree(roots[0]))
+"""
 import sys
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
@@ -10,7 +20,14 @@ from .class_extractor import ClassExtractor
 
 @dataclass
 class ClassHierarchyNode:
-    """Node in the class hierarchy tree."""
+    """类层级节点。
+    
+    Attributes:
+        class_name: 类名
+        parent_class: 父类名
+        child_classes: 子类名列表
+        level: 层级深度 (0=根节点)
+    """
     class_name: str
     parent_class: Optional[str] = None
     child_classes: List[str] = field(default_factory=list)
@@ -18,16 +35,33 @@ class ClassHierarchyNode:
 
 
 class ClassHierarchyBuilder:
-    """Build and analyze class inheritance hierarchies."""
+    """类层级构建器。
+    
+    从提取的类信息构建继承层级，提供层级查询功能。
 
+    Attributes:
+        extractor: 类提取器
+        classes: 类信息字典
+        hierarchy: 层级节点字典
+    
+    Example:
+        >>> builder = ClassHierarchyBuilder(ce)
+        >>> roots = builder.get_root_classes()
+    """
+    
     def __init__(self, extractor: ClassExtractor):
+        """初始化构建器。
+        
+        Args:
+            extractor: ClassExtractor 实例
+        """
         self.extractor = extractor
         self.classes: Dict[str, ClassInfo] = extractor.classes
         self.hierarchy: Dict[str, ClassHierarchyNode] = {}
         self._build_hierarchy()
-
+    
     def _build_hierarchy(self):
-        """Build the class hierarchy from extracted classes."""
+        """构建类层级。"""
         self.hierarchy = {}
         
         # First pass: create nodes for all classes
@@ -49,9 +83,14 @@ class ClassHierarchyBuilder:
         # Third pass: calculate levels (distance from root)
         for name in self.hierarchy:
             self._calculate_level(name, set())
-
+    
     def _calculate_level(self, class_name: str, visited: Set[str]):
-        """Calculate the level (distance from root) for a class."""
+        """计算类的层级深度。
+        
+        Args:
+            class_name: 类名
+            visited: 已访问的类集合（用于检测循环）
+        """
         if class_name in visited:
             return 0  # Circular reference
         visited.add(class_name)
@@ -69,31 +108,60 @@ class ClassHierarchyBuilder:
             node.level = parent_level + 1
         
         return node.level
-
+    
     def get_root_classes(self) -> List[str]:
-        """Get classes with no parent (top of hierarchy)."""
+        """获取根类（无父类的类）。
+        
+        Returns:
+            List[str]: 根类名列表
+        """
         return [name for name, node in self.hierarchy.items() 
                 if not node.parent_class]
-
+    
     def get_leaf_classes(self) -> List[str]:
-        """Get classes with no children (bottom of hierarchy)."""
+        """获取叶子类（无子类的类）。
+        
+        Returns:
+            List[str]: 叶子类名列表
+        """
         return [name for name, node in self.hierarchy.items() 
                 if not node.child_classes]
-
+    
     def get_parent(self, class_name: str) -> Optional[str]:
-        """Get the parent class of a given class."""
+        """获取类的父类。
+        
+        Args:
+            class_name: 类名
+        
+        Returns:
+            str: 父类名，无则返回 None
+        """
         if class_name in self.hierarchy:
             return self.hierarchy[class_name].parent_class
         return None
-
+    
     def get_children(self, class_name: str) -> List[str]:
-        """Get direct child classes of a given class."""
+        """获取类的直接子类。
+        
+        Args:
+            class_name: 类名
+        
+        Returns:
+            List[str]: 子类名列表
+        """
         if class_name in self.hierarchy:
             return list(self.hierarchy[class_name].child_classes)
         return []
-
+    
     def get_ancestors(self, class_name: str) -> List[str]:
-        """Get all ancestor classes (parent, grandparent, etc.)."""
+        """获取类的所有祖先类。
+        
+        Args:
+            class_name: 类名
+        
+        Returns:
+            List[str]: 祖先类名列表（从父类到根类）
+        """
         ancestors = []
         visited = set()
         current = class_name
@@ -110,9 +178,16 @@ class ClassHierarchyBuilder:
             current = parent
         
         return ancestors
-
+    
     def get_descendants(self, class_name: str) -> List[str]:
-        """Get all descendant classes (children, grandchildren, etc.)."""
+        """获取类的所有后代类。
+        
+        Args:
+            class_name: 类名
+        
+        Returns:
+            List[str]: 后代类名列表
+        """
         descendants = []
         to_visit = [class_name]
         visited = set()
@@ -130,22 +205,43 @@ class ClassHierarchyBuilder:
                 to_visit.append(child)
         
         return descendants
-
+    
     def get_depth(self, class_name: str) -> int:
-        """Get the depth of a class in the hierarchy (0 = root)."""
+        """获取类的层级深度。
+        
+        Args:
+            class_name: 类名
+        
+        Returns:
+            int: 深度（0=根节点），未找到返回-1
+        """
         if class_name in self.hierarchy:
             return self.hierarchy[class_name].level
         return -1
-
+    
     def get_hierarchy_tree(self, root_class: str) -> str:
-        """Get a visual tree representation of the hierarchy."""
+        """获取层级的可视化树形表示。
+        
+        Args:
+            root_class: 根类名
+        
+        Returns:
+            str: 树形结构的字符串表示
+        """
         lines = []
         self._build_tree_lines(root_class, "", True, lines)
         return "\n".join(lines)
-
+    
     def _build_tree_lines(self, class_name: str, prefix: str, 
                           is_last: bool, lines: List[str]):
-        """Recursively build tree representation."""
+        """递归构建树形表示。
+        
+        Args:
+            class_name: 类名
+            prefix: 前缀字符串
+            is_last: 是否为最后一个子节点
+            lines: 行列表
+        """
         if class_name not in self.hierarchy:
             return
         
@@ -159,21 +255,45 @@ class ClassHierarchyBuilder:
         for i, child in enumerate(children):
             is_last_child = (i == len(children) - 1)
             self._build_tree_lines(child, new_prefix, is_last_child, lines)
-
+    
     def is_descendant_of(self, class_name: str, ancestor_name: str) -> bool:
-        """Check if class_name is a descendant of ancestor_name."""
+        """检查类是否为某个祖先的后代。
+        
+        Args:
+            class_name: 类名
+            ancestor_name: 祖先类名
+        
+        Returns:
+            bool: 是否为后代
+        """
         return ancestor_name in self.get_ancestors(class_name)
-
+    
     def has_common_ancestor(self, class1: str, class2: str) -> bool:
-        """Check if two classes share a common ancestor."""
+        """检查两个类是否有共同祖先。
+        
+        Args:
+            class1: 类名1
+            class2: 类名2
+        
+        Returns:
+            bool: 是否有共同祖先
+        """
         ancestors1 = set(self.get_ancestors(class1))
         ancestors2 = set(self.get_ancestors(class2))
         ancestors1.add(class1)
         ancestors2.add(class2)
         return bool(ancestors1 & ancestors2)
-
+    
     def get_common_ancestors(self, class1: str, class2: str) -> List[str]:
-        """Get common ancestors of two classes."""
+        """获取两个类的共同祖先。
+        
+        Args:
+            class1: 类名1
+            class2: 类名2
+        
+        Returns:
+            List[str]: 共同祖先类名列表
+        """
         ancestors1 = set(self.get_ancestors(class1))
         ancestors2 = set(self.get_ancestors(class2))
         ancestors1.add(class1)

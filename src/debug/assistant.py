@@ -1,5 +1,15 @@
-"""
-DebugAssistant - AI 辅助调试入口
+"""DebugAssistant - AI 辅助调试入口。
+
+提供自然语言查询接口，支持信号驱动/负载查找、数据流分析、诊断等功能。
+
+Example:
+    >>> from debug.assistant import DebugAssistant
+    >>> from parse import SVParser
+    >>> parser = SVParser()
+    >>> parser.parse_file("design.sv")
+    >>> assistant = DebugAssistant(parser)
+    >>> result = assistant.ask("Find drivers for clk")
+    >>> print(result.content)
 """
 import sys
 import os
@@ -13,7 +23,19 @@ from enum import Enum
 
 
 class QueryIntent(Enum):
-    """查询意图枚举"""
+    """查询意图枚举。
+    
+    Attributes:
+        SIGNAL_DRIVERS: 查找信号驱动源
+        SIGNAL_LOADS: 查找信号负载
+        DATA_FLOW: 数据流分析
+        CONTROL_FLOW: 控制流分析
+        CROSS_MODULE: 跨模块追踪
+        DIAGNOSE: 问题诊断
+        FULL_CHECK: 全面检查
+        CLOCK_DOMAIN: 时钟域分析
+        UNKNOWN: 未知意图
+    """
     SIGNAL_DRIVERS = "signal_drivers"      # 找驱动
     SIGNAL_LOADS = "signal_loads"          # 找负载
     DATA_FLOW = "data_flow"                # 数据流
@@ -27,7 +49,16 @@ class QueryIntent(Enum):
 
 @dataclass
 class QueryResult:
-    """查询结果"""
+    """查询结果数据类。
+    
+    Attributes:
+        intent: 查询意图
+        signal: 相关信号名
+        module: 相关模块名
+        content: 简要内容
+        details: 详细信息列表
+        suggestions: 建议列表
+    """
     intent: QueryIntent
     signal: str = ""
     module: str = ""
@@ -37,9 +68,27 @@ class QueryResult:
 
 
 class DebugAssistant:
-    """AI 辅助调试助手"""
+    """AI 辅助调试助手。
+    
+    通过自然语言接口提供信号追踪、数据流分析、问题诊断等功能。
+
+    Attributes:
+        parser: SVParser 实例
+        tracers: 追踪器字典
+        analyzers: 分析器字典
+    
+    Example:
+        >>> assistant = DebugAssistant(parser)
+        >>> result = assistant.ask("Find drivers for clk")
+        >>> print(result.content)
+    """
     
     def __init__(self, parser):
+        """初始化调试助手。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
         
         # 初始化现有工具
@@ -70,7 +119,14 @@ class DebugAssistant:
         }
     
     def ask(self, question: str) -> QueryResult:
-        """主入口: 处理自然语言查询"""
+        """主入口：处理自然语言查询。
+        
+        Args:
+            question: 自然语言问题
+        
+        Returns:
+            QueryResult: 查询结果
+        """
         # 1. 解析意图
         intent, signal, module = self._parse_question(question)
         
@@ -98,7 +154,14 @@ class DebugAssistant:
             )
     
     def _parse_question(self, question: str) -> Tuple[QueryIntent, str, str]:
-        """解析问题，提取意图、信号名、模块名"""
+        """解析问题，提取意图、信号名、模块名。
+        
+        Args:
+            question: 原始问题
+        
+        Returns:
+            Tuple[QueryIntent, str, str]: (意图, 信号名, 模块名)
+        """
         q = question.lower().strip()
         
         # 意图识别 - 优先识别意图
@@ -121,37 +184,28 @@ class DebugAssistant:
         else:
             intent = QueryIntent.UNKNOWN
         
-        # 提取信号名 - 在整个问题中查找
-        # 支持: "for signal X", "of X", "X" (直接信号名)
+        # 提取信号名
         signal = ""
-        
-        # 清理问题文本，去除标点
         q_clean = re.sub(r"[?!.,;:']", "", q)
         
-        # 模式1: "for result", "of temp"
         signal_match = re.search(r'(?:for|of|to)\s+(\w+)', q_clean)
         if signal_match:
             signal = signal_match.group(1)
         
-        # 模式2: 直接信号名 (最后一个词，如果前面有特定动词)
         if not signal:
             if intent in [QueryIntent.SIGNAL_DRIVERS, QueryIntent.SIGNAL_LOADS]:
-                # "Find drivers result" -> 取最后一个词
                 words = q.split()
                 if len(words) >= 2:
                     signal = words[-1]
         
-        # 模式3: "trace from A to B" -> 取 A 或 B
         if not signal:
             from_to = re.search(r'(?:from|to)\s+(\w+)', q)
             if from_to:
                 signal = from_to.group(1)
         
-        # 模式4: 直接是信号名 (如 "diagnose temp")
         if not signal:
             words = q_clean.split()
             for w in reversed(words):
-                # 跳过常见关键词
                 if w not in ['diagnose', 'check', 'why', 'is', 'the', 'a', 'an', 'who', 'what', 'find']:
                     signal = w
                     break
@@ -160,17 +214,23 @@ class DebugAssistant:
         module_match = re.search(r'(?:in|module)\s+(\w+)', q)
         module = module_match.group(1) if module_match else ""
         
-        # 特殊处理: 去除信号名中的常见后缀
         if signal:
             signal = signal.rstrip('?!')
-            # 常见查询词转信号名
             if signal in ['issues', 'problem', 'module', 'this']:
                 signal = ""
         
         return intent, signal, module
     
     def _handle_signal_drivers(self, signal: str, module: str) -> QueryResult:
-        """处理驱动查询"""
+        """处理驱动查询。
+        
+        Args:
+            signal: 信号名
+            module: 模块名
+        
+        Returns:
+            QueryResult: 驱动查询结果
+        """
         if not signal:
             return QueryResult(intent=QueryIntent.SIGNAL_DRIVERS, content="Please specify a signal name.")
         
@@ -191,7 +251,15 @@ class DebugAssistant:
         return QueryResult(intent=QueryIntent.SIGNAL_DRIVERS, signal=signal, content=content, details=details)
     
     def _handle_signal_loads(self, signal: str, module: str) -> QueryResult:
-        """处理负载查询"""
+        """处理负载查询。
+        
+        Args:
+            signal: 信号名
+            module: 模块名
+        
+        Returns:
+            QueryResult: 负载查询结果
+        """
         if not signal:
             return QueryResult(intent=QueryIntent.SIGNAL_LOADS, content="Please specify a signal name.")
         
@@ -206,7 +274,15 @@ class DebugAssistant:
         return QueryResult(intent=QueryIntent.SIGNAL_LOADS, signal=signal, content=content, details=details)
     
     def _handle_data_flow(self, signal: str, module: str) -> QueryResult:
-        """处理数据流查询"""
+        """处理数据流查询。
+        
+        Args:
+            signal: 信号名
+            module: 模块名
+        
+        Returns:
+            QueryResult: 数据流查询结果
+        """
         if not signal:
             return QueryResult(intent=QueryIntent.DATA_FLOW, content="Please specify a signal.")
         
@@ -224,7 +300,15 @@ class DebugAssistant:
         return QueryResult(intent=QueryIntent.DATA_FLOW, signal=signal, content=content, details=details)
     
     def _handle_control_flow(self, signal: str, module: str) -> QueryResult:
-        """处理控制流查询"""
+        """处理控制流查询。
+        
+        Args:
+            signal: 信号名
+            module: 模块名
+        
+        Returns:
+            QueryResult: 控制流查询结果
+        """
         if not signal:
             return QueryResult(intent=QueryIntent.CONTROL_FLOW, content="Please specify a signal.")
         
@@ -241,7 +325,15 @@ class DebugAssistant:
         return QueryResult(intent=QueryIntent.CONTROL_FLOW, signal=signal, content=content, details=details)
     
     def _handle_cross_module(self, signal: str, module: str) -> QueryResult:
-        """处理跨模块追踪"""
+        """处理跨模块追踪。
+        
+        Args:
+            signal: 信号名（含层次路径）
+            module: 模块名
+        
+        Returns:
+            QueryResult: 跨模块追踪结果
+        """
         if not signal:
             return QueryResult(intent=QueryIntent.CROSS_MODULE, content="Please specify a signal with hierarchy.")
         
@@ -256,29 +348,36 @@ class DebugAssistant:
         return QueryResult(intent=QueryIntent.CROSS_MODULE, signal=signal, content=content)
     
     def _handle_diagnose(self, signal: str, module: str) -> QueryResult:
-        """处理诊断查询 - 使用增强的分析器"""
-        # 如果没有信号，转到全面检查
+        """处理诊断查询。
+        
+        Args:
+            signal: 信号名
+            module: 模块名
+        
+        Returns:
+            QueryResult: 诊断结果
+        """
         if not signal or signal in ['issues', 'module', 'problem']:
             return self._handle_full_check(signal, module)
         
         issues = []
         
-        # 1. XValue 检测
+        # XValue 检测
         xvalue_issues = self.analyzers['xvalue'].detect(signal)
         for i in xvalue_issues:
             issues.append(f"[XValue] {i.cause.value}: {i.description}")
         
-        # 2. 多驱动检测
+        # 多驱动检测
         multi_issues = self.analyzers['multi_driver'].detect(signal)
         for i in multi_issues:
             issues.append(f"[Multi-Driver] {i.driver_type.value}: {len(i.drivers)} sources")
         
-        # 3. 未初始化检测
+        # 未初始化检测
         uninit_issues = self.analyzers['uninitialized'].detect(signal)
         for i in uninit_issues:
             issues.append(f"[Uninit] {i.issue_type}: {i.description}")
         
-        # 4. 检查负载
+        # 检查负载
         loads = self.tracers['load'].find_load(signal)
         if not loads:
             drivers = self.tracers['driver'].find_driver(signal)
@@ -299,7 +398,15 @@ class DebugAssistant:
                           details=issues, suggestions=suggestions)
     
     def _handle_full_check(self, module: str, module_name: str = None) -> QueryResult:
-        """处理全面检查"""
+        """处理全面检查。
+        
+        Args:
+            module: 模块名
+            module_name: 模块名（别名）
+        
+        Returns:
+            QueryResult: 全面检查结果
+        """
         from lint.linter import SVLinter, IssueSeverity
         
         linter = SVLinter(self.parser)
@@ -321,7 +428,15 @@ class DebugAssistant:
         return QueryResult(intent=QueryIntent.FULL_CHECK, content=content, details=details, suggestions=suggestions)
     
     def _handle_clock_domain(self, signal: str, module: str) -> QueryResult:
-        """处理时钟域查询"""
+        """处理时钟域查询。
+        
+        Args:
+            signal: 信号名
+            module: 模块名
+        
+        Returns:
+            QueryResult: 时钟域查询结果
+        """
         if not signal:
             return QueryResult(intent=QueryIntent.CLOCK_DOMAIN, content="Please specify a signal.")
         
@@ -339,14 +454,43 @@ class DebugAssistant:
 
     # 便捷方法
     def find_drivers(self, signal: str):
+        """查找信号驱动源。
+        
+        Args:
+            signal: 信号名
+        
+        Returns:
+            驱动列表
+        """
         return self.tracers['driver'].find_driver(signal)
     
     def find_loads(self, signal: str):
+        """查找信号负载。
+        
+        Args:
+            signal: 信号名
+        
+        Returns:
+            负载列表
+        """
         return self.tracers['load'].find_load(signal)
     
     def trace_data_flow(self, signal: str):
+        """追踪数据流。
+        
+        Args:
+            signal: 信号名
+        
+        Returns:
+            数据流结果
+        """
         return self.tracers['dataflow'].find_flow(signal)
     
     def full_check(self):
+        """执行全面检查。
+        
+        Returns:
+            Lint 报告
+        """
         from lint.linter import SVLinter
         return SVLinter(self.parser).run_all()

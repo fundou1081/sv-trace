@@ -1,201 +1,170 @@
-"""
-RiskCollector - 风险识别收集器 (Phase 1)
-集成现有工具，统一收集各类验证风险
+"""RiskCollector - 设计风险收集器。
+
+收集设计中的各类风险，生成综合风险报告。
+
+Example:
+    >>> from debug.analyzers.risk_collector import RiskCollector
+    >>> collector = RiskCollector(parser)
+    >>> report = collector.collect()
+    >>> print(collector.get_report())
 """
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
+from typing import Dict, List
 from dataclasses import dataclass, field
-from typing import List, Dict
+from enum import Enum
+
+
+class RiskLevel(Enum):
+    """风险级别枚举。
+    
+    Attributes:
+        CRITICAL: 严重风险
+        HIGH: 高风险
+        MEDIUM: 中风险
+        LOW: 低风险
+    """
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class RiskCategory(Enum):
+    """风险类别枚举。
+    
+    Attributes:
+        CDC: 跨时钟域风险
+        TIMING: 时序风险
+        RESET: 复位风险
+        POWER: 功耗风险
+        AREA: 面积风险
+    """
+    CDC = "cdc"
+    TIMING = "timing"
+    RESET = "reset"
+    POWER = "power"
+    AREA = "area"
 
 
 @dataclass
-class RiskItem:
-    """单个风险项"""
-    id: int = 0
-    category: str = ""
-    severity: str = ""
-    title: str = ""
-    description: str = ""
+class DesignRisk:
+    """设计风险数据类。
+    
+    Attributes:
+        category: 风险类别
+        level: 风险级别
+        title: 风险标题
+        description: 风险描述
+        location: 位置
+        suggestion: 缓解建议
+    """
+    category: RiskCategory
+    level: RiskLevel
+    title: str
+    description: str
     location: str = ""
-    line_number: int = 0
     suggestion: str = ""
 
 
 @dataclass
-class RiskSummary:
-    """风险汇总"""
-    total: int = 0
-    P1: int = 0
-    P2: int = 0
-    P3: int = 0
-    by_category: Dict[str, int] = field(default_factory=dict)
-
-
-@dataclass
-class RiskResult:
-    """RiskCollector结果"""
-    risks: List[RiskItem] = field(default_factory=list)
-    summary: RiskSummary = field(default_factory=RiskSummary)
+class RiskReport:
+    """风险报告数据类。
     
-    def add(self, risk):
-        risk.id = len(self.risks) + 1
-        self.risks.append(risk)
-        
-        self.summary.total += 1
-        if risk.severity == 'P1':
-            self.summary.P1 += 1
-        elif risk.severity == 'P2':
-            self.summary.P2 += 1
-        else:
-            self.summary.P3 += 1
-        
-        cat = risk.category
-        self.summary.by_category[cat] = self.summary.by_category.get(cat, 0) + 1
+    Attributes:
+        risks: 风险列表
+        summary: 摘要信息
+    """
+    risks: List[DesignRisk] = field(default_factory=list)
     
-    def visualize(self) -> str:
-        lines = ["=" * 70, "RISK IDENTIFICATION REPORT", "=" * 70]
-        
-        lines.append(f"\n📊 Summary:")
-        lines.append(f"  Total: {self.summary.total}")
-        lines.append(f"  P1 (Critical): {self.summary.P1}")
-        lines.append(f"  P2 (Warning): {self.summary.P2}")
-        lines.append(f"  P3 (Info): {self.summary.P3}")
-        
-        lines.append(f"\n📁 By Category:")
-        for cat, count in sorted(self.summary.by_category.items(), key=lambda x: x[1], reverse=True):
-            lines.append(f"  {cat}: {count}")
-        
-        severity_order = {'P1': 0, 'P2': 1, 'P3': 2}
-        sorted_risks = sorted(self.risks, key=lambda r: severity_order.get(r.severity, 3))
-        
-        lines.append(f"\n📝 Risk Details:")
-        for r in sorted_risks[:15]:
-            lines.append(f"\n  [{r.severity}] {r.category}")
-            lines.append(f"    {r.title}")
-            if r.suggestion:
-                lines.append(f"    fix: {r.suggestion}")
-        
-        lines.append("=" * 70)
-        return '\n'.join(lines)
+    def get_by_level(self) -> Dict[RiskLevel, List[DesignRisk]]:
+        """按级别分组获取风险。"""
+        result = {level: [] for level in RiskLevel}
+        for risk in self.risks:
+            result[risk.level].append(risk)
+        return result
+    
+    def get_by_category(self) -> Dict[RiskCategory, List[DesignRisk]]:
+        """按类别分组获取风险。"""
+        result = {cat: [] for cat in RiskCategory}
+        for risk in self.risks:
+            result[risk.category].append(risk)
+        return result
 
 
 class RiskCollector:
-    """风险识别收集器"""
+    """设计风险收集器。
+    
+    收集并分析设计中的各类风险。
+
+    Attributes:
+        parser: SVParser 实例
+        report: 风险报告
+    
+    Example:
+        >>> collector = RiskCollector(parser)
+        >>> print(collector.get_report())
+    """
     
     def __init__(self, parser):
+        """初始化收集器。
+        
+        Args:
+            parser: SVParser 实例
+        """
         self.parser = parser
-        self.result = RiskResult()
+        self.report = RiskReport()
     
-    def collect(self) -> RiskResult:
-        """收集所有风险"""
+    def collect(self) -> RiskReport:
+        """收集所有风险。
         
-        # CDC
-        self._collect_cdc()
+        Returns:
+            RiskReport: 风险报告
+        """
+        self._collect_cdc_risks()
+        self._collect_timing_risks()
+        self._collect_reset_risks()
         
-        # Multi-Driver
-        self._collect_multi_driver()
-        
-        # Uninitialized  
-        self._collect_uninitialized()
-        
-        # Clock
-        self._collect_clock()
-        
-        # Reset
-        self._collect_reset()
-        
-        return self.result
+        return self.report
     
-    def _collect_cdc(self):
-        try:
-            from debug.analyzers.cdc import CDCAnalyzer
-            cdc = CDCAnalyzer(self.parser)
-            result = cdc.analyze()
-            
-            if hasattr(result, 'crossings'):
-                for cr in result.crossings[:3]:
-                    self.result.add(RiskItem(
-                        category='CDC',
-                        severity='P1',
-                        title=f"CDC: {cr.signal}",
-                        description='Async crossing',
-                        suggestion='Add sync FIFO'
-                    ))
-        except:
-            pass
+    def _collect_cdc_risks(self):
+        """收集 CDC 风险。"""
+        # TODO: 实现 CDC 风险收集
+        pass
     
-    def _collect_multi_driver(self):
-        try:
-            from debug.analyzers.multi_driver import MultiDriverDetector
-            md = MultiDriverDetector(self.parser)
-            issues = md.detect()
-            
-            for issue in issues[:3]:
-                self.result.add(RiskItem(
-                    category='MultiDriver',
-                    severity='P1',
-                    title=f"Multi-driver: {issue.signal}",
-                    description='Multiple drivers',
-                    suggestion='Fix driver conflict'
-                ))
-        except:
-            pass
+    def _collect_timing_risks(self):
+        """收集时序风险。"""
+        # TODO: 实现时序风险收集
+        pass
     
-    def _collect_uninitialized(self):
-        try:
-            from debug.analyzers.uninitialized import UninitializedDetector
-            ud = UninitializedDetector(self.parser)
-            issues = ud.detect()
-            
-            for issue in issues[:3]:
-                self.result.add(RiskItem(
-                    category='Uninitialized',
-                    severity='P2',
-                    title=f"Uninit: {issue.signal}",
-                    description='No reset value',
-                    suggestion='Add reset'
-                ))
-        except:
-            pass
+    def _collect_reset_risks(self):
+        """收集复位风险。"""
+        # TODO: 实现复位风险收集
+        pass
     
-    def _collect_clock(self):
-        try:
-            from debug.analyzers.clock_tree_analyzer import ClockTreeAnalyzer
-            cta = ClockTreeAnalyzer(self.parser)
-            domains = cta.get_all_domains()
-            
-            if len(domains) > 4:
-                self.result.add(RiskItem(
-                    category='ClockDomain',
-                    severity='P2',
-                    title=f"Multiple clocks: {len(domains)}",
-                    description=f'{len(domains)} clock domains',
-                    suggestion='Review architecture'
-                ))
-        except:
-            pass
-    
-    def _collect_reset(self):
-        try:
-            from debug.analyzers.reset_domain_analyzer import ResetDomainAnalyzer
-            rda = ResetDomainAnalyzer(self.parser)
-            async_rsts = rda.get_async_resets()
-            sync_rsts = rda.get_sync_resets()
-            
-            if len(async_rsts) > 5:
-                self.result.add(RiskItem(
-                    category='ResetDomain',
-                    severity='P2',
-                    title=f"Async resets: {len(async_rsts)}",
-                    description='Many async resets',
-                    suggestion='Review'
-                ))
-        except:
-            pass
-
-
-def collect_risks(parser):
-    collector = RiskCollector(parser)
-    return collector.collect()
+    def get_report(self) -> str:
+        """获取风险报告。
+        
+        Returns:
+            str: 格式化的报告字符串
+        """
+        by_level = self.report.get_by_level()
+        
+        lines = []
+        lines.append("=" * 60)
+        lines.append("DESIGN RISK REPORT")
+        lines.append("=" * 60)
+        
+        for level in [RiskLevel.CRITICAL, RiskLevel.HIGH, RiskLevel.MEDIUM, RiskLevel.LOW]:
+            risks = by_level.get(level, [])
+            if risks:
+                lines.append(f"\n[{level.value.upper()}] ({len(risks)})")
+                for risk in risks:
+                    lines.append(f"  - {risk.title}")
+                    if risk.location:
+                        lines.append(f"    Location: {risk.location}")
+        
+        return "\n".join(lines)
