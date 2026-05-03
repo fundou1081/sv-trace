@@ -1,6 +1,6 @@
 """FSMAnalyzer - 状态机深度分析器。
 
-基于 IEEE 1800-2017 Section 40.4 标准提取和分析状态机。
+基于 IEEE 1800-2017 Section 40.4 标准，使用 pyslang AST 提取和分析状态机。
 
 Example:
     >>> from debug.analyzers.fsm_analyzer import FSMAnalyzer
@@ -14,7 +14,6 @@ Example:
 """
 
 import os
-import re
 import sys
 from typing import Dict, List, Set, Tuple, Optional
 from dataclasses import dataclass, field
@@ -67,156 +66,173 @@ class FSMAnalysisResult:
 
 
 class FSMAnalyzer:
-    """状态机深度分析器。"""
+    """状态机深度分析器 - 基于 pyslang AST。"""
     
     def __init__(self, parser):
         self.parser = parser
         self.fsms: Dict[str, FSMInfo] = {}
     
-    def _get_module_source(self, module_name: str) -> Optional[str]:
-        """Get source code for a specific module."""
+    def _walk(self, node):
+        """Walk SyntaxNodes, skipping Tokens."""
+        try:
+            for child in node:
+                yield child
+                yield from self._walk(child)
+        except TypeError:
+            pass
+    
+    def _get_module_tree(self, module_name: str):
+        """Get AST tree for a specific module."""
+        import pyslang
         for fname in self.parser.trees.keys():
             try:
                 with open(fname, 'r') as f:
-                    full_source = f.read()
+                    content = f.read()
             except:
                 continue
             
-            mod_start = full_source.find(f'module {module_name}')
-            if mod_start == -1:
-                continue
-            mod_end = full_source.find('endmodule', mod_start)
-            if mod_end == -1:
-                continue
-            return full_source[mod_start:mod_end + len('endmodule')]
+            if f'module {module_name}' in content:
+                try:
+                    tree = pyslang.SyntaxTree.fromText(content)
+                    return tree
+                except:
+                    continue
         return None
     
-    def extract_fsm(self, module_name: str, state_register: str = None) -> Optional[FSMInfo]:
-        """Extract FSM."""
-        module_source = self._get_module_source(module_name)
-        if not module_source:
+    def _extract_target_from_clause(self, clause, next_var: str) -> Optional[str]:
+        """Extract target state from a case item clause."""
+        if not clause:
             return None
-        
-        # Find always_ff blocks
-        ff_blocks = re.findall(r'always_ff\s+@\([^)]+\)\s*begin\s+(.*?)\s+end', module_source, re.DOTALL)
-        
-        # Find the case variable first (more reliable than guessing from always_ff)
-        case_match = re.search(r'(?:unique\s+)?case\s*\(\s*(\w+)\s*\)', module_source)
-        state_var = state_register
-        if not state_var and case_match:
-            state_var = case_match.group(1)
-        
-        if not state_var:
-            for block in ff_blocks:
-                m = re.search(r'(\w+)\s*<=', block)
-                if m:
-                    cand = m.group(1)
-                    if cand not in ['clk', 'clock', 'rst', 'reset', 'enable']:
-                        state_var = cand
-                        break
-        
-        if not state_var:
-            return None
-        
-        # Find next_state signal (e.g., next_state, state_next, state_d)
+        for node in self._walk(clause):
+            if node.kind.name == 'AssignmentExpression':
+                left = str(node.left).strip() if hasattr(node, 'left') else ''
+                right = str(node.right).strip() if hasattr(node, 'right') else ''
+                if left == next_var:
+                    if '?' in right:
+                        right = right.split('?')[1].split(':')[0].strip()
+                    return right
+        return None
+    
+    def _extract_fsm_from_ast(self, tree) -> Optional[FSMInfo]:
+        """Extract FSM from AST - CaseStatement-first approach."""
+        root = tree.root
+        state_var = None
         next_var = None
-        next_matches = re.findall(r'(next_\w+|\w+_next|state_d)\s*=\s*([^;]+)', module_source)
-        for name, _ in next_matches:
-            if 'next' in name.lower() or name == 'state_d':
-                next_var = name
-                break
+        reset_state = None
+        transitions = []
         
-        # Build FSMInfo
-        fsm_info = FSMInfo(name=state_var, register_signal=state_var)
-        
-        # Extract transitions from case block
-        # Standard FSM: case(state_var) or unique case(state_var)
-        case_pattern = rf'(?:unique\s+)?case\s*\(\s*{state_var}\s*\)(.*?)endcase'
-        case_m = re.search(case_pattern, module_source, re.DOTALL)
-        
-        # One-hot FSM: case(1'b1) or unique case(1'b1)
-        if not case_m:
-            case_pattern = r"(?:unique\s+)?case\s*\(\s*1'b1\s*\)(.*?)endcase"
-            case_m = re.search(case_pattern, module_source, re.DOTALL)
-        
-        if case_m:
-            case_body = case_m.group(1)
-            
-            # Determine which pattern to use based on next_var type
-            if next_var and next_var != 'state_d':
-                # Pattern: STATE: if (cond) next_var = TARGET;
-                assign_pattern = rf'(\w+)\s*:\s*(?:if\s*\([^)]+\)\s+)?{re.escape(next_var)}\s*=\s*(\w+)'
-                when_matches = re.findall(assign_pattern, case_body)
-            elif next_var == 'state_d':
-                # Pattern: STATE: ... state_d = TARGET; (state_d assignment, OpenTitan style)
-                assign_pattern = r'(\w+)\s*:.*?state_d\s*=\s*(\w+)'
-                when_matches = re.findall(assign_pattern, case_body, re.DOTALL)
-            else:
-                # Try state_d = TARGET (direct FSM assignment, common in OpenTitan)
-                assign_pattern_d = r'(\w+)\s*:.*?state_d\s*=\s*(\w+)'
-                dm = re.findall(assign_pattern_d, case_body, re.DOTALL)
+        # Find CaseStatement - use its expr as state_var
+        for node in self._walk(root):
+            if node.kind.name == 'CaseStatement':
+                case_expr = str(node.expr).strip() if hasattr(node, 'expr') else ''
                 
-                # Try state_var <= TARGET (sequential always_ff)
-                assign_pattern_q = r'(\w+)\s*:.*?' + re.escape(state_var) + r'\s*<=\s*(\w+)'
-                qm = re.findall(assign_pattern_q, case_body, re.DOTALL)
+                # Skip one-hot style: case(1'b1)
+                if case_expr == "1'b1":
+                    continue
                 
-                when_matches = dm if len(dm) > len(qm) else qm
-            
-            for match in when_matches:
-                if len(match) == 3:
-                    from_state, _, to_state = match
-                elif len(match) == 2:
-                    from_state, to_state = match
-                else:
-                    from_state, to_state = match[0], match[-1]
-                fsm_info.transitions.append(Transition(
-                    from_state=from_state.strip(),
-                    to_state=to_state.strip()
-                ))
-        
-        # Infer states from transitions
-        state_names = set()
-        for t in fsm_info.transitions:
-            state_names.add(t.from_state)
-            state_names.add(t.to_state)
-        for name in sorted(state_names):
-            fsm_info.states.append(StateInfo(name=name))
-        
-        # Calculate degrees
-        in_deg = defaultdict(int)
-        out_deg = defaultdict(int)
-        for t in fsm_info.transitions:
-            out_deg[t.from_state] += 1
-            in_deg[t.to_state] += 1
-        for s in fsm_info.states:
-            s.in_degree = in_deg.get(s.name, 0)
-            s.out_degree = out_deg.get(s.name, 0)
-            s.transitions = [t for t in fsm_info.transitions if t.from_state == s.name]
-        
-        # Find reset state
-        reset_found = False
-        for block in ff_blocks:
-            if state_var in block:
-                rm = re.search(r"if\s*\(\s*!?\w+\s*\)\s*(\w+)\s*<=\s*(\w+)", block)
-                if rm:
-                    fsm_info.reset_state = rm.group(3)
-                    reset_found = True
+                if case_expr and (case_expr.endswith('_q') or 
+                               '_state' in case_expr.lower()):
+                    state_var = case_expr
+                    
+                    # Find next_var from always_comb/always_block
+                    for nn in self._walk(root):
+                        if nn.kind.name in ['AlwaysCombBlock', 'AlwaysBlock']:
+                            for aa in self._walk(nn):
+                                if aa.kind.name == 'AssignmentExpression':
+                                    left = str(aa.left).strip() if hasattr(aa, 'left') else ''
+                                    if left == 'state_d':
+                                        next_var = left
+                                        break
+                            if next_var:
+                                break
                     break
         
-        # If not found in always_ff, check FSM macro (e.g., `PRIM_FLOP_SPARSE_FSM)
-        if not reset_found:
-            fsm_macro = re.search(r'`PRIM_FLOP_SPARSE_FSM\([^,]+,[^,]+,[^,]+,[^,]+,\s*(\w+)\)', module_source)
-            if fsm_macro:
-                fsm_info.reset_state = fsm_macro.group(1)
+        if not state_var:
+            return None
         
-        # Mark initial and final states
-        for s in fsm_info.states:
-            if s.name == fsm_info.reset_state:
-                s.is_initial = True
-            if s.out_degree == 0 and len(fsm_info.states) > 1:
-                s.is_final = True
+        # Find CaseStatement again to extract transitions
+        case_stmt = None
+        for node in self._walk(root):
+            if node.kind.name == 'CaseStatement':
+                case_expr = str(node.expr).strip() if hasattr(node, 'expr') else ''
+                if case_expr == state_var:
+                    case_stmt = node
+                    break
+        
+        if not case_stmt:
+            return None
+        
+        # Extract transitions from case items
+        for node in self._walk(case_stmt.items):
+            if node.kind.name == 'StandardCaseItem':
+                state_name = None
+                for expr in node.expressions:
+                    sn = str(expr).strip()
+                    if sn and not sn.startswith('//'):
+                        state_name = sn
+                        break
+                
+                if state_name and hasattr(node, 'clause'):
+                    target = self._extract_target_from_clause(node.clause, next_var or state_var)
+                    if target:
+                        transitions.append(Transition(
+                            from_state=state_name,
+                            to_state=target
+                        ))
+        
+        if not transitions:
+            return None
+        
+        # Find reset state from always_ff
+        for node in self._walk(root):
+            if node.kind.name == 'AlwaysFFBlock':
+                for inner in self._walk(node):
+                    if inner.kind.name == 'NonblockingAssignmentExpression':
+                        left = str(inner.left).strip() if hasattr(inner, 'left') else ''
+                        right = str(inner.right).strip() if hasattr(inner, 'right') else ''
+                        if left == state_var:
+                            reset_state = right
+                            break
+                if reset_state:
+                    break
+        
+        # Build FSMInfo
+        fsm_info = FSMInfo(
+            name=state_var,
+            register_signal=state_var,
+            reset_state=reset_state
+        )
+        fsm_info.transitions = transitions
+        
+        # Infer states
+        state_names = set()
+        for t in transitions:
+            state_names.add(t.from_state)
+            state_names.add(t.to_state)
+        
+        in_deg = defaultdict(int)
+        out_deg = defaultdict(int)
+        for t in transitions:
+            out_deg[t.from_state] += 1
+            in_deg[t.to_state] += 1
+        
+        for name in sorted(state_names):
+            si = StateInfo(name=name)
+            si.in_degree = in_deg.get(name, 0)
+            si.out_degree = out_deg.get(name, 0)
+            if name == reset_state:
+                si.is_initial = True
+            fsm_info.states.append(si)
         
         return fsm_info
+    
+    def extract_fsm(self, module_name: str, state_register: str = None) -> Optional[FSMInfo]:
+        """Extract FSM from module using pyslang AST."""
+        tree = self._get_module_tree(module_name)
+        if not tree:
+            return None
+        
+        return self._extract_fsm_from_ast(tree)
     
     def analyze(self, fsm: FSMInfo) -> FSMAnalysisResult:
         """Analyze FSM."""
@@ -251,11 +267,6 @@ class FSMAnalyzer:
         if not fsm.states:
             return []
         initial = fsm.reset_state
-        if not initial:
-            for s in fsm.states:
-                if s.is_initial:
-                    initial = s.name
-                    break
         if not initial:
             return []
         reachable = {initial}
