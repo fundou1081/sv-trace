@@ -293,31 +293,54 @@ class FSMAnalyzer:
                             break
         
         # Step 2: Fallback - Pattern matching (CaseStatement)
+        # Priority: _current > _q > _state (most likely to be FSM)
         if not state_var:
+            candidates = []
             for node in self._walk(root):
                 if node.kind.name == 'CaseStatement':
                     case_expr = str(node.expr).strip() if hasattr(node, 'expr') else ''
                     
-                    # Skip one-hot style: case(1'b1) - skip for now
-                    if case_expr == "1'b1":
+                    # Skip one-hot style
+                    # Skip one-hot style: case(1'b1) 
+                    if case_expr in ["1'b1", "1b1"]:
                         continue
                     
-                    if case_expr and (case_expr.endswith('_q') or '_state' in case_expr.lower()):
-                        source_type = 'pattern'
-                        state_var = case_expr
+                    if case_expr:
+                        score = 0
+                        if '_current' in case_expr:
+                            score = 3
+                        elif case_expr.endswith('_q'):
+                            score = 2
+                        elif '_state' in case_expr.lower():
+                            score = 1
                         
-                        # Find next_var
-                        for nn in self._walk(root):
-                            if nn.kind.name in ['AlwaysCombBlock', 'AlwaysBlock']:
-                                for aa in self._walk(nn):
-                                    if aa.kind.name == 'AssignmentExpression':
-                                        left = str(aa.left).strip() if hasattr(aa, 'left') else ''
-                                        if left == 'state_d':
-                                            next_var = left
-                                            break
-                                if next_var:
+                        if score > 0:
+                            candidates.append((score, case_expr))
+            
+            # Sort by score descending
+            candidates.sort(key=lambda x: -x[0])
+            
+            if candidates:
+                state_var = candidates[0][1]
+                source_type = 'pattern'
+                
+                # Find next_var (both state_d and state_next patterns)
+                for nn in self._walk(root):
+                    if nn.kind.name in ['AlwaysCombBlock', 'AlwaysBlock']:
+                        for aa in self._walk(nn):
+                            if aa.kind.name == 'AssignmentExpression':
+                                left = str(aa.left).strip() if hasattr(aa, 'left') else ''
+                                right = str(aa.right).strip() if hasattr(aa, 'right') else ''
+                                # Pattern 1: state_d = (next state variable)
+                                if left == 'state_d':
+                                    next_var = left
                                     break
-                        break
+                                # Pattern 2: state_next = state_current (right side is current state var)
+                                if 'next' in left.lower() and right == state_var:
+                                    next_var = left
+                                    break
+                        if next_var:
+                            break
         
         if not state_var:
             return None
