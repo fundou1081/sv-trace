@@ -97,10 +97,15 @@ class FSMAnalyzer:
         if not module_source:
             return None
         
-        # Find always_ff blocks and state register
+        # Find always_ff blocks
         ff_blocks = re.findall(r'always_ff\s+@\([^)]+\)\s*begin\s+(.*?)\s+end', module_source, re.DOTALL)
         
+        # Find the case variable first (more reliable than guessing from always_ff)
+        case_match = re.search(r'(?:unique\s+)?case\s*\(\s*(\w+)\s*\)', module_source)
         state_var = state_register
+        if not state_var and case_match:
+            state_var = case_match.group(1)
+        
         if not state_var:
             for block in ff_blocks:
                 m = re.search(r'(\w+)\s*<=', block)
@@ -113,11 +118,11 @@ class FSMAnalyzer:
         if not state_var:
             return None
         
-        # Find next_state signal
+        # Find next_state signal (e.g., next_state, state_next, state_d)
         next_var = None
-        next_matches = re.findall(r'(next_\w+|\w+_next)\s*=\s*([^;]+)', module_source)
+        next_matches = re.findall(r'(next_\w+|\w+_next|state_d)\s*=\s*([^;]+)', module_source)
         for name, _ in next_matches:
-            if 'next' in name.lower():
+            if 'next' in name.lower() or name == 'state_d':
                 next_var = name
                 break
         
@@ -125,25 +130,37 @@ class FSMAnalyzer:
         fsm_info = FSMInfo(name=state_var, register_signal=state_var)
         
         # Extract transitions from case block
-        # Standard FSM: case(state_var)
-        case_pattern = rf'case\s*\(\s*{state_var}\s*\)(.*?)endcase'
+        # Standard FSM: case(state_var) or unique case(state_var)
+        case_pattern = rf'(?:unique\s+)?case\s*\(\s*{state_var}\s*\)(.*?)endcase'
         case_m = re.search(case_pattern, module_source, re.DOTALL)
         
-        # One-hot FSM: case(1'b1)
+        # One-hot FSM: case(1'b1) or unique case(1'b1)
         if not case_m:
-            case_pattern = r"case\s*\(\s*1'b1\s*\)(.*?)endcase"
+            case_pattern = r"(?:unique\s+)?case\s*\(\s*1'b1\s*\)(.*?)endcase"
             case_m = re.search(case_pattern, module_source, re.DOTALL)
         
         if case_m:
             case_body = case_m.group(1)
-            # Match: STATE: [if (cond)] next_var = TARGET;
-            if next_var:
+            
+            # Determine which pattern to use based on next_var type
+            if next_var and next_var != 'state_d':
+                # Pattern: STATE: if (cond) next_var = TARGET;
                 assign_pattern = rf'(\w+)\s*:\s*(?:if\s*\([^)]+\)\s+)?{re.escape(next_var)}\s*=\s*(\w+)'
                 when_matches = re.findall(assign_pattern, case_body)
-            else:
-                # Direct assignment: STATE: [if (cond)] state <= TARGET;
-                assign_pattern = r'(\w+)\s*:.*?' + re.escape(state_var) + r'\s*<=\s*(\w+)'
+            elif next_var == 'state_d':
+                # Pattern: STATE: ... state_d = TARGET; (state_d assignment, OpenTitan style)
+                assign_pattern = r'(\w+)\s*:.*?state_d\s*=\s*(\w+)'
                 when_matches = re.findall(assign_pattern, case_body, re.DOTALL)
+            else:
+                # Try state_d = TARGET (direct FSM assignment, common in OpenTitan)
+                assign_pattern_d = r'(\w+)\s*:.*?state_d\s*=\s*(\w+)'
+                dm = re.findall(assign_pattern_d, case_body, re.DOTALL)
+                
+                # Try state_var <= TARGET (sequential always_ff)
+                assign_pattern_q = r'(\w+)\s*:.*?' + re.escape(state_var) + r'\s*<=\s*(\w+)'
+                qm = re.findall(assign_pattern_q, case_body, re.DOTALL)
+                
+                when_matches = dm if len(dm) > len(qm) else qm
             
             for match in when_matches:
                 if len(match) == 3:
@@ -177,12 +194,20 @@ class FSMAnalyzer:
             s.transitions = [t for t in fsm_info.transitions if t.from_state == s.name]
         
         # Find reset state
+        reset_found = False
         for block in ff_blocks:
             if state_var in block:
-                rm = re.search(r"if\s*\(\s*!?\w+\s*\)\s*\w+\s*<=\s*(\w+)", block)
+                rm = re.search(r"if\s*\(\s*!?\w+\s*\)\s*(\w+)\s*<=\s*(\w+)", block)
                 if rm:
-                    fsm_info.reset_state = rm.group(1)
+                    fsm_info.reset_state = rm.group(3)
+                    reset_found = True
                     break
+        
+        # If not found in always_ff, check FSM macro (e.g., `PRIM_FLOP_SPARSE_FSM)
+        if not reset_found:
+            fsm_macro = re.search(r'`PRIM_FLOP_SPARSE_FSM\([^,]+,[^,]+,[^,]+,[^,]+,\s*(\w+)\)', module_source)
+            if fsm_macro:
+                fsm_info.reset_state = fsm_macro.group(1)
         
         # Mark initial and final states
         for s in fsm_info.states:
