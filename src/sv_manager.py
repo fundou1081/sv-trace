@@ -30,6 +30,28 @@ class SVManager:
     def trees(self):
         return {f: r.tree for f, r in self._results.items() if r.success}
     
+    def _offset_to_line(self, source, offset):
+        line = 1
+        for i in range(min(offset, len(source))):
+            if source[i] == '\n':
+                line += 1
+        return line
+    
+    def _find_all_line_numbers(self, n, source, depth=0):
+        lines = []
+        if depth > 20:
+            return lines
+        try:
+            if hasattr(n, 'location') and n.location:
+                line = self._offset_to_line(source, n.location.offset)
+                if line not in lines:
+                    lines.append(line)
+            for c in n:
+                lines.extend(self._find_all_line_numbers(c, source, depth+1))
+        except:
+            pass
+        return lines
+    
     def parse_file(self, filepath):
         if not os.path.exists(filepath):
             return None
@@ -40,12 +62,7 @@ class SVManager:
             diagnostics = [str(d) for d in tree.diagnostics]
             ec = sum(1 for d in diagnostics if 'error' in d.lower())
             wc = sum(1 for d in diagnostics if 'warning' in d.lower())
-            if ec > 0:
-                conf = "uncertain"
-            elif wc > 0:
-                conf = "medium"
-            else:
-                conf = "high"
+            conf = "uncertain" if ec else ("medium" if wc else "high")
             result = SVResult(
                 tree=tree if ec == 0 else None,
                 filename=filepath,
@@ -57,21 +74,12 @@ class SVManager:
                 warning_count=wc,
                 caveats=[f"Found {ec} errors" if ec else ""]
             )
-            if ec == 0:
-                self._trees[filepath] = tree
+            if ec == 0: self._trees[filepath] = tree
             self._results[filepath] = result
             return result
         except Exception as e:
-            result = SVResult(
-                tree=None,
-                filename=filepath,
-                source="",
-                success=False,
-                confidence="uncertain",
-                diagnostics=[str(e)],
-                error_count=1,
-                caveats=[str(e)]
-            )
+            result = SVResult(tree=None, filename=filepath, source="", success=False,
+                confidence="uncertain", diagnostics=[str(e)], error_count=1, caveats=[str(e)])
             self._results[filepath] = result
             return result
     
@@ -87,20 +95,37 @@ class SVManager:
     
     def get_line(self, filename, line_number):
         result = self._results.get(filename)
-        if not result:
-            return None
+        if not result: return None
         lines = result.source.split('\n')
-        if 1 <= line_number <= len(lines):
-            return lines[line_number - 1]
-        return None
+        return lines[line_number - 1] if 1 <= line_number <= len(lines) else None
     
     def get_lines(self, filename, line, before=0, after=0):
         result = self._results.get(filename)
-        if not result:
-            return {}
+        if not result: return {}
         lines = result.source.split('\n')
         start, end = max(1, line - before), min(len(lines), line + after)
         return {i: lines[i-1] for i in range(start, end + 1)}
+    
+    def get_scope_source(self, filename, node, max_lines=50):
+        result = self._results.get(filename)
+        if not result or not result.source:
+            return None
+        source = result.source
+        
+        # 查找节点的所有行号
+        line_nums = self._find_all_line_numbers(node, source)
+        if not line_nums:
+            return None
+        
+        start_line = min(line_nums)
+        end_line = min(max(line_nums), start_line + max_lines)
+        
+        if start_line < 1 or end_line > len(source.split('\n')):
+            return None
+        
+        scope = {i: source.split('\n')[i-1] for i in range(start_line, end_line + 1)}
+        
+        return {'start': start_line, 'end': end_line, 'lines': scope}
     
     def get_failed_files(self):
         return [f for f, r in self._results.items() if not r.success]
