@@ -204,3 +204,84 @@ class SignalChainQuery:
 2. 完善 `_build_reverse_index` 确保完整映射
 3. 添加边界测试覆盖复杂表达式场景
 
+
+---
+
+## OpenTitan spi_cmdparse 测试 (2026-05-04)
+
+### 测试对象
+
+`opentitan/hw/ip/spi_device/rtl/spi_cmdparse.sv` (449 行)
+
+### 测试结果
+
+| 指标 | 结果 |
+|------|------|
+| 解析成功率 | ✅ 100% |
+| 信号发现 | ✅ 23 个信号 |
+| 驱动类型识别 | ✅ 正确 |
+| RHS 提取 | ⚠️ 部分不完整 |
+
+### 关键发现
+
+1. **cmd_info_q**: always_ff 寄存器，驱动数 4 个 ✅
+2. **sel_dp**: always_comb 状态机，驱动数 10 个 ✅
+3. **opcode_en4b**: continuous 赋值，驱动数 1 个 ✅
+4. **latch_cmdinfo**: always_comb，驱动数 4 个 ✅
+
+### 回归测试
+
+- 单元测试: 10 passed ✅
+- OpenTitan 测试: 2 passed ✅
+
+
+---
+
+## 场景 B/C 定义 (2026-05-04)
+
+### 场景B: ModuleConnectionsQuery
+
+**目标**: 给定模块，追踪所有端口连接关系
+
+**数据模型**:
+```python
+@dataclass
+class ModuleConnections:
+    module: str
+    inputs: List[PortConnection]   # 输入端口及连接
+    outputs: List[PortConnection] # 输出端口及连接
+    cross_module: List[CrossModuleConnection]  # 跨模块连接
+    confidence: str
+    caveats: List[str]
+```
+
+**用例**:
+```python
+query = ModuleConnectionsQuery(parser)
+result = query.trace('uart_core')
+# 返回模块所有端口及其外部连接
+```
+
+### 场景C: ClockDomainTracer
+
+**目标**: 给定时钟信号，追踪该时钟域内所有寄存器及其连线
+
+**数据模型**:
+```python
+@dataclass
+class ClockDomainTrace:
+    clock: str
+    registers: List[RegisterInfo]      # 域内寄存器
+    combinational: List[str]          # 域内组合逻辑
+    cross_domain_paths: List[str]     # 跨时钟域路径
+    confidence: str
+    caveats: List[str]
+```
+
+**用例**:
+```python
+tracer = ClockDomainTracer(parser)
+result = tracer.trace('clk')
+# 返回 clk 时钟域内所有寄存器
+```
+

@@ -6,20 +6,32 @@
 - 铁律5: 原子化必须保持 - 使用组合而非新建
 - 铁律10: API 返回必须有置信度标注
 - 铁律11: 必须提供 Agent 调用示例
+- 铁律13: 金标准测试
 
 Example:
     >>> from trace.query import SignalChainQuery
     >>> 
     >>> query = SignalChainQuery(parser)
-    >>> result = query.trace("data_in", module="Top")
+    >>> result = query.trace("data_out", module="Top")
     >>> print(result.data.drivers)    # 上游驱动
     >>> print(result.data.loads)       # 下游负载
-    >>> print(result.confidence)      # high/medium/uncertain
+    >>> print(result.confidence)        # high/medium/uncertain
 """
 
 from .signal_chain import SignalChainQuery, SignalChainResult
+from .module_connections import ModuleConnectionsQuery, ModuleConnectionsResult, PortConnection
+from .clock_domain import ClockDomainTracer, ClockDomainResult, RegisterInfo
 
 __all__ = [
+    # 场景A
     "SignalChainQuery",
     "SignalChainResult",
+    # 场景B
+    "ModuleConnectionsQuery",
+    "ModuleConnectionsResult",
+    "PortConnection",
+    # 场景C
+    "ClockDomainTracer",
+    "ClockDomainResult",
+    "RegisterInfo",
 ]
