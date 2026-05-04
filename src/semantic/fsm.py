@@ -1,11 +1,11 @@
 """
 FSM Items - 状态机语义类型
 
-支持的 AST kind:
-- Identifier: case 语句中的状态名 (data_flow.state)
-- CaseItem: case 分支项 (data_flow.IDLE: ...)
-- EnumLiteral: 枚举字面量
-- VariableDeclarator: 状态寄存器声明 (logic [7:0] state;)
+实际的 pyslang kind:
+- StandardCaseItem: case 分支 (state: ...)
+- DefaultCaseItem: default 分支
+- CaseGenerate: case 语句
+- Identifier: 标识符
 """
 
 from dataclasses import dataclass, field
@@ -21,31 +21,23 @@ class FSMStateItem(SemanticItem):
     FSM 状态项
     
     多种 AST 来源:
-    - Identifier: case 中的状态名
-    - CaseItem: case 分支
-    - EnumLiteral: 枚举字面量
-    - VariableDeclarator: 状态寄存器
+    - StandardCaseItem: case 分支
+    - DefaultCaseItem: default 分支
+    - Identifier: 状态标识符
     """
     SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'StandardCaseItem',
+        'DefaultCaseItem',
         'Identifier',
-        'CaseItem',
-        'EnumLiteral',
-        'VariableDeclarator',
     }
     
     state_name: str = ""
     state_encoding: Optional[int] = None
     fsm_path: str = ""
-    state_index: int = 0
     
-    def _extract_state_name(self) -> str:
-        """提取状态名"""
-        for child in self.node:
-            if child.kind.name == 'Identifier':
-                return str(child.value) if hasattr(child, 'value') else str(child)
-            if child.kind.name == 'EnumLiteral':
-                return str(child.value) if hasattr(child, 'value') else str(child)
-        return ""
+    @property
+    def is_default(self) -> bool:
+        return self.kind_name == 'DefaultCaseItem'
 
 
 @dataclass
@@ -53,10 +45,11 @@ class FSMTransitionItem(SemanticItem):
     """
     FSM 状态转换
     
-    AST 来源: CaseItem (包含 from/to 信息)
+    AST: StandardCaseItem / DefaultCaseItem
     """
     SUPPORTED_KINDS: ClassVar[Set[str]] = {
-        'CaseItem',
+        'StandardCaseItem',
+        'DefaultCaseItem',
     }
     
     from_state: str = ""
@@ -66,7 +59,7 @@ class FSMTransitionItem(SemanticItem):
     
     @property
     def is_default(self) -> bool:
-        return self.condition in ("", "default", "*")
+        return self.kind_name == 'DefaultCaseItem'
 
 
 __all__ = ['FSMStateItem', 'FSMTransitionItem']
