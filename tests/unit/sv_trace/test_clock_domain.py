@@ -156,8 +156,11 @@ def test_reset_signal_association():
     
     tracer = ClockDomainTracer(parser)
     
-    # 检查复位信号分类
-    resets = getattr(tracer, '_reset_signals', set())
+    # 检查复位信号分类 - 从 clock_domains 中获取
+    resets = set()
+    for domain, info in tracer._clock_domains.items():
+        if info.get('reset'):
+            resets.add(info['reset'])
     print(f"  复位信号: {resets}")
     
     # 金标准: rst_n 应被识别为复位信号

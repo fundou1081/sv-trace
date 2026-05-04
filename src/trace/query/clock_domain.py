@@ -91,6 +91,9 @@ class ClockDomainTracer:
         # 收集时钟/复位信息
         self._clock_domains: Dict[str, Dict] = {}  # clock -> {registers, resets, ...}
         self._signal_domains: Dict[str, str] = {}  # signal -> clock domain
+        
+        # 收集所有时钟域
+        self._collect_clock_domains()
     
     def trace(self, clock_signal: str) -> TraceResult:
         """追踪时钟域
@@ -156,6 +159,134 @@ class ClockDomainTracer:
         """收集跨时钟域信号"""
         # TODO: 实现
         return []
+    
+    def _collect_clock_domains(self) -> None:
+        """从 AST 收集时钟域信息
+        
+        从 always_ff 块中提取:
+        - 时钟信号 (posedge clk)
+        - 复位信号 (negedge rst_n)
+        - 寄存器 (logic 声明)
+        """
+        import pyslang
+        
+        common_clocks = {'clk', 'clock', 'sys_clk', 'core_clk', 'ref_clk', 'clk_i', 'clk2', 'user_clk'}
+        common_resets = {'rst_n', 'reset_n', 'rst', 'reset', 'async_rst_n', 'rst_ni'}
+        
+        for fname, tree in self.parser.trees.items():
+            if not tree or not tree.root:
+                continue
+            self._extract_from_tree(tree.root, common_clocks, common_resets)
+    
+    def _extract_from_tree(self, root, common_clocks, common_resets) -> None:
+        """从 AST 提取时钟域"""
+        import pyslang
+        
+        def extract_signal_from_event(node):
+            """从事件表达式中提取信号名"""
+            sigs = []
+            kn = node.kind.name if hasattr(node.kind, 'name') else ''
+            
+            if kn == 'SignalEventExpression':
+                node_str = str(node)
+                for prefix in ['posedge ', 'negedge ']:
+                    if prefix in node_str:
+                        sig = node_str.replace(prefix, '').strip()
+                        if sig:
+                            sigs.append(sig)
+                        break
+            
+            elif kn in ('BinaryEventExpression', 'ParenthesizedEventExpression'):
+                for child in node:
+                    sigs.extend(extract_signal_from_event(child))
+            
+            return sigs
+        
+        def visitor(node):
+            kn = node.kind.name if hasattr(node.kind, 'name') else ''
+            
+            if kn == 'AlwaysFFBlock':
+                clock_signal = None
+                reset_signal = None
+                
+                # AlwaysFFBlock.statement 是 TimingControlStatement
+                stmt = getattr(node, 'statement', None)
+                if stmt:
+                    for child in stmt:
+                        ckn = child.kind.name if hasattr(child.kind, 'name') else ''
+                        if ckn == 'EventControlWithExpression':
+                            for subchild in child:
+                                skn = subchild.kind.name if hasattr(subchild.kind, 'name') else ''
+                                if skn == 'ParenthesizedEventExpression':
+                                    signals = extract_signal_from_event(subchild)
+                                    for sig in signals:
+                                        if sig in common_clocks:
+                                            clock_signal = sig
+                                        elif sig in common_resets:
+                                            reset_signal = sig
+                
+                # 初始化时钟域
+                if clock_signal:
+                    if clock_signal not in self._clock_domains:
+                        self._clock_domains[clock_signal] = {
+                            'registers': [],
+                            'reset': reset_signal
+                        }
+                
+                # 收集该 always_ff 块中的所有寄存器
+                # 先找到 TimingControlStatement
+                stmt = getattr(node, 'statement', None)
+                if stmt:
+                    for child in stmt:
+                        ckn = child.kind.name if hasattr(child.kind, 'name') else ''
+                        if ckn == 'SequentialBlockStatement':
+                            self._collect_registers_from_block(
+                                child, clock_signal, reset_signal
+                            )
+            
+            return pyslang.VisitAction.Advance
+        
+        root.visit(visitor)
+    
+    def _collect_registers_from_block(self, block, clock_signal: Optional[str], reset_signal: Optional[str]) -> None:
+        """从顺序块中收集所有非阻塞赋值的目标"""
+        if not clock_signal or not block:
+            return
+        
+        import pyslang
+        
+        # 收集所有赋值的目标
+        def collect_lhs(n, depth=0):
+            if depth > 10:
+                return
+            
+            kn = n.kind.name if hasattr(n.kind, 'name') else ''
+            
+            # 找到赋值表达式的左边
+            if kn in ('NonBlockingAssignmentExpression', 'BlockingAssignmentExpression'):
+                # 遍历找 IdentifierName
+                for child in n:
+                    collect_lhs(child, depth+1)
+            
+            elif kn == 'IdentifierName':
+                # 这是赋值目标
+                for id_child in n:
+                    idkn = id_child.kind.name if hasattr(id_child.kind, 'name') else ''
+                    if idkn == 'Identifier':
+                        reg_name = str(id_child).strip()
+                        if reg_name and not reg_name.startswith('8'):
+                            # 添加到时钟域
+                            self._signal_domains[reg_name] = clock_signal
+                            if reg_name not in self._clock_domains[clock_signal]['registers']:
+                                self._clock_domains[clock_signal]['registers'].append(reg_name)
+            
+            try:
+                for c in n:
+                    collect_lhs(c, depth+1)
+            except:
+                pass
+        
+        collect_lhs(block)
     
     def _assess_confidence(self, registers, combinational) -> Tuple[str, List[str]]:
         """评估置信度"""
