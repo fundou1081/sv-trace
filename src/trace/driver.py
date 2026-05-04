@@ -3,7 +3,7 @@
 该模块提供从 SystemVerilog AST 中提取信号驱动关系的功能。
 
 Example:
-    >>> from sv_manager import SVManager
+    >>> from parse import SVParser
     >>> from trace.driver import DriverCollector
     >>> p = SVParser()
     >>> tree = p.parse_text(sv_code)
@@ -113,18 +113,14 @@ class DriverCollector:
         'ConstraintBlock': 'constraint块无driver',
     }
     
-    def __init__(self, trees, verbose: bool = True):
-        """初始化 DriverCollector
-        
-        Args:
-            trees: Dict[str, pyslang.SyntaxTree] - SVManager.trees 或类似字典
+    def __init__(self, parser, verbose: bool = True):
         """初始化 DriverCollector
         
         Args:
             parser: SVParser 实例
             verbose: 是否打印警告信息
         """
-        self.manager = None  # 可选 manager
+        self.parser = parser
         self.verbose = verbose
         self.warn_handler = ParseWarningHandler(
             verbose=verbose,
@@ -136,7 +132,7 @@ class DriverCollector:
     
     def _collect(self) -> None:
         """从所有解析树收集驱动信息"""
-        for fname, tree in trees.items():
+        for fname, tree in self.parser.trees.items():
             if not tree or not tree.root:
                 self.warn_handler.warn_info(
                     f"文件 {fname} 解析树为空",
