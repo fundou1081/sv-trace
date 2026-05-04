@@ -22,32 +22,25 @@
 
 ---
 
-## 📦 模块结构
+## 📦 模块结构 (2026-05)
 
 ```
 src/
-├── parse/              # 核心解析器 (6个纯AST文件)
-│   ├── parser.py       # SVParser 主解析器
-│   ├── extractors.py   # 提取器集合
-│   └── ...
-├── trace/              # 核心分析工具 (28个)
-│   ├── driver.py       # 驱动追踪
-│   ├── load.py        # 负载追踪
-│   └── ...
-├── query/              # 查询接口 (11个)
-│   ├── module_connections.py  # 模块端口
-│   ├── clock_domain.py        # 时钟域
-│   └── ...
-├── pyslang_ast_ref/     # AST参考 (295个未使用)
-└── pyslang_helper/     # 辅助工具
+├── sv_manager.py      # 统一管理器 (新!)
+│   ├── SVManager      - 解析入口
+│   └── SVResult      - 统一返回(含confidence)
+├── pyslang-ast-ref/  # AST参考 (295个文件)
+├── trace/            # 核心分析工具 (28个)
+└── ...
 ```
 
-| 模块 | 文件数 | 说明 |
-|------|--------|------|
-| parse | 6 | 核心解析器 |
-| trace | 28 | 分析工具 |
-| query | 11 | 查询接口 |
-| pyslang_ast_ref | 295 | AST参考 |
+### 核心变更
+
+| 组件 | 旧版 | 新版 |
+|------|------|------|
+| 解析入口 | parse/SVParser | sv_manager/SVManager |
+| 返回值 | 无confidence | SVResult含confidence |
+| 行号获取 | 手动 | get_line/get_scope_source |
 
 ---
 
@@ -59,79 +52,48 @@ src/
 pip install pyslang>=10.0
 ```
 
-### 基本使用
+### 新版 API (推荐)
+
+```python
+from sv_manager import SVManager
+
+# 创建管理器
+manager = SVManager()
+
+# 解析文件
+result = manager.parse_file('design.sv')
+print(f"Success: {result.success}, Confidence: {result.confidence}")
+
+# 访问 AST
+tree = result.tree  # pyslang.SyntaxTree
+trees = manager.trees  # dict of all parsed trees
+
+# 获取源码
+line = manager.get_line('design.sv', 10)
+scope = manager.get_scope_source('design.sv', always_node, max_lines=50)
+```
+
+### 旧版 API (仍可用)
 
 ```python
 from parse import SVParser
 from trace.driver import DriverCollector
-from trace.query import ClockDomainTracer
 
-# 解析
 parser = SVParser()
-tree = parser.parse_file('design.sv')
-
-# 驱动追踪
-driver = DriverCollector(parser)
-drivers = driver.find_driver('signal_name')
-
-# 时钟域追踪
-tracer = ClockDomainTracer(parser)
-result = tracer.trace('clk')
+parser.parse_file('design.sv')
+collector = DriverCollector(parser)
 ```
 
 ---
 
-## 📋 核心功能
-
-### 信号分析 (trace/)
-
-| 工具 | 功能 | AST | 置信度 |
-|------|------|-----|--------|
-| driver | 驱动追踪 | ✅ | ❌ |
-| load | 负载追踪 | ✅ | ❌ |
-| connection | 连接追踪 | ✅ | ❌ |
-| dataflow | 数据流追踪 | ✅ | ❌ |
-| controlflow | 控制流分析 | ✅ | ❌ |
-
-### 查询接口 (query/)
-
-| 工具 | 功能 | AST | 置信度 |
-|------|------|-----|--------|
-| module_connections | 模块端口 | ✅ | ✅ |
-| clock_domain | 时钟域追踪 | ✅ | ✅ |
-| signal_chain | 信号链追踪 | ✅ | ✅ |
-
-### 解析器 (parse/)
-
-| 方法 | 功能 |
-|------|------|
-| parse_file() | 解析文件 |
-| parse_text() | 解析字符串 |
-| get_modules() | 获取模块 |
-| get_diagnostics() | 诊断信息 |
-
----
-
-## 📚 开发纪律 (14条铁律)
+## 📋 开发纪律 (14条铁律)
 
 | 铁律 | 内容 |
 |------|------|
 | 1 | AST 唯一数据源 |
-| 2 | 位精确性不可妥协 |
 | 3 | 不可信则不输出 |
-| 4 | 模型即契约 |
-| 5 | 原子化必须保持 |
-| 6 | Schema 即宪法 |
-| 7 | 新功能必须先有边界测试 |
-| 8 | 文档与代码同步更新 |
-| 9 | 公开承诺必须在代码中可验证 |
 | 10 | 每次 API 返回必须有置信度标注 |
-| 11 | 必须提供 Agent 调用示例 |
-| 12 | 速度优化必须在正确性之后 |
-| 13 | 金标准测试 (核心) |
-| 14 | 核心三原则 |
-
-详细文档: [DEVELOPMENT_DISCIPLINE.md](./DEVELOPMENT_DISCIPLINE.md)
+| 13 | 金标准测试 |
 
 ---
 
@@ -141,46 +103,14 @@ result = tracer.trace('clk')
 |------|------|
 | [DEVELOPMENT_DISCIPLINE.md](./DEVELOPMENT_DISCIPLINE.md) | 开发纪律 |
 | [docs/SV_PARSER_GUIDE.md](./docs/SV_PARSER_GUIDE.md) | SVParser 指南 |
-| [docs/TOOLS_AUDIT.md](./docs/TOOLS_AUDIT.md) | 工具审计报告 |
-| [docs/PARSE_ANALYSIS.md](./docs/PARSE_ANALYSIS.md) | parse 模块分析 |
-| [docs/pyslang-semantic/](./docs/pyslang-semantic/) | 语义解析参考 |
-| [docs/pyslang-ast-ref/](./docs/pyslang-ast-ref/) | AST 结构参考 |
+| [docs/SVMANGER_LIMITS.md](./docs/SVMANGER_LIMITS.md) | SVManager 限制 |
+| [docs/TOOLS_AUDIT.md](./docs/TOOLS_AUDIT.md) | 工具审计 |
 
 ---
 
-## 🔧 工具审计状态
+## 🔧 TODO
 
-| 状态 | 数量 | 占比 |
-|------|------|------|
-| ✅ 完全符合 | 9 | 33% |
-| ⚠️ 部分符合 | 7 | 26% |
-| ❌ 需修复 | 11 | 41% |
+- [x] SVManager 统一入口
+- [ ] Driver/Load 使用 SVManager
+- [ ] 更多金标准测试
 
-详见: [docs/TOOLS_AUDIT.md](./docs/TOOLS_AUDIT.md)
-
----
-
-## 📋 TODO
-
-### 高优先级
-- [ ] 重构 flow_analyzer.py 为使用 AST
-- [ ] 重构 pipeline_analyzer.py 为使用 AST
-
-### 中优先级
-- [ ] 为 connection.py 添加 confidence
-- [ ] 为 dataflow.py 添加 confidence
-
-### 低优先级
-- [ ] 添加更多金标准测试
-
----
-
-## 许可证
-
-MIT License - 详见 [LICENSE](LICENSE)
-
----
-
-<p align="center">
-  <strong>SV-Trace</strong> - SystemVerilog 分析利器
-</p>
