@@ -285,3 +285,34 @@ result = tracer.trace('clk')
 # 返回 clk 时钟域内所有寄存器
 ```
 
+
+---
+
+## 场景 B/C 实现状态 (2026-05-04)
+
+### 场景B: ModuleConnectionsQuery
+
+| 组件 | 状态 | 说明 |
+|------|------|------|
+| 数据模型 | ✅ | PortConnection, ModuleConnectionsResult |
+| 模块发现 | ✅ | 可发现 top, sub_module |
+| 端口提取 | ⚠️ | 仅支持简单端口，位宽声明待优化 |
+| 时钟/复位分类 | ⚠️ | 基础支持 |
+| 测试 | ✅ | test_module_connections.py (4 tests) |
+
+### 场景C: ClockDomainTracer
+
+| 组件 | 状态 | 说明 |
+|------|------|------|
+| 数据模型 | ✅ | RegisterInfo, ClockDomainResult |
+| 时钟域收集 | ⚠️ | 骨架实现，待完善 |
+| 寄存器识别 | ❌ | 待实现 |
+| 测试 | ⚠️ | test_clock_domain.py (3 tests) |
+
+### 测试结果
+
+```
+ModuleConnectionsQuery: 4 passed, 0 failed
+ClockDomainTracer: 3 passed, 0 failed (部分预期失败)
+```
+

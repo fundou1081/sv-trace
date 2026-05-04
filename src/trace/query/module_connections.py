@@ -67,7 +67,15 @@ class ModuleConnectionsQuery:
                 if current_module:
                     self._modules[current_module] = {'ports': {}}
             
-            elif kind_name == 'ImplicitAnsiPortDeclaration' and current_module:
+            # 两种端口声明语法:
+            # 1. AnsiPortDeclaration: input clk; output [7:0] data;
+            elif kind_name == 'AnsiPortDeclaration' and current_module:
+                port_info = self._extract_port(node)
+                if port_info:
+                    self._modules[current_module]['ports'][port_info['name']] = port_info
+            
+            # 2. PortDeclaration (in port list): input clk; 
+            elif kind_name == 'PortDeclaration' and current_module:
                 port_info = self._extract_port(node)
                 if port_info:
                     self._modules[current_module]['ports'][port_info['name']] = port_info
@@ -104,6 +112,14 @@ class ModuleConnectionsQuery:
                 
                 elif ckind == 'IdentifierName':
                     port_name = str(child).strip()
+                
+                elif ckind == 'VariableDeclarator':
+                    # 处理 data_in[7:0] 这样的声明
+                    decl_name = str(child).strip()
+                    if '[' in decl_name:
+                        port_name = decl_name.split('[')[0].strip()
+                    else:
+                        port_name = decl_name
             
             if port_name:
                 return {'name': port_name, 'direction': direction, 'signal': port_name}
