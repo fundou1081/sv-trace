@@ -135,6 +135,8 @@ class SignalChainQuery:
         self._signal_modules: Dict[str, str] = {}
         self._clock_signals: Set[str] = set()
         self._reset_signals: Set[str] = set()
+        self._enable_signals: Set[str] = set()
+        self._reset_signals: Set[str] = set()
         
         # 收集模块信息
         self._collect_module_info()
@@ -210,17 +212,101 @@ class SignalChainQuery:
         return None
     
     def _classify_clock_reset(self) -> None:
-        """分类时钟和复位信号"""
+        """分类时钟、复位和使能信号
+        
+        基于 AST 分析的启发式分类：
+        1. 时钟: 在 posedge/negedge 事件中，但不在 if 条件中
+        2. 复位: 在 posedge/negedge 事件中，也在 if 条件中
+        3. 使能: 在 if 条件中，但不在事件中
+        
+        辅助: 如果 AST 分析无法分类，使用名称模式匹配。
+        """
+        # 基于 AST 分析收集信号使用特征
+        event_signals = set()
+        condition_signals = set()
+        
+        for fname, tree in self.parser.trees.items():
+            if not tree or not tree.root:
+                continue
+            self._analyze_signal_usage(tree.root, event_signals, condition_signals)
+        
+        # 基于使用特征分类
+        # 时钟: 在事件中，不在条件中
+        for sig in event_signals - condition_signals:
+            if sig in self._signal_modules:
+                self._clock_signals.add(sig)
+        
+        # 复位: 在事件中，也在条件中
+        for sig in event_signals & condition_signals:
+            if sig in self._signal_modules:
+                self._reset_signals.add(sig)
+        
+        # 使能: 在条件中，不在事件中
+        for sig in condition_signals - event_signals:
+            if sig in self._signal_modules:
+                self._enable_signals.add(sig)
+        
+        # 辅助: 名称模式匹配 (处理未被 AST 分析到的信号)
+        # 使用单词边界匹配，避免部分匹配问题
+        import re
+        clock_re = re.compile(r'.*(_clk$|_clock$|clk$|clock$|i_clk$|o_clk$|i_clock$|o_clock$|^clk)', re.IGNORECASE)
+        reset_re = re.compile(r'.*(_rst$|_reset$|rst$|reset$|_rst_n$|_reset_n$|preset$|presetn$)', re.IGNORECASE)
+        
         for sig in self._signal_modules:
-            sig_lower = sig.lower()
-            for pattern in self.CLOCK_PATTERNS:
-                if pattern in sig_lower:
-                    self._clock_signals.add(sig)
-                    break
-            for pattern in self.RESET_PATTERNS:
-                if pattern in sig_lower:
-                    self._reset_signals.add(sig)
-                    break
+            if sig in self._clock_signals or sig in self._reset_signals:
+                continue
+            if clock_re.match(sig):
+                self._clock_signals.add(sig)
+            if reset_re.match(sig):
+                self._reset_signals.add(sig)
+    
+    def _analyze_signal_usage(self, root, event_signals: set, condition_signals: set) -> None:
+        """分析 AST 中信号的使用场景
+        
+        基于 AST 的启发式分类：
+        - 时钟: 在 posedge/negedge 事件控制中，但不在 if 条件中
+        - 复位: 在 posedge/negedge 事件控制中，也在 if 条件中
+        - 使能: 在 if 条件中，但不在事件控制中
+        
+        Args:
+            root: AST 根节点
+            event_signals: 输出 - 在事件控制中的信号集合
+            condition_signals: 输出 - 在条件判断中的信号集合
+        """
+        import pyslang
+        
+        def collect_ids(node, result_set):
+            """收集节点中的所有标识符"""
+            if node is None:
+                return
+            try:
+                kind_name = node.kind.name if hasattr(node.kind, 'name') else ''
+                if 'Identifier' in kind_name:
+                    sig = str(node).strip()
+                    if sig:
+                        result_set.add(sig)
+                for child in node:
+                    collect_ids(child, result_set)
+            except:
+                pass
+        
+        def visitor(node):
+            kind_name = node.kind.name if hasattr(node.kind, 'name') else ''
+            
+            # 收集事件控制中的信号 (posedge/negedge)
+            if kind_name == 'SignalEventExpression':
+                collect_ids(node, event_signals)
+            
+            # 收集条件判断中的信号 (仅 ConditionalStatement 的 predicate)
+            # 注意：只收集 if 条件中的信号，不收集整个 always 块中的信号
+            if kind_name == 'ConditionalStatement':
+                pred = getattr(node, 'predicate', None)
+                if pred:
+                    collect_ids(pred, condition_signals)
+            
+            return pyslang.VisitAction.Advance
+        
+        root.visit(visitor)
     
     def trace(self, signal: str, module: str = None, 
               max_depth: int = 10) -> TraceResult:
