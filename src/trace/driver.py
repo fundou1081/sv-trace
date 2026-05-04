@@ -113,15 +113,16 @@ class DriverCollector:
         'ConstraintBlock': 'constraint块无driver',
     }
     
-    def __init__(self, parser, verbose: bool = True):
+    def __init__(self, trees: dict, verbose: bool = True):
         """初始化 DriverCollector
         
         Args:
             parser: SVParser 实例
             verbose: 是否打印警告信息
         """
-        self.parser = parser
+        # Use trees directly from SVManager
         self.verbose = verbose
+        self.trees = trees
         self.warn_handler = ParseWarningHandler(
             verbose=verbose,
             component="DriverCollector"
@@ -132,7 +133,7 @@ class DriverCollector:
     
     def _collect(self) -> None:
         """从所有解析树收集驱动信息"""
-        for fname, tree in self.parser.trees.items():
+        for fname, tree in self.trees.items():
             if not tree or not tree.root:
                 self.warn_handler.warn_info(
                     f"文件 {fname} 解析树为空",

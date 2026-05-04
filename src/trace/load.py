@@ -37,9 +37,10 @@ class LoadPoint:
 class LoadTracer:
     """基于 AST 的信号加载点追踪器"""
     
-    def __init__(self, parser):
-        self.manager = None
+    def __init__(self, trees: dict, verbose: bool = True):
+        # SVManager not used directly
         self._loads: Dict[str, List[LoadPoint]] = defaultdict(list)
+        self.trees = trees
     
     def _walk(self, node):
         """AST 遍历"""
