@@ -1,68 +1,62 @@
 """
-Reset - 复位相关语义类型
+Reset Items - 复位语义类型
+
+支持的 AST kind:
+- AlwaysFFBlock: always_ff 块 (包含复位信息)
+- VariableDeclarator: 被复位的寄存器
 """
+
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Set, ClassVar, List, Optional
 import pyslang
 
-from .base import SemanticItem, SemanticKind
+from .base import SemanticItem
 
 
 @dataclass
-class ResetSignal:
-    """复位信号"""
-    kind: SemanticKind = field(default=SemanticKind.RESET_SIGNAL)
-    node: pyslang.SyntaxNode = None
+class ResetSignalItem(SemanticItem):
+    """
+    复位信号
     
-    signal_path: str = ""            # 信号路径
-    width: int = 1                    # 位宽
+    AST 来源:
+    - PortDeclaration: reset 端口
+    - VariableDeclarator: 复位信号变量
+    """
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'PortDeclaration',
+        'VariableDeclarator',
+    }
     
-    # 复位类型
-    reset_type: str = ""              # 'sync', 'async'
-    polarity: str = "low"             # 'high', 'low'
+    signal_path: str = ""
+    polarity: str = "low"  # high/low
+    is_async: bool = True
     
-    # 被此复位影响的寄存器
     affected_registers: List[str] = field(default_factory=list)
     
-    module_path: str = ""
-    
-    @property
-    def is_sync(self) -> bool:
-        return self.reset_type == "sync"
-    
-    @property
-    def is_async(self) -> bool:
-        return self.reset_type == "async"
-    
-    @property
-    def fan_out(self) -> int:
-        """扇出"""
-        return len(self.affected_registers)
+    def _detect_reset(self) -> None:
+        """检测是否是复位信号"""
+        name_lower = self.signal_path.lower()
+        if 'rst' in name_lower or 'reset' in name_lower:
+            self.signal_path = self.signal_path
 
 
 @dataclass
-class ResetDomain:
-    """复位域"""
-    name: str = ""                    # 域名
-    reset_signal: str = ""           # 复位信号路径
+class ResetDomainItem(SemanticItem):
+    """
+    复位域
     
-    # 复位类型
-    reset_type: str = "sync"         # sync/async
-    polarity: str = "low"             # high/low
+    AST 来源: AlwaysFFBlock (包含复位信息)
+    """
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'AlwaysFFBlock',
+    }
     
-    # 包含的寄存器
-    registers: List[str] = field(default_factory=list)
-    
-    # 时钟域关联
+    reset_signal: str = ""
+    polarity: str = "low"
+    is_async: bool = True
     clock_domain: Optional[str] = None
     
-    def add_register(self, reg_path: str) -> None:
-        if reg_path not in self.registers:
-            self.registers.append(reg_path)
-    
-    @property
-    def register_count(self) -> int:
-        return len(self.registers)
+    registers: List[str] = field(default_factory=list)
 
 
-__all__ = ['ResetSignal', 'ResetDomain']
+__all__ = ['ResetSignalItem', 'ResetDomainItem']

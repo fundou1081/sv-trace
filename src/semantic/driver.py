@@ -1,95 +1,126 @@
 """
-Driver - 驱动关系语义类型
+Driver Items - 驱动关系语义类型
+
+支持的 AST kind:
+- NonBlockingAssignmentStatement: data <= next; (always_ff)
+- BlockingAssignmentStatement: data = next; (always_comb/always)
+- ContinuousAssignmentStatement: assign data = next; (assign)
+- ProceduralContinuousAssign: force data = next; (force 语句)
 """
+
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Set, ClassVar, List
 import pyslang
 
-from .base import SemanticItem, SemanticKind
+from .base import SemanticItem
 
 
 @dataclass
-class DriverSignal:
-    """被驱动的信号"""
-    kind: SemanticKind = field(default=SemanticKind.DRIVER_SIGNAL)
-    node: pyslang.SyntaxNode = None
+class DriverSignal(SemanticItem):
+    """
+    被驱动的信号语义项
     
-    signal_path: str = ""           # 信号路径
-    width: int = 1                   # 位宽
+    多种 AST 来源:
+    - NonBlockingAssignmentStatement (左值)
+    - BlockingAssignmentStatement (左值)
+    - ContinuousAssignmentStatement (左值)
+    """
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'NonBlockingAssignmentStatement',
+        'BlockingAssignmentStatement',
+        'ContinuousAssignmentStatement',
+        'ProceduralContinuousAssign',
+    }
     
-    # 驱动类型
-    driver_type: str = ""             # 'reg', 'wire', 'logic'
-    
-    # 驱动来源
-    drivers: List[str] = field(default_factory=list)  # 驱动信号路径列表
-    
-    module_path: str = ""
-    
-    @property
-    def is_register(self) -> bool:
-        return self.driver_type in ('reg', 'dff', 'dffe')
-    
-    @property
-    def is_combinational(self) -> bool:
-        return self.driver_type in ('wire', 'logic', 'assign')
-
-
-@dataclass
-class DriverConnection:
-    """驱动连接 (边)"""
-    kind: SemanticKind = field(default=SemanticKind.DRIVER_CONNECTION)
-    node: pyslang.SyntaxNode = None
-    
-    source: str = ""                  # 驱动源信号路径
-    sink: str = ""                   # 被驱动信号路径
-    
-    # 连接属性
-    connection_type: str = ""         # 'blocking', 'nonblocking', 'continuous'
-    
-    # 位置信息
-    line_number: int = 0
-    
-    # 路径
-    module_path: str = ""
-    
-    @property
-    def is_blocking(self) -> bool:
-        return self.connection_type == "blocking"
+    signal_path: str = ""
+    width: int = 1
     
     @property
     def is_nonblocking(self) -> bool:
-        return self.connection_type == "nonblocking"
+        return self.kind_name == 'NonBlockingAssignmentStatement'
     
     @property
-    def is_continuous(self) -> bool:
-        return self.connection_type == "continuous"
-    
-    def reverse(self) -> 'DriverConnection':
-        """反转连接方向"""
-        return DriverConnection(
-            source=self.sink,
-            sink=self.source,
-            connection_type=self.connection_type,
-            module_path=self.module_path,
-        )
+    def is_blocking(self) -> bool:
+        return self.kind_name in ('BlockingAssignmentStatement', 'ContinuousAssignmentStatement')
 
 
 @dataclass
-class AssignmentInfo:
-    """赋值信息"""
-    node: pyslang.SyntaxNode = None
+class NonBlockingAssign(SemanticItem):
+    """
+    非阻塞赋值 (always_ff 内)
     
-    lhs_signal: str = ""              # 左值信号
-    rhs_signals: List[str] = field(default_factory=list)  # 右值信号列表
+    AST 来源: NonBlockingAssignmentStatement
     
-    assignment_type: str = ""        # 'blocking', 'nonblocking', 'continuous'
+    Example: data <= next_data;
+    """
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'NonBlockingAssignmentStatement',
+    }
     
-    line_number: int = 0
-    module_path: str = ""
+    # 赋值信息
+    lhs: str = ""           # 左值信号
+    rhs: List[str] = field(default_factory=list)  # 右值信号列表
+    
+    # 时钟/复位上下文
+    clock_signal: str = ""
+    reset_signal: str = ""
+    is_async_reset: bool = False
+    
+    def _extract_lhs(self) -> str:
+        """提取左值"""
+        for child in self.node:
+            ckn = child.kind.name
+            if 'Left' in ckn or 'Target' in ckn:
+                for sub in child:
+                    if sub.kind.name == 'Identifier':
+                        return str(sub.value) if hasattr(sub, 'value') else str(sub)
+        return ""
     
     @property
-    def is_concurrent(self) -> bool:
-        return self.assignment_type == "continuous"
+    def is_sequential(self) -> bool:
+        return True
 
 
-__all__ = ['DriverSignal', 'DriverConnection', 'AssignmentInfo']
+@dataclass
+class BlockingAssign(SemanticItem):
+    """
+    阻塞赋值 (always_comb/always 内)
+    
+    AST 来源: BlockingAssignmentStatement
+    
+    Example: data = next_data;
+    """
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'BlockingAssignmentStatement',
+    }
+    
+    lhs: str = ""
+    rhs: List[str] = field(default_factory=list)
+    
+    @property
+    def is_combinational(self) -> bool:
+        return True
+
+
+@dataclass
+class ContinuousAssign(SemanticItem):
+    """
+    连续赋值 (assign 语句)
+    
+    AST 来源: ContinuousAssignmentStatement
+    
+    Example: assign data = next_data;
+    """
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'ContinuousAssignmentStatement',
+    }
+    
+    lhs: str = ""
+    rhs: List[str] = field(default_factory=list)
+    
+    @property
+    def is_wire(self) -> bool:
+        return True
+
+
+__all__ = ['DriverSignal', 'NonBlockingAssign', 'BlockingAssign', 'ContinuousAssign']

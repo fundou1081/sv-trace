@@ -1,47 +1,35 @@
 """
 Base Classes - 语义类型基类
+
+设计要点:
+- 每种语义通过 SUPPORTED_KINDS 声明支持的 AST 类型
+- 可扩展：新增语义类型无需修改收集器
 """
-from dataclasses import dataclass
-from enum import Enum
-from typing import Optional
+
+from dataclasses import dataclass, field
+from typing import Set, Optional, Type, List, ClassVar
 import pyslang
-
-
-class SemanticKind(Enum):
-    """语义类型枚举"""
-    # 时钟域
-    CLOCK_DOMAIN = "clock_domain"
-    REGISTER_SIGNAL = "register_signal"
-    CLOCKED_ALWAYS_FF = "clocked_always_ff"
-    
-    # 端口
-    PORT_SIGNAL = "port_signal"
-    
-    # FSM
-    FSM_BLOCK = "fsm_block"
-    FSM_STATE = "fsm_state"
-    FSM_TRANSITION = "fsm_transition"
-    
-    # 驱动/负载
-    DRIVER_SIGNAL = "driver_signal"
-    DRIVER_CONNECTION = "driver_connection"
-    LOAD_SIGNAL = "load_signal"
-    
-    # 复位
-    RESET_SIGNAL = "reset_signal"
-    RESET_DOMAIN = "reset_domain"
 
 
 @dataclass
 class SemanticItem:
     """语义项基类"""
-    kind: SemanticKind
-    node: pyslang.SyntaxNode  # 底层 pyslang 节点
-    module_path: str = ""     # 所在模块路径
+    node: pyslang.SyntaxNode
+    module_path: str = ""
+    
+    # 类属性：子类声明支持的 pyslang kind
+    SUPPORTED_KINDS: ClassVar[Set[str]] = set()
+    
+    @classmethod
+    def matches(cls, node) -> bool:
+        """检查节点是否匹配此语义类型"""
+        if cls == SemanticItem:
+            return False
+        return node.kind.name in cls.SUPPORTED_KINDS
     
     @property
-    def node_kind(self) -> str:
-        """获取底层 pyslang kind 名称"""
+    def kind_name(self) -> str:
+        """获取原始 AST kind 名称"""
         return self.node.kind.name if self.node else ""
     
     @property
@@ -52,17 +40,82 @@ class SemanticItem:
         return None
     
     def __repr__(self):
-        return f"{self.kind.value}: {self.module_path}"
+        return f"{self.__class__.__name__}({self.module_path})"
 
 
-def filter_by_kind(items: list[SemanticItem], kind: SemanticKind) -> list:
-    """按语义类型筛选"""
-    return [item for item in items if item.kind == kind]
+class SemanticCollector:
+    """
+    语义收集器 - 从 pyslang AST 提取语义类型
+    
+    设计特点:
+    - 自动遍历 AST
+    - 每个 SemanticItem 子类通过 SUPPORTED_KINDS 声明自己支持的 kind
+    - 无需修改收集器即可扩展新的语义类型
+    """
+    
+    def __init__(self):
+        self.items: List[SemanticItem] = []
+        self._semantic_classes: List[Type[SemanticItem]] = []
+    
+    def register(self, cls: Type[SemanticItem]) -> None:
+        """注册语义类型类"""
+        if cls not in self._semantic_classes:
+            self._semantic_classes.append(cls)
+    
+    def collect(self, tree: pyslang.SyntaxTree, filename: str) -> 'SemanticCollector':
+        """从 SyntaxTree 收集语义"""
+        self.items.clear()
+        
+        # 注册所有子类
+        for cls in SemanticItem.__subclasses__():
+            self.register(cls)
+        
+        # 遍历 AST
+        def visitor(node):
+            for cls in self._semantic_classes:
+                if cls.matches(node):
+                    try:
+                        item = cls(node, module_path=self._get_module_path(node))
+                        self.items.append(item)
+                    except:
+                        pass
+            return pyslang.VisitAction.Advance
+        
+        tree.root.visit(visitor)
+        return self
+    
+    def _get_module_path(self, node) -> str:
+        """获取节点所在模块路径"""
+        # 向上遍历找 ModuleDeclaration
+        parent = node.parent
+        while parent:
+            if parent.kind.name == 'ModuleDeclaration':
+                for child in parent:
+                    if child.kind.name == 'Identifier':
+                        return str(child.value) if hasattr(child, 'value') else str(child)
+            parent = parent.parent
+        return ""
+    
+    def get_by_type(self, cls: Type[SemanticItem]) -> List[SemanticItem]:
+        """按类型获取"""
+        return [item for item in self.items if isinstance(item, cls)]
+    
+    def get_by_kind(self, kind: str) -> List[SemanticItem]:
+        """按原始 AST kind 获取"""
+        return [item for item in self.items if item.kind_name == kind]
+    
+    @property
+    def signal_items(self) -> List['SignalItem']:
+        return self.get_by_type(SignalItem)
+    
+    @property
+    def driver_signals(self) -> List['DriverSignal']:
+        return self.get_by_type(DriverSignal)
 
 
-def filter_by_node_kind(items: list[SemanticItem], node_kind: str) -> list:
-    """按 pyslang node kind 筛选"""
-    return [item for item in items if item.node_kind == node_kind]
+# Import for type hints
+from .signal import SignalItem
+from .driver import DriverSignal
 
 
-__all__ = ['SemanticItem', 'SemanticKind', 'filter_by_kind', 'filter_by_node_kind']
+__all__ = ['SemanticItem', 'SemanticCollector']

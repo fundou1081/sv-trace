@@ -1,89 +1,72 @@
 """
-FSM - 状态机相关语义类型
+FSM Items - 状态机语义类型
+
+支持的 AST kind:
+- Identifier: case 语句中的状态名 (data_flow.state)
+- CaseItem: case 分支项 (data_flow.IDLE: ...)
+- EnumLiteral: 枚举字面量
+- VariableDeclarator: 状态寄存器声明 (logic [7:0] state;)
 """
+
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Set, ClassVar, List, Optional
 import pyslang
 
-from .base import SemanticItem, SemanticKind
+from .base import SemanticItem
 
 
 @dataclass
-class FSMState:
-    """FSM 状态"""
-    kind: SemanticKind = field(default=SemanticKind.FSM_STATE)
-    node: pyslang.SyntaxNode = None
+class FSMStateItem(SemanticItem):
+    """
+    FSM 状态项
     
-    state_name: str = ""             # 状态名
-    state_encoding: Optional[int] = None  # 状态编码 (可选)
+    多种 AST 来源:
+    - Identifier: case 中的状态名
+    - CaseItem: case 分支
+    - EnumLiteral: 枚举字面量
+    - VariableDeclarator: 状态寄存器
+    """
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'Identifier',
+        'CaseItem',
+        'EnumLiteral',
+        'VariableDeclarator',
+    }
     
-    # FSM 上下文
-    fsm_path: str = ""              # FSM 路径
-    state_index: int = 0             # 状态索引
+    state_name: str = ""
+    state_encoding: Optional[int] = None
+    fsm_path: str = ""
+    state_index: int = 0
     
-    # 转换
-    transitions: List[str] = field(default_factory=list)  # 目标状态名列表
-    
-    module_path: str = ""
+    def _extract_state_name(self) -> str:
+        """提取状态名"""
+        for child in self.node:
+            if child.kind.name == 'Identifier':
+                return str(child.value) if hasattr(child, 'value') else str(child)
+            if child.kind.name == 'EnumLiteral':
+                return str(child.value) if hasattr(child, 'value') else str(child)
+        return ""
 
 
 @dataclass
-class FSMTransition:
-    """FSM 状态转换"""
-    kind: SemanticKind = field(default=SemanticKind.FSM_TRANSITION)
-    node: pyslang.SyntaxNode = None
+class FSMTransitionItem(SemanticItem):
+    """
+    FSM 状态转换
     
-    from_state: str = ""             # 起始状态
-    to_state: str = ""              # 目标状态
+    AST 来源: CaseItem (包含 from/to 信息)
+    """
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'CaseItem',
+    }
     
-    condition: str = ""               # 转换条件
-    
-    fsm_path: str = ""               # FSM 路径
-    module_path: str = ""
+    from_state: str = ""
+    to_state: str = ""
+    condition: str = ""
+    fsm_path: str = ""
     
     @property
     def is_default(self) -> bool:
-        """是否是默认转换"""
-        return self.condition == "" or self.condition == "default"
+        return self.condition in ("", "default", "*")
 
 
-@dataclass
-class FSMBlock:
-    """FSM 块 (完整的FSM)"""
-    kind: SemanticKind = field(default=SemanticKind.FSM_BLOCK)
-    node: pyslang.SyntaxNode = None
-    
-    fsm_path: str = ""               # FSM 路径
-    state_variable: str = ""         # 状态变量路径
-    
-    # 状态
-    states: List[FSMState] = field(default_factory=list)
-    current_state: Optional[str] = None  # 当前状态名
-    reset_state: Optional[str] = None    # 复位状态
-    
-    # 转换
-    transitions: List[FSMTransition] = field(default_factory=list)
-    
-    # FSM 类型
-    fsm_style: str = "sequential"   # sequential/onehot/gray
-    
-    module_path: str = ""
-    line_number: int = 0
-    
-    def get_state(self, name: str) -> Optional[FSMState]:
-        """获取状态"""
-        for state in self.states:
-            if state.state_name == name:
-                return state
-        return None
-    
-    def get_transitions_from(self, state_name: str) -> List[FSMTransition]:
-        """获取从某状态出发的转换"""
-        return [t for t in self.transitions if t.from_state == state_name]
-    
-    def get_transitions_to(self, state_name: str) -> List[FSMTransition]:
-        """获取到某状态的转换"""
-        return [t for t in self.transitions if t.to_state == state_name]
-
-
-__all__ = ['FSMState', 'FSMTransition', 'FSMBlock']
+__all__ = ['FSMStateItem', 'FSMTransitionItem']
