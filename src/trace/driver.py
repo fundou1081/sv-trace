@@ -519,7 +519,7 @@ class DriverCollector:
         if node is None:
             return ""
         
-        kind_name = str(getattr(node, 'kind', ''))
+        kind_name = getattr(node, 'kind', None).name if hasattr(node, 'kind') and hasattr(node.kind, 'name') else ''
         
         if 'IdentifierSelectName' in kind_name or 'Identifier' in kind_name:
             name = str(node).strip()
@@ -543,10 +543,22 @@ class DriverCollector:
         if node is None:
             return sources
         
-        kind_name = str(getattr(node, 'kind', ''))
+        kind_name = getattr(node, 'kind', None).name if hasattr(node, 'kind') and hasattr(node.kind, 'name') else ''
         
-        # Identifier
-        if 'IdentifierName' in kind_name:
+        # ConcatenationExpression: {a, b, ...}
+        if kind_name == 'ConcatenationExpression':
+            for child in node:
+                sources.extend(self._extract_sources(child))
+            return sources
+        
+        # SeparatedList: contains list items (used in concatenation)
+        if kind_name == 'SeparatedList':
+            for child in node:
+                sources.extend(self._extract_sources(child))
+            return sources
+        
+        # Identifier (直接使用 SyntaxKind 比较)
+        if kind_name == 'IdentifierName' or kind_name == 'IdentifierSelectName' or kind_name == 'WildcardPattern':
             name = str(node).strip()
             if '[' in name:
                 name = name.split('[')[0]

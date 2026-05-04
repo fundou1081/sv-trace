@@ -403,7 +403,8 @@ class SignalChainQuery:
         LoadPoint.driver = 驱动源 (即 sig)
         """
         result = []
-        visited = set()
+        visited = set()  # 防止循环追踪
+        seen_signals = set()  # 负载去重
         
         def collect(sig: str, depth: int):
             if depth >= max_depth or sig in visited:
@@ -413,6 +414,11 @@ class SignalChainQuery:
             # 使用 reverse_lookup (反向查找: 谁使用 sig 作为源)
             loads = self._load_tracer.reverse_lookup(sig)
             for load in loads:
+                # 去重: 同一信号只记录一次
+                if load.signal in seen_signals:
+                    continue
+                seen_signals.add(load.signal)
+                
                 # load.signal = 被驱动的信号, load.driver = 驱动源 (即 sig)
                 info = LoadInfo(
                     signal=load.signal,  # 被驱动的信号

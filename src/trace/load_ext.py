@@ -55,7 +55,7 @@ class LoadTracerExt(LoadTracer):
             signal: 信号名
             
         Returns:
-            List[LoadPoint]: 所有使用该信号作为源的加载点
+            List[LoadPoint]: 所有使用该信号作为源的加载点 (去重)
         """
         if not self._loads:
             self._build_load_graph()
@@ -63,7 +63,14 @@ class LoadTracerExt(LoadTracer):
         if not self._reverse_built:
             self._build_reverse_index()
         
-        return self._reverse_index.get(signal, [])
+        # 去重: 根据 signal 属性去重
+        seen = set()
+        result = []
+        for lp in self._reverse_index.get(signal, []):
+            if lp.signal not in seen:
+                seen.add(lp.signal)
+                result.append(lp)
+        return result
     
     def _build_reverse_index(self) -> None:
         """构建反向索引: src -> [LoadPoints where src is used]"""
