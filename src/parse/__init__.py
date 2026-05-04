@@ -58,11 +58,11 @@ try:
 except ImportError as e:
     pass
 
-# Clocking 解析器
+# Clocking 解析器 (已移动到 src/pyslang-ast-ref/)
+# 现在使用 pyslang_helper 中的版本
 try:
-    from .clocking import ClockingExtractor, extract_clockings
-    __all__.extend(['ClockingExtractor', 'extract_clockings'])
-except ImportError as e:
+    from pyslang_helper import extract_clockings as extract_clockings_ast
+except ImportError:
     pass
 
 # 便捷函数 - 使用 pyslang
