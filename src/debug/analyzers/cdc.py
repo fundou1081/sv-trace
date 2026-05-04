@@ -15,7 +15,7 @@
 
 Example:
     >>> from debug.analyzers.cdc import CDCAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = CDCAnalyzer(parser)
@@ -140,7 +140,7 @@ class CDCAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self._driver_collector = DriverCollector(parser)
         self._issues = []
         self._multi_drivers = {}

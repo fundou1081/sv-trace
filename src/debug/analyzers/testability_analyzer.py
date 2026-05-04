@@ -8,7 +8,7 @@
 
 Example:
     >>> from debug.analyzers.testability_analyzer import TestabilityAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = TestabilityAnalyzer(parser)
@@ -135,7 +135,7 @@ class TestabilityAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.results: Dict[str, TestabilityResult] = {}
     
     def analyze(self) -> Dict[str, TestabilityResult]:

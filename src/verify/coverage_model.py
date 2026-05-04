@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from parse import SVParser
+from sv_manager import SVManager
 from trace.driver import DriverCollector
 
 @dataclass
@@ -32,7 +32,7 @@ class CoverageModelGenerator:
     """覆盖模型生成器"""
     
     def __init__(self, parser: SVParser = None):
-        self.parser = parser
+        # 使用 SVManager.trees
         self.dc = DriverCollector(parser) if parser else None
     
     def generate_fsm_coverage(self, parser: SVParser = None) -> CoverGroup:

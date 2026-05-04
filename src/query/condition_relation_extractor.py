@@ -5,7 +5,7 @@
 
 Example:
     >>> from query.condition_relation_extractor import ConditionRelationExtractor
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> extractor = ConditionRelationExtractor(parser)
@@ -105,7 +105,7 @@ class ConditionRelationExtractor:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
     
     def extract(self, signal: str, module: str = None) -> ConditionRelation:
         """提取信号的条件关系。

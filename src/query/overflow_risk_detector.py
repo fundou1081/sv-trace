@@ -4,7 +4,7 @@
 
 Example:
     >>> from query.overflow_risk_detector import OverflowRiskDetector
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> detector = OverflowRiskDetector(parser)
@@ -102,4 +102,4 @@ class OverflowRiskDetector:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees

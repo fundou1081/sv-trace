@@ -8,7 +8,7 @@
 - 构建连接图
 
 Example:
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> from trace.connection import ConnectionTracer
     >>> p = SVParser()
     >>> ct = ConnectionTracer(p, verbose=True)
@@ -95,14 +95,14 @@ class ConnectionTracer:
         'VariableDeclaration': '变量声明',
     }
     
-    def __init__(self, parser, verbose: bool = True):
+    def __init__(self, trees: dict, verbose: bool = True):
         """初始化连接追踪器
         
         Args:
             parser: SVParser 实例
             verbose: 是否打印警告信息
         """
-        self.parser = parser
+        self.manager = None
         self.verbose = verbose
         self.warn_handler = ParseWarningHandler(
             verbose=verbose, 
@@ -115,7 +115,7 @@ class ConnectionTracer:
     
     def _extract_all(self) -> None:
         """从所有解析树提取连接信息"""
-        for fname, tree in self.parser.trees.items():
+        for fname, tree in trees.items():
             if not tree or not hasattr(tree, 'root') or not tree.root:
                 self.warn_handler.warn_info(
                     f"文件 {fname} 解析树为空或无效",

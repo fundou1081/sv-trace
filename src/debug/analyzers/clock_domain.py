@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.analyzers.clock_domain import ClockDomainAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = ClockDomainAnalyzer(parser)
@@ -98,7 +98,7 @@ class ClockDomainAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.clock_domains: Dict[str, ClockDomain] = {}
         self.reset_info: Dict[str, ResetInfo] = {}
         self.crossings: List[Dict] = []

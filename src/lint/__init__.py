@@ -7,7 +7,7 @@
 
 Example:
     >>> from lint.linter import SVLinter
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> linter = SVLinter(parser)

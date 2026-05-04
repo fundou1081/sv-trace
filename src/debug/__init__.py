@@ -10,7 +10,7 @@
 
 Example:
     >>> from debug import DesignEvaluator, FSMExtractor
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> evaluator = DesignEvaluator(parser)

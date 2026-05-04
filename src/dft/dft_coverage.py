@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from parse import SVParser
+from sv_manager import SVManager
 
 @dataclass
 class DFTFeature:
@@ -51,7 +51,7 @@ class DFTCoverageChecker:
     """DFT覆盖率检查器"""
     
     def __init__(self, parser: SVParser = None):
-        self.parser = parser
+        # 使用 SVManager.trees
     
     def analyze(self, parser: SVParser = None) -> DFTReport:
         """分析DFT覆盖率"""

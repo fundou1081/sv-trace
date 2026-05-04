@@ -12,7 +12,7 @@
 
 Example:
     >>> from debug.analyzers.fsm_analyzer import FSMAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = FSMAnalyzer(parser)
@@ -80,7 +80,7 @@ class FSMAnalyzer:
     """状态机深度分析器 - 基于 IEEE 1800-2017 Section 40.4"""
     
     def __init__(self, parser):
-        self.parser = parser
+        # 使用 SVManager.trees
         self.fsms: Dict[str, FSMInfo] = {}
     
     def _walk(self, node):

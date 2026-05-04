@@ -8,7 +8,7 @@ Usage:
     import sys
     sys.path.insert(0, 'src')
     
-    from parse import SVParser
+    from sv_manager import SVManager
     from verify.tb_analyzer import TBComplexityAnalyzer
 
 CLI Tools:

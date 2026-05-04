@@ -7,7 +7,7 @@ import re
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from parse import SVParser
+from sv_manager import SVManager
 from dataclasses import dataclass
 from typing import Dict, List, Set, Optional
 

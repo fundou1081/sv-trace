@@ -7,7 +7,7 @@ import re
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from parse import SVParser
+from sv_manager import SVManager
 from trace import DriverTracer, LoadTracer
 from trace.connection import ConnectionTracer
 from dataclasses import dataclass

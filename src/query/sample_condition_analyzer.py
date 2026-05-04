@@ -5,7 +5,7 @@
 
 Example:
     >>> from query.sample_condition_analyzer import SampleConditionAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = SampleConditionAnalyzer(parser)
@@ -118,7 +118,7 @@ class SampleConditionAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
     
     def analyze(self, signal: str, module: str = None) -> SampleResult:
         """分析信号的采样条件。

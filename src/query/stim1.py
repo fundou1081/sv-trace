@@ -4,7 +4,7 @@
 
 Example:
     >>> from query.stim1 import SPF, find_stim
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> result = find_stim(parser, "data_out", 0)

@@ -8,7 +8,7 @@
 
 Example:
     >>> from debug.class_extractor import ClassExtractor
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> extractor = ClassExtractor(parser)
@@ -47,7 +47,7 @@ class ClassExtractor:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.classes: Dict[str, ClassInfo] = {}
         self._extract_all()
     

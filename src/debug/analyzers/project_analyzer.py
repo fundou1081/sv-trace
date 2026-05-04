@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from parse import SVParser
+from sv_manager import SVManager
 from debug.analyzers.code_metrics_analyzer import CodeMetricsAnalyzer
 from trace.driver import DriverCollector
 
@@ -81,7 +81,7 @@ class ProjectAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.metrics = ProjectMetrics()
     
     def analyze(self) -> ProjectMetrics:

@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.analyzers.parametric_analyzer import ParametricAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = ParametricAnalyzer(parser)
@@ -90,7 +90,7 @@ class ParametricAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.report = ParametricReport()
     
     def analyze(self) -> ParametricReport:

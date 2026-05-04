@@ -15,7 +15,7 @@
 - 铁律5: 原子化必须保持 - 组合现有模块，而非重新实现
 
 Example:
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> from trace.query import SignalChainQuery
     >>> 
     >>> parser = SVParser()
@@ -116,7 +116,7 @@ class SignalChainQuery:
         'preset', 'presetn', 'n', '_n'
     }
     
-    def __init__(self, parser, verbose: bool = True):
+    def __init__(self, trees: dict, verbose: bool = True):
         """初始化
         
         Args:

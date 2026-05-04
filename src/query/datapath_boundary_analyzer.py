@@ -5,7 +5,7 @@
 
 Example:
     >>> from query.datapath_boundary_analyzer import DataPathBoundaryAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = DataPathBoundaryAnalyzer(parser)
@@ -116,7 +116,7 @@ class DataPathBoundaryAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
     
     def analyze(self, signal: str, assignment_expr: str = "") -> BoundaryResult:
         """分析信号的边界。

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from parse import SVParser
+from sv_manager import SVManager
 from trace.driver import DriverCollector
 
 # 导入解析警告模块

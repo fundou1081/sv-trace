@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.complexity import CyclomaticComplexityAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = CyclomaticComplexityAnalyzer(parser)
@@ -79,7 +79,7 @@ class CyclomaticComplexityAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.results: Dict[str, ComplexityResult] = {}
     
     @staticmethod

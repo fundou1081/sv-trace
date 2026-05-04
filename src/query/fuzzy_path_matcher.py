@@ -5,7 +5,7 @@
 
 Example:
     >>> from query.fuzzy_path_matcher import FuzzyPathMatcher
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> matcher = FuzzyPathMatcher(parser)
@@ -96,7 +96,7 @@ class FuzzyPathMatcher:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.all_paths = []
         self._collect_all_paths()
     

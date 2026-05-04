@@ -10,7 +10,7 @@
 
 Example:
     >>> from lint.linter import SVLinter
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> linter = SVLinter(parser)
@@ -161,14 +161,14 @@ class SVLinter:
         'ModportItem': 'modport lint支持有限',
     }
     
-    def __init__(self, parser, verbose: bool = True):
+    def __init__(self, trees: dict, verbose: bool = True):
         """初始化 Linter。
         
         Args:
             parser: SVParser 实例
             verbose: 是否打印详细信息
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.verbose = verbose
         # 创建警告处理器
         self.warn_handler = ParseWarningHandler(

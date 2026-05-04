@@ -30,7 +30,7 @@ class ControlFlowAnalyzer:
     """基于 AST 的控制流分析器"""
     
     def __init__(self, parser):
-        self.parser = parser
+        self.manager = None
         self._controls: Dict[str, List[ControlNode]] = defaultdict(list)
         self._condition_signals: Set[str] = set()
     
@@ -56,7 +56,7 @@ class ControlFlowAnalyzer:
     def _build_control_graph(self) -> None:
         """从 AST 构建控制流图"""
         
-        for fname, tree in self.parser.trees.items():
+        for fname, tree in trees.items():
             if not tree:
                 continue
             

@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.analyzers.code_quality_scorer import CodeQualityScorer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> scorer = CodeQualityScorer(parser)
@@ -63,7 +63,7 @@ class CodeQualityScorer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
     
     def calculate_score(self) -> QualityScore:
         """计算质量分数。

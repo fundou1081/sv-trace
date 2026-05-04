@@ -7,7 +7,7 @@
 
 Example:
     >>> from debug.analyzers.multi_driver import MultiDriverDetector
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> detector = MultiDriverDetector(parser)
@@ -76,7 +76,7 @@ class MultiDriverDetector:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self._driver_tracer = None
     
     def _get_driver_tracer(self):

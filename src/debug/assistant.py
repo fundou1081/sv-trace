@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.assistant import DebugAssistant
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> assistant = DebugAssistant(parser)
@@ -89,7 +89,7 @@ class DebugAssistant:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         
         # 初始化现有工具
         from trace.driver import DriverTracer

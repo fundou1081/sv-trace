@@ -8,7 +8,7 @@
 
 Example:
     >>> from debug.analyzers.timing_analyzer import TimingAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = TimingAnalyzer(parser)
@@ -85,7 +85,7 @@ class TimingAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.stats: Dict[str, TimingStats] = {}
         self.critical_paths: List[PathTiming] = []
     

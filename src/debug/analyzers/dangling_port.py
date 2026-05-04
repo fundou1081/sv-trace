@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.analyzers.dangling_port import DanglingPortDetector
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> detector = DanglingPortDetector(parser)
@@ -58,7 +58,7 @@ class DanglingPortDetector:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
     
     def detect(self, module_name: str = None) -> List[DanglingPortIssue]:
         """检测悬空端口。

@@ -8,7 +8,7 @@
 
 Example:
     >>> from debug.analyzers.coverage_analyzer import CoverageAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = CoverageAnalyzer(parser)
@@ -83,7 +83,7 @@ class CoverageAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.results: Dict[str, CoverageReport] = {}
     
     def analyze(self) -> Dict[str, CoverageReport]:

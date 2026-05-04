@@ -4,7 +4,7 @@
 
 Example:
     >>> from query.path import PathQuery, HierarchyQuery
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> pq = PathQuery(parser)
@@ -29,7 +29,7 @@ class PathQuery:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
     
     def get_hierarchical_path(self, symbol, instance_path: str = "") -> str:
         """获取层次化路径。
@@ -91,7 +91,7 @@ class HierarchyQuery:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
     
     def get_instances(self, module_name: str = None) -> List[Dict[str, Any]]:
         """获取模块实例。

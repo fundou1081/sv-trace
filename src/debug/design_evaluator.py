@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.design_evaluator import DesignEvaluator
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> evaluator = DesignEvaluator(parser)
@@ -42,7 +42,7 @@ class DesignEvaluator:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.results = {}
     
     def evaluate(self, module_name: str = None) -> Dict:

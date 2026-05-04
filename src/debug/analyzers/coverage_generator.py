@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.analyzers.coverage_generator import CoverageGenerator
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> generator = CoverageGenerator(parser)
@@ -101,7 +101,7 @@ class CoverageGenerator:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
     
     def generate(self, module_name: str) -> CoverageGroup:
         """生成 coverage 模型。

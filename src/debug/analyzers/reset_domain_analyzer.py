@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.analyzers.reset_domain_analyzer import ResetDomainAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = ResetDomainAnalyzer(parser)
@@ -108,7 +108,7 @@ class ResetDomainAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.result = ResetAnalysisResult()
     
     def analyze(self) -> ResetAnalysisResult:

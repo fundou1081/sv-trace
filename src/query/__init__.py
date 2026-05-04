@@ -12,7 +12,7 @@ Classes:
 
 Example:
     >>> from query import SignalQuery, PathQuery
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> sq = SignalQuery(parser)

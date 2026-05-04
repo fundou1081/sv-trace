@@ -5,7 +5,7 @@
 
 Example:
     >>> from query.stimulus_path_finder import StimulusPathFinder, find_stimulus_path
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> finder = StimulusPathFinder(parser)
@@ -150,7 +150,7 @@ class StimulusPathFinder:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.ios = []
         self.signal_assignments = {}
         self.memories = []  # 存储 elements

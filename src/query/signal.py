@@ -4,7 +4,7 @@
 
 Example:
     >>> from query.signal import SignalQuery
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> sq = SignalQuery(parser)
@@ -43,7 +43,7 @@ class SignalQuery:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.param_resolver = ParameterResolver(parser)
     
     def find_signal(self, name: str, module_name: str = None) -> Optional[Signal]:

@@ -11,7 +11,7 @@
 
 Example:
     >>> from lint.code_quality import CodeQualityChecker
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> checker = CodeQualityChecker(parser)
@@ -26,7 +26,7 @@ from enum import Enum
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from parse import SVParser
+from sv_manager import SVManager
 from trace.driver import DriverCollector
 
 # 导入解析警告模块
@@ -166,7 +166,7 @@ class CodeQualityChecker:
             parser: SVParser 实例
             verbose: 是否打印详细信息
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.verbose = verbose
         # 创建警告处理器
         self.warn_handler = ParseWarningHandler(

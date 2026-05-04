@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.analyzers.timed_path_analyzer import TimedPathAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = TimedPathAnalyzer(parser)
@@ -89,7 +89,7 @@ class TimedPathAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.paths: List[TimedPath] = []
         self.crossings: List[ClockDomainCrossing] = []
     

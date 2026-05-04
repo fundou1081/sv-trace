@@ -4,7 +4,7 @@
 
 Example:
     >>> from debug.analyzers.clock_tree_analyzer import ClockTreeAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = ClockTreeAnalyzer(parser)
@@ -101,7 +101,7 @@ class ClockTreeAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.sources: List[ClockSource] = []
         self.buffers: List[ClockBuffer] = []
         self.dividers: List[ClockDivider] = []

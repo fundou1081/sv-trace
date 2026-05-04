@@ -8,7 +8,7 @@
 
 Example:
     >>> from debug.analyzers.code_metrics_analyzer import CodeMetricsAnalyzer
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> analyzer = CodeMetricsAnalyzer(parser)
@@ -96,7 +96,7 @@ class CodeMetricsAnalyzer:
         Args:
             parser: SVParser 实例
         """
-        self.parser = parser
+        # 使用 SVManager.trees
         self.metrics: ProjectMetrics = None
     
     def calculate(self) -> ProjectMetrics:

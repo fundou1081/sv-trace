@@ -38,7 +38,7 @@ class LoadTracer:
     """基于 AST 的信号加载点追踪器"""
     
     def __init__(self, parser):
-        self.parser = parser
+        self.manager = None
         self._loads: Dict[str, List[LoadPoint]] = defaultdict(list)
     
     def _walk(self, node):
@@ -67,7 +67,7 @@ class LoadTracer:
     def _build_load_graph(self) -> None:
         """使用 AST 构建加载图"""
         
-        for fname, tree in self.parser.trees.items():
+        for fname, tree in trees.items():
             if not tree:
                 continue
             

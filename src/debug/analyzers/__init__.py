@@ -11,7 +11,7 @@
 
 Example:
     >>> from debug.analyzers import XValueDetector, MultiDriverDetector
-    >>> from parse import SVParser
+    >>> from sv_manager import SVManager
     >>> parser = SVParser()
     >>> parser.parse_file("design.sv")
     >>> detector = XValueDetector(parser)
