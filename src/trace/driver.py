@@ -546,7 +546,7 @@ class DriverCollector:
         kind_name = str(getattr(node, 'kind', ''))
         
         # Identifier
-        if 'IdentifierSelectName' in kind_name or kind_name == 'IdentifierName':
+        if 'IdentifierName' in kind_name:
             name = str(node).strip()
             if '[' in name:
                 name = name.split('[')[0]

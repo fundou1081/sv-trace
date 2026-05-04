@@ -193,7 +193,7 @@ class LoadTracer:
             except TypeError:
                 pass
         
-        walk_expr(node)
+        list(walk_expr(node))  # Must consume generator
         return signals
     
     def _extract_condition(self, node) -> str:

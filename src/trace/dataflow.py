@@ -108,15 +108,14 @@ class DataFlowTracer:
             return None
         
         # Check for BitSelect
-        if hasattr(left_node, 'select')
-            and left_node.select:
-                # Preserve bit select info
-                select = left_node.select
-                if hasattr(select, 'left') and hasattr(select, 'right'):
-                    msb = self._extract_number(select.left)
-                    lsb = self._extract_number(select.right)
-                    if name in self._graph and self._graph[name].width is None:
-                        self._graph[name].width = (msb, lsb)
+        if hasattr(left_node, 'select') and left_node.select:
+            # Preserve bit select info
+            select = left_node.select
+            if hasattr(select, 'left') and hasattr(select, 'right'):
+                msb = self._extract_number(select.left)
+                lsb = self._extract_number(select.right)
+                if name in self._graph and self._graph[name].width is None:
+                    self._graph[name].width = (msb, lsb)
         
         return name
     
