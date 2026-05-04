@@ -637,6 +637,60 @@ def test_load_reverse_lookup():
     print("  ✅ 金标准验证通过")
 
 
+def test_lhs_concatenation():
+    """测试: LHS 为拼接表达式的赋值
+    
+    RTL 源码:
+    ```systemverilog
+    assign {high, low} = {a, b};  // LHS 拼接
+    ```
+    
+    金标准 (人工推导):
+    ┌──────────┬──────────┬──────────────────────────────────┐
+    │ 信号    │ 关系     │ 推导依据                         │
+    ├──────────┼──────────┼──────────────────────────────────┤
+    │ high    │ 驱动源   │ a (来自拼接 LHS)                │
+    │ low     │ 驱动源   │ b (来自拼接 LHS)                │
+    └──────────┴──────────┴──────────────────────────────────┘
+    
+    验证清单:
+    - high 的驱动源应包含 a
+    - low 的驱动源应包含 b
+    """
+    print("\n=== Test: LHS Concatenation ===")
+    
+    rtl = '''
+    module top;
+      logic [7:0] a, b;
+      logic [3:0] high, low;
+      
+      assign {high, low} = {a[7:4], b[3:0]};
+    endmodule
+    '''
+    
+    parser = SVParser()
+    parser.parse_text(rtl, '<test>')
+    query = SignalChainQuery(parser)
+    
+    # 金标准: high 驱动源包含 a
+    result_high = query.trace('high', 'top')
+    sources_high = set()
+    for d in result_high.data.drivers:
+        sources_high.update(d.sources)
+    print(f"  high 驱动源: {sources_high}")
+    assert 'a' in sources_high, f"金标准: high 的驱动源应包含 a, 实际: {sources_high}"
+    
+    # 金标准: low 驱动源包含 b
+    result_low = query.trace('low', 'top')
+    sources_low = set()
+    for d in result_low.data.drivers:
+        sources_low.update(d.sources)
+    print(f"  low 驱动源: {sources_low}")
+    assert 'b' in sources_low, f"金标准: low 的驱动源应包含 b, 实际: {sources_low}"
+    
+    print("  ✅ 金标准验证通过")
+
+
 def run_all_tests():
     """运行所有测试"""
     print("=" * 70)
@@ -655,6 +709,7 @@ def run_all_tests():
         test_rhs_extraction_bit_select,
         test_rhs_extraction_concatenation,
         test_load_reverse_lookup,
+        test_lhs_concatenation,
     ]
     
     passed = 0
@@ -688,3 +743,5 @@ if __name__ == '__main__':
 # =============================================================================
 # 复杂表达式测试 (发现的问题)
 # =============================================================================
+
+

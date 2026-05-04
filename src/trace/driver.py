@@ -480,25 +480,28 @@ class DriverCollector:
                 if lhs is None or rhs is None:
                     continue
                 
-                target = self._get_signal_name(lhs)
-                if not target:
+                # 获取 LHS 的所有信号 (支持拼接)
+                targets = self._get_signal_names_from_lhs(lhs)
+                if not targets:
                     continue
                 
                 sources = self._extract_sources(rhs)
                 
-                driver = Driver(
-                    signal=target,
-                    kind=DriverKind.Continuous,
-                    module=module_name,
-                    sources=sources,
-                    clock="",
-                    lines=[],
-                    condition=""
-                )
-                
-                if target not in self.drivers:
-                    self.drivers[target] = []
-                self.drivers[target].append(driver)
+                # 为每个目标信号创建驱动记录
+                for target in targets:
+                    driver = Driver(
+                        signal=target,
+                        kind=DriverKind.Continuous,
+                        module=module_name,
+                        sources=sources,
+                        clock="",
+                        lines=[],
+                        condition=""
+                    )
+                    
+                    if target not in self.drivers:
+                        self.drivers[target] = []
+                    self.drivers[target].append(driver)
                     
         except Exception as e:
             self.warn_handler.warn_error(
@@ -514,7 +517,7 @@ class DriverCollector:
             node: AST 节点
             
         Returns:
-            str: 信号名
+            str: 信号名 (如果是拼接表达式，返回空字符串)
         """
         if node is None:
             return ""
@@ -528,6 +531,43 @@ class DriverCollector:
             return name
         
         return ""
+    
+    def _get_signal_names_from_lhs(self, node) -> List[str]:
+        """从 LHS 节点获取所有信号名 (支持拼接表达式)
+        
+        Args:
+            node: AST 节点 (可能是 Identifier 或 ConcatenationExpression)
+            
+        Returns:
+            List[str]: 信号名列表
+        """
+        if node is None:
+            return []
+        
+        kind_name = getattr(node, 'kind', None).name if hasattr(node, 'kind') and hasattr(node.kind, 'name') else ''
+        
+        # 简单标识符
+        if 'IdentifierSelectName' in kind_name or kind_name == 'IdentifierName':
+            name = str(node).strip()
+            if '[' in name:
+                name = name.split('[')[0]
+            return [name] if name else []
+        
+        # 拼接表达式: {a, b, ...}
+        if kind_name == 'ConcatenationExpression':
+            names = []
+            for child in node:
+                names.extend(self._get_signal_names_from_lhs(child))
+            return names
+        
+        # SeparatedList (拼接中的列表)
+        if kind_name == 'SeparatedList':
+            names = []
+            for child in node:
+                names.extend(self._get_signal_names_from_lhs(child))
+            return names
+        
+        return []
     
     def _extract_sources(self, node) -> List[str]:
         """从表达式提取源信号列表
