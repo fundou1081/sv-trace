@@ -190,8 +190,8 @@ class ModuleConnectionsQuery:
         - 时钟: clk, clock, sys_clk, core_clk, ref_clk
         - 复位: rst_n, reset_n, rst, reset, async_rst_n
         """
-        common_clocks = {'clk', 'clock', 'sys_clk', 'core_clk', 'ref_clk'}
-        common_resets = {'rst_n', 'reset_n', 'rst', 'reset', 'async_rst_n'}
+        common_clocks = {'clk', 'clock', 'sys_clk', 'core_clk', 'ref_clk', 'clk_i'}
+        common_resets = {'rst_n', 'reset_n', 'rst', 'reset', 'async_rst_n', 'rst_ni'}
         
         def extract_signal_from_event(node):
             """从事件表达式中提取信号名"""
