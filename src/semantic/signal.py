@@ -1,27 +1,38 @@
-"""
-Signal Items - 信号语义类型
+"""Signal Items - 信号语义类型
 
-实际的 pyslang kind:
-- Declarator: 变量声明 (logic [7:0] data;)
-- ImplicitAnsiPort: ANSI 端口声明 (input clk, output [7:0] data)
+按项目纪律：实现 __post_init__ 提取信号信息
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Set, ClassVar
 import pyslang
 
 from .base import SemanticItem
 
 
+def _extract_identifier(node) -> str:
+    if node is None:
+        return ""
+    if not hasattr(node, 'kind'):
+        return ""
+    kind = node.kind.name
+    if kind in ('Identifier', 'IdentifierName'):
+        val = node.value if hasattr(node, 'value') else str(node)
+        return val.strip() if val else ""
+    if hasattr(node, '__iter__'):
+        try:
+            for child in list(node):
+                result = _extract_identifier(child)
+                if result:
+                    return result
+        except:
+            pass
+    return ""
+
+
 @dataclass
 class SignalItem(SemanticItem):
-    """
-    信号语义项
-    
-    多种 AST 来源:
-    - Declarator: 变量声明 (logic [7:0] data;)
-    - ImplicitAnsiPort: 端口声明
-    """
+    """信号"""
     SUPPORTED_KINDS: ClassVar[Set[str]] = {
         'Declarator',
         'ImplicitAnsiPort',
@@ -29,60 +40,75 @@ class SignalItem(SemanticItem):
     
     path: str = ""
     width: int = 1
-    kind: str = "wire"
+    direction: str = ""  # input/output
+    kind: str = "wire"  # wire/reg/logic
     
-    def _extract_path(self) -> str:
-        """从 AST 提取信号路径"""
-        name = ""
-        for child in self.node:
-            kn = child.kind.name
-            if kn == 'Identifier':
-                name = str(child.value) if hasattr(child, 'value') else str(child)
-                break
-        return f"{self.module_path}.{name}" if name else ""
-    
-    @property
-    def name(self) -> str:
-        return self.path.split('.')[-1].split('[')[0]
-    
-    @property
-    def is_clock(self) -> bool:
-        n = self.name.lower()
-        return 'clk' in n or 'clock' in n
-    
-    @property
-    def is_reset(self) -> bool:
-        n = self.name.lower()
-        return 'rst' in n or 'reset' in n
+    def __post_init__(self):
+        if not self.node:
+            return
+        
+        # 提取信号名
+        self.path = _extract_identifier(self.node)
+        
+        # 提取位宽 [7:0]
+        width_node = getattr(self.node, 'dimensions', None)
+        if width_node and hasattr(width_node, '__iter__'):
+            # 简化：检查是否有维度
+            self.width = 1
+        
+        # 提取 direction
+        parent = self.node.parent
+        if parent and hasattr(parent, 'kind'):
+            if parent.kind.name == 'ImplicitAnsiPort':
+                direction = str(parent).split()[0] if str(parent) else ""
+                if direction in ('input', 'output', 'inout'):
+                    self.direction = direction
 
 
 @dataclass
-class PortItem(SignalItem):
-    """
-    端口语义项
-    
-    AST: ImplicitAnsiPort
-    """
+class PortItem(SemanticItem):
+    """端口信号"""
     SUPPORTED_KINDS: ClassVar[Set[str]] = {
-        'ImplicitAnsiPort',
+        'PortDeclaration',
+        'AnsiPortDeclaration',
     }
     
-    direction: str = "input"
-    is_clock: bool = False
-    is_reset: bool = False
+    port_name: str = ""
+    direction: str = ""  # input/output
+    width: int = 1
     
     def __post_init__(self):
-        super().__post_init__()
-        self._detect_special()
-    
-    def _detect_special(self) -> None:
-        n = self.name.lower()
-        self.is_clock = 'clk' in n or 'clock' in n
-        self.is_reset = 'rst' in n or 'reset' in n
-    
-    @property
-    def is_input(self) -> bool:
-        return self.direction == "input"
+        if not self.node:
+            return
+        
+        self.port_name = _extract_identifier(self.node)
+        
+        # 方向
+        node_str = str(self.node).lower()
+        if 'input' in node_str:
+            self.direction = 'input'
+        elif 'output' in node_str:
+            self.direction = 'output'
 
 
-__all__ = ['SignalItem', 'PortItem']
+@dataclass
+class RegisterItem(SemanticItem):
+    """寄存器信号"""
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'DataDeclaration',
+    }
+    
+    signal_path: str = ""
+    width: int = 1
+    is_register: bool = True
+    
+    def __post_init__(self):
+        if not self.node:
+            return
+        
+        self.signal_path = _extract_identifier(self.node)
+        node_str = str(self.node).lower()
+        self.is_register = 'reg' in node_str
+
+
+__all__ = ['SignalItem', 'PortItem', 'RegisterItem']
