@@ -76,6 +76,8 @@ class SemanticCollector:
                 if cls.matches(node):
                     try:
                         item = cls(node, module_path=self._get_module_path(node))
+                        if hasattr(item, '__post_init__'):
+                            item.__post_init__()
                         self.items.append(item)
                     except:
                         pass

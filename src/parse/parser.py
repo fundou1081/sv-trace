@@ -44,7 +44,7 @@ class SVParser:
         'CovergroupDeclaration': '覆盖率group不支持',
         'PropertyDeclaration': 'property声明不支持',
         'SequenceDeclaration': 'sequence声明不支持',
-        'ClassDeclaration': 'class声明建议使用pyslang_helper提取',
+        'ClassDeclaration': 'class声明建议使用 pyslang-ast-spec 项目提取',
         'InterfaceDeclaration': 'interface声明不支持',
         'PackageDeclaration': 'package声明不支持',
         'ProgramDeclaration': 'program块不支持',

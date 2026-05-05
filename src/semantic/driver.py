@@ -1,12 +1,4 @@
-"""
-Driver Items - 驱动关系语义类型
-
-实际的 pyslang kind 名称:
-- ContinuousAssign: assign 语句
-- NonblockingAssignmentExpression: <= 赋值
-- AssignmentExpression: = 赋值
-- EventControlWithExpression: @(posedge clk)
-"""
+"""Driver Items - 驱动关系语义类型"""
 
 from dataclasses import dataclass, field
 from typing import Set, ClassVar, List
@@ -15,16 +7,34 @@ import pyslang
 from .base import SemanticItem
 
 
+def _extract_identifier(node) -> str:
+    """递归提取标识符"""
+    if node is None:
+        return ""
+    if not hasattr(node, 'kind'):
+        return ""
+    kind = node.kind.name
+    
+    if kind in ('Identifier', 'IdentifierName'):
+        val = node.value if hasattr(node, 'value') else str(node)
+        return val.strip() if val else ""
+    
+    # 递归从子节点找
+    if hasattr(node, '__iter__'):
+        try:
+            for child in list(node):
+                result = _extract_identifier(child)
+                if result:
+                    return result
+        except:
+            pass
+    
+    return ""
+
+
 @dataclass
 class DriverSignal(SemanticItem):
-    """
-    被驱动的信号 - 语义类型
-    
-    多种 AST 来源:
-    - NonblockingAssignmentExpression (左值)
-    - AssignmentExpression (左值)
-    - ContinuousAssign (左值)
-    """
+    """被驱动的信号"""
     SUPPORTED_KINDS: ClassVar[Set[str]] = {
         'NonblockingAssignmentExpression',
         'AssignmentExpression',
@@ -34,27 +44,14 @@ class DriverSignal(SemanticItem):
     signal_path: str = ""
     width: int = 1
     
-    @property
-    def is_nonblocking(self) -> bool:
-        return self.kind_name == 'NonblockingAssignmentExpression'
-    
-    @property
-    def is_blocking(self) -> bool:
-        return self.kind_name == 'AssignmentExpression'
-    
-    @property
-    def is_continuous(self) -> bool:
-        return self.kind_name == 'ContinuousAssign'
+    def __post_init__(self):
+        if not self.signal_path and self.node:
+            self.signal_path = _extract_identifier(self.node)
 
 
 @dataclass
 class NonBlockingAssign(SemanticItem):
-    """
-    非阻塞赋值 (always_ff 内)
-    
-    AST: NonblockingAssignmentExpression
-    Example: data <= next_data;
-    """
+    """非阻塞赋值"""
     SUPPORTED_KINDS: ClassVar[Set[str]] = {
         'NonblockingAssignmentExpression',
     }
@@ -63,19 +60,14 @@ class NonBlockingAssign(SemanticItem):
     rhs: List[str] = field(default_factory=list)
     clock_signal: str = ""
     
-    @property
-    def is_sequential(self) -> bool:
-        return True
+    def __post_init__(self):
+        if self.node:
+            self.lhs = _extract_identifier(self.node)
 
 
 @dataclass
 class BlockingAssign(SemanticItem):
-    """
-    阻塞赋值 (always_comb/always 内)
-    
-    AST: AssignmentExpression
-    Example: data = next_data;
-    """
+    """阻塞赋值"""
     SUPPORTED_KINDS: ClassVar[Set[str]] = {
         'AssignmentExpression',
     }
@@ -83,19 +75,14 @@ class BlockingAssign(SemanticItem):
     lhs: str = ""
     rhs: List[str] = field(default_factory=list)
     
-    @property
-    def is_combinational(self) -> bool:
-        return True
+    def __post_init__(self):
+        if self.node:
+            self.lhs = _extract_identifier(self.node)
 
 
 @dataclass
 class ContinuousAssign(SemanticItem):
-    """
-    连续赋值 (assign 语句)
-    
-    AST: ContinuousAssign
-    Example: assign data = next_data;
-    """
+    """连续赋值"""
     SUPPORTED_KINDS: ClassVar[Set[str]] = {
         'ContinuousAssign',
     }
@@ -103,9 +90,9 @@ class ContinuousAssign(SemanticItem):
     lhs: str = ""
     rhs: List[str] = field(default_factory=list)
     
-    @property
-    def is_wire(self) -> bool:
-        return True
+    def __post_init__(self):
+        if self.node:
+            self.lhs = _extract_identifier(self.node)
 
 
 __all__ = ['DriverSignal', 'NonBlockingAssign', 'BlockingAssign', 'ContinuousAssign']

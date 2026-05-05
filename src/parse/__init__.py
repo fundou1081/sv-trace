@@ -13,7 +13,6 @@ from .extractors import (
     extract_always_blocks
 )
 from .class_utils import ClassExtractor, get_classes
-from pyslang_helper import SVParser as PyslangHelperParser, extract_all
 
 __all__ = [
     'SVParser',
@@ -28,8 +27,6 @@ __all__ = [
     'extract_always_blocks',
     'ClassExtractor',
     'get_classes',
-    'PyslangHelperParser',
-    'extract_all',
 ]
 
 
@@ -56,21 +53,4 @@ try:
     from .covergroup import CovergroupExtractor, extract_covergroups
     __all__.extend(['CovergroupExtractor', 'extract_covergroups'])
 except ImportError as e:
-    pass
-
-# Clocking 解析器 (已移动到 src/pyslang-ast-ref/)
-# 现在使用 pyslang_helper 中的版本
-try:
-    from pyslang_helper import extract_clockings as extract_clockings_ast
-except ImportError:
-    pass
-
-# 便捷函数 - 使用 pyslang
-try:
-    from pyslang_helper import (
-        extract_interfaces as extract_interfaces_ast,
-        extract_packages as extract_packages_ast,
-        extract_covergroups as extract_covergroups_ast,
-    )
-except ImportError:
     pass

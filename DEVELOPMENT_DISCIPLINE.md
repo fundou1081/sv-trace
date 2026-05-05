@@ -207,3 +207,95 @@
 - [ ] 新增/修改是否同步更新文档？
 - [ ] API 返回是否包含 confidence 和 caveats？
 - [ ] 性能优化是否通过正确性验证？
+
+---
+
+## 八、语义层重构方法（Driver/Load/Clock/Reset 通用）
+
+### 背景
+
+项目采用**双层架构**：
+
+```
+┌─────────────────────────────────────────────────┐
+│  semantic/          → 语义类型定义 (SUPPORTED_KINDS)    │
+│  - driver.py       → DriverSignal, NonBlockingAssign  │
+│  - clock.py      → ClockSignal               │
+│  - reset.py     → ResetSignal             │
+│  - base.py      → SemanticItem, SemanticCollector │
+└─────────────────────────────────────────────────┘
+                      ↓
+┌─────────────────────────────────────────────────┐
+│  trace/           → 具体分析工具实现          │
+│  - driver.py     → DriverCollector (使用semantic) │
+│  - clock_domain.py  → CDC 分析              │
+└─────────────────────────────────────────────────┘
+```
+
+### 重构流程
+
+#### 步骤 1: 定义语义类型（semantic/）
+
+```python
+# semantic/driver.py
+@dataclass
+class DriverSignal(SemanticItem):
+    """驱动信号 - 语义类型"""
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {
+        'NonblockingAssignmentExpression',
+        'AssignmentExpression',
+        'ContinuousAssign',
+    }
+    signal_path: str = ""
+    
+    @property
+    def is_nonblocking(self) -> bool:
+        return self.kind_name == 'NonblockingAssignmentExpression'
+```
+
+#### 步骤 2: 实现收集器（semantic/base.py）
+
+```python
+# SemanticCollector 自动遍历 AST，通过 SUPPORTED_KINDS 匹配
+class SemanticCollector:
+    def collect(self, tree, filename):
+        for cls in SemanticItem.__subclasses__():
+            if cls.matches(node):
+                item = cls(node, module_path=...)
+                self.items.append(item)
+```
+
+#### 步骤 3: 扩展为完整分析（trace/）
+
+```python
+# trace/driver.py - 基于 semantic 层增强
+from semantic.base import SemanticCollector
+from semantic.driver import DriverSignal, NonBlockingAssign
+
+class DriverAnalyzer:
+    def __init__(self, use_semantic=True):
+        self.collector = SemanticCollector()
+    
+    def analyze(self, tree, filename):
+        self.collector.collect(tree, filename)
+        # 增强: 提取 clock/reset/enable
+        for driver in self.collector.get_by_type(DriverSignal):
+            clock = self._extract_clock(driver)
+            reset = self._extract_reset(driver)
+            yield Driver(...)  # 兼容模型
+```
+
+### 依赖管理原则
+
+| 文件 | 状态 | 说明 |
+|------|------|------|
+| `semantic/*.py` | ✅ 可引用 | 语义类型定义，无外部依赖 |
+| `trace/*.py` | ⚠️ 条件 | 可引用 semantic，需处理 ImportError |
+| `core/models.py` | ✅ 保留 | 对外兼容接口 |
+
+### 迁移检查清单
+
+- [ ] 语义类型是否在 `semantic/` 中定义 SUPPORTED_KINDS？
+- [ ] trace/ 模块是否优先使用 SemanticCollector？
+- [ ] 是否保持对 core/models.py 的兼容？
+- [ ] ImportError 是否妥善处理？
