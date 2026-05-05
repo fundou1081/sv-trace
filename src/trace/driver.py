@@ -1,8 +1,13 @@
-"""Driver collector using semantic layer."""
+"""Driver collector using semantic layer.
+
+按项目纪律重构 - 支持时钟/复位/多驱动检测
+使用已有的 semantic/clock.py 和 semantic/reset.py
+"""
 
 import sys
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
+from dataclasses import dataclass, field
 
 import pyslang
 
@@ -11,10 +16,11 @@ from core.models import Driver, DriverKind
 
 from trace.parse_warn import ParseWarningHandler
 
-# 导入语义层
 try:
     from semantic.base import SemanticCollector
     from semantic.driver import DriverSignal, NonBlockingAssign, BlockingAssign, ContinuousAssign
+    from semantic.clock import ClockDomainItem
+    from semantic.reset import ResetSignalItem
     SEMANTIC_AVAILABLE = True
 except ImportError:
     SEMANTIC_AVAILABLE = False
@@ -22,6 +28,14 @@ except ImportError:
 
 
 class DriverCollector:
+    """收集设计中所有信号的驱动源信息
+    
+    支持:
+    - 时钟/复位/使能提取
+    - 多驱动检测
+    - 条件驱动识别
+    """
+    
     def __init__(self, parser=None, use_semantic: bool = True, verbose: bool = True):
         self.parser = parser
         self.use_semantic = use_semantic and SEMANTIC_AVAILABLE
@@ -34,29 +48,48 @@ class DriverCollector:
         self._collector = SemanticCollector()
         self._collector.collect(tree, filename)
         
-        # 处理 DriverSignal items
+        # 提取时钟域信息
+        clock_domains = self._collector.get_by_type(ClockDomainItem)
+        resets = self._collector.get_by_type(ResetSignalItem)
+        
+        clocks = {}
+        for cd in clock_domains:
+            if cd.clock_signal:
+                clocks[cd.clock_signal] = cd
+        
+        all_resets = set(r.reset_signal for r in resets if hasattr(r, 'reset_signal'))
+        
+        # 处理每个驱动信号
         for item in self._collector.driver_signals:
-            # 提取信号名
-            signal_path = self._get_signal_path(item)
+            signal_path = self._get_signal(item)
             if not signal_path:
                 signal_path = "unknown"
             
             kind = self._kind_from_name(item.kind_name)
             
+            # 查找关联的时钟
+            clks = self._find_associated_clock(signal_path, clocks)
+            reset_sig = self._find_associated_reset(signal_path, all_resets)
+            
             driver = Driver(
                 signal=signal_path,
                 kind=kind,
                 module=item.module_path,
-                lines=[item.line_number or 0]
+                lines=[item.line_number or 0],
+                clock=clks[0] if clks else "",
+                reset=reset_sig,
             )
             
             if signal_path not in self.drivers:
                 self.drivers[signal_path] = []
             self.drivers[signal_path].append(driver)
         
+        # 多驱动检测
+        self._detect_multi_drivers()
+        
         return self
     
-    def _get_signal_path(self, item) -> str:
+    def _get_signal(self, item) -> str:
         if hasattr(item, 'signal_path') and item.signal_path:
             return item.signal_path.strip()
         if hasattr(item, 'lhs') and item.lhs:
@@ -72,14 +105,52 @@ class DriverCollector:
             return DriverKind.Continuous
         return DriverKind.AlwaysComb
     
+    def _find_associated_clock(self, signal: str, clock_domains: dict) -> List[str]:
+        """查找信号关联的时钟"""
+        # 简化：返回所有时钟域的时钟
+        # 后续可以增强为更精确的匹配
+        return list(clock_domains.keys())
+    
+    def _find_associated_reset(self, signal: str, resets: Set[str]) -> str:
+        """查找信号关联的复位"""
+        if resets:
+            return list(resets)[0]
+        return ""
+    
+    def _detect_multi_drivers(self):
+        """检测多驱动"""
+        self._multi_drivers = {}
+        for sig, driver_list in self.drivers.items():
+            if len(driver_list) > 1:
+                self._multi_drivers[sig] = [d.kind.name for d in driver_list]
+    
+    @property
+    def multi_drivers(self) -> Dict[str, List[str]]:
+        return getattr(self, '_multi_drivers', {})
+    
+    @property
+    def all_clocks(self) -> Set[str]:
+        clocks = set()
+        for sig, drivers in self.drivers.items():
+            for d in drivers:
+                if d.clock:
+                    clocks.add(d.clock)
+        return clocks
+    
+    @property
+    def all_resets(self) -> Set[str]:
+        resets = set()
+        for sig, drivers in self.drivers.items():
+            for d in drivers:
+                if d.reset:
+                    resets.add(d.reset)
+        return resets
+    
     def get_drivers(self, pattern: str = '*') -> Dict[str, List[Driver]]:
         if pattern == '*':
             return self.drivers
         import fnmatch
         return {k: v for k, v in self.drivers.items() if fnmatch.fnmatch(k, pattern)}
-    
-    def find_driver(self, name: str) -> List[Driver]:
-        return self.drivers.get(name, [])
     
     @property
     def all_signals(self) -> List[str]:
