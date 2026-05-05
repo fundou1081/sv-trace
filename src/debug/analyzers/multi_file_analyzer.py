@@ -10,7 +10,7 @@ Example:
 """
 import sys
 import os
-from typing import Dict, List, Set, Optional, Tuple
+from typing import Dict, List, Set, Set, Optional, Tuple
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))

@@ -13,7 +13,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Set, Optional
 from dataclasses import dataclass
 from enum import Enum
 

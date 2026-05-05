@@ -14,7 +14,7 @@ Example:
 import sys
 import os
 import re
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Set, Tuple
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))

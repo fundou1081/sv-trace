@@ -17,7 +17,7 @@ import re
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Set, Set, Optional
 from dataclasses import dataclass
 from collections import defaultdict
 
