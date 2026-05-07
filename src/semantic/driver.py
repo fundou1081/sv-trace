@@ -1,3 +1,152 @@
+"""DriverExtractor - 独立的驱动提取器类
+
+从 SystemVerilog AST 中提取驱动关系
+符合铁律 17：提取逻辑封装为独立 Visitor 类
+
+使用 pyslang.visit() 遍历，符合铁律 1
+"""
+
+import pyslang
+
+
+class DriverExtractor:
+    """驱动信息提取器
+    
+    独立提取驱动关系，支持：
+    - 时钟/复位提取
+    - 驱动类型识别
+    - 条件驱动
+    """
+    
+    def __init__(self):
+        self.drivers = []  # [(signal, kind, clock, reset, condition), ...]
+    
+    def extract(self, root) -> 'DriverExtractor':
+        """从 AST 根节点提取驱动"""
+        def visitor(node):
+            self._on_node(node)
+            return pyslang.VisitAction.Advance
+        
+        root.visit(visitor)
+        return self
+    
+    def _on_node(self, node):
+        """处理每个节点"""
+        if not hasattr(node, 'kind'):
+            return
+        
+        kind = node.kind.name
+        
+        if kind == 'NonblockingAssignmentExpression':
+            self._extract_nonblocking(node)
+        elif kind == 'AssignmentExpression':
+            self._extract_blocking(node)
+        elif kind == 'ContinuousAssign':
+            self._extract_continuous(node)
+    
+    def _extract_nonblocking(self, node):
+        """提取非阻塞赋值 (<=)"""
+        lhs = self._extract_identifier(node)
+        
+        # 父级链找时钟/复位
+        clock = ""
+        reset = ""
+        condition = ""
+        
+        parent = node.parent
+        for _ in range(5):
+            if not parent:
+                break
+            if hasattr(parent, 'kind'):
+                if parent.kind.name == 'AlwaysFFBlock':
+                    clock, reset = self._extract_clock_reset(parent)
+                elif parent.kind.name == 'ConditionalStatement':
+                    condition = str(parent)[:50]
+            parent = getattr(parent, 'parent', None)
+        
+        self.drivers.append({
+            'signal': lhs,
+            'kind': 'AlwaysFF',
+            'clock': clock,
+            'reset': reset,
+            'condition': condition
+        })
+    
+    def _extract_blocking(self, node):
+        """提取阻塞赋值 (=)"""
+        lhs = self._extract_identifier(node)
+        self.drivers.append({
+            'signal': lhs,
+            'kind': 'AlwaysComb',
+            'clock': '',
+            'reset': '',
+            'condition': ''
+        })
+    
+    def _extract_continuous(self, node):
+        """提取连续赋值 (assign)"""
+        lhs = self._extract_identifier(node)
+        self.drivers.append({
+            'signal': lhs,
+            'kind': 'Continuous',
+            'clock': '',
+            'reset': '',
+            'condition': ''
+        })
+    
+    def _extract_clock_reset(self, node) -> tuple:
+        """从 always_ff 块提取时钟和复位"""
+        clock = ""
+        reset = ""
+        
+        # 找 TimingControlStatement
+        for child in list(node):
+            if not hasattr(child, 'kind'):
+                continue
+            
+            if child.kind.name == 'TimingControlStatement':
+                for tc in list(child):
+                    if hasattr(tc, 'kind') and tc.kind.name == 'EventControlWithExpression':
+                        clock = self._extract_clock(tc)
+            
+            # 检查异步复位
+            text = str(node)
+            if 'negedge' in text or 'or' in text:
+                import re
+                match = re.search(r'negedge\s+(\w+)', text)
+                if match:
+                    reset = match.group(1)
+        
+        return clock, reset
+    
+    def _extract_clock(self, node) -> str:
+        """从 EventControl 提取时钟"""
+        text = str(node).strip().lstrip('@(').rstrip(')')
+        parts = text.split(' or ')
+        first = parts[0].strip()
+        for prefix in ('posedge ', 'negedge '):
+            if first.startswith(prefix):
+                return first[len(prefix):].strip()
+        return first.strip()
+    
+    def _extract_identifier(self, node) -> str:
+        """提取标识符"""
+        if not hasattr(node, 'kind'):
+            return ""
+        
+        kind = node.kind.name
+        
+        if kind in ('Identifier', 'IdentifierName'):
+            return str(node.value) if hasattr(node, 'value') else str(node)
+        
+        # 从子节点提取
+        for child in list(node):
+            if hasattr(child, 'kind') and child.kind.name in ('Identifier', 'IdentifierName'):
+                return self._extract_identifier(child)
+        
+        return ""
+
+
 """Driver Items - 驱动关系语义类型
 
 按项目纪律重构：

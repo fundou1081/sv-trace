@@ -85,3 +85,64 @@ class ConditionalLoad(LoadSignal):
 
 
 __all__ = ['LoadSignal', 'PortLoad', 'ConditionalLoad']
+
+
+
+class LoadExtractor:
+    """负载信息提取器
+    
+    独立提取负载关系，支持：
+    - 阻塞读取
+    - 连续读取
+    - 条件读取
+    """
+    
+    def __init__(self):
+        self.loads = []  # [(signal, kind, condition), ...]
+    
+    def extract(self, root) -> 'LoadExtractor':
+        """从 AST 根节点提取负载"""
+        def visitor(node):
+            self._on_node(node)
+            return pyslang.VisitAction.Advance
+        
+        root.visit(visitor)
+        return self
+    
+    def _on_node(self, node):
+        """处理每个节点"""
+        if not hasattr(node, 'kind'):
+            return
+        
+        kind = node.kind.name
+        
+        # 读取操作
+        if kind == 'Identifier':
+            # 检查是否是读取（父级是 Expression）
+            parent = getattr(node, 'parent', None)
+            if parent and hasattr(parent, 'kind'):
+                parent_kind = parent.kind.name
+                if parent_kind in ('Expression', 'BinaryExpression', 'UnaryExpression'):
+                    signal = _extract_identifier(node)
+                    if signal:
+                        self.loads.append({
+                            'signal': signal,
+                            'kind': 'Read',
+                            'condition': ''
+                        })
+    
+    def _extract_identifier(self, node) -> str:
+        """提取标识符"""
+        if not hasattr(node, 'kind'):
+            return ""
+        
+        kind = node.kind.name
+        
+        if kind in ('Identifier', 'IdentifierName'):
+            return str(getattr(node, 'value', '')) or str(node)
+        
+        for child in list(node):
+            if hasattr(child, 'kind') and child.kind.name in ('Identifier', 'IdentifierName'):
+                return self._extract_identifier(child)
+        
+        return ""
