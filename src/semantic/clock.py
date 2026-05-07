@@ -32,8 +32,8 @@ def extract_events_from_block(block) -> List[tuple]:
             for child in n:
                 if child.kind.name == 'ParenthesizedEventExpression':
                     for pe in child:
+                        # 处理 BinaryEventExpression (posedge clk or negedge rst)
                         if pe.kind.name == 'BinaryEventExpression':
-                            # 处理 "posedge clk or negedge rst"
                             for be in pe:
                                 edge = "posedge"
                                 sig = ""
@@ -46,6 +46,19 @@ def extract_events_from_block(block) -> List[tuple]:
                                         sig = _extract_identifier(sub)
                                 if sig:
                                     events.append((sig, edge))
+                        # 处理 SignalEventExpression (posedge clk)
+                        elif pe.kind.name == 'SignalEventExpression':
+                            edge = "posedge"
+                            sig = ""
+                            for sub in pe:
+                                if sub.kind.name == 'PosEdgeKeyword':
+                                    edge = "posedge"
+                                elif sub.kind.name == 'NegEdgeKeyword':
+                                    edge = "negedge"
+                                elif sub.kind.name in ('Identifier', 'IdentifierName'):
+                                    sig = _extract_identifier(sub)
+                            if sig:
+                                events.append((sig, edge))
         
         try:
             for child in n:
@@ -85,27 +98,18 @@ class ClockDomainItem(SemanticItem):
         if not self.node:
             return
         
-        # 提取事件
-        evts = extract_events_from_block(self.node)
+        # 使用 ClockExtractor 提取时钟/复位
+        extractor = ClockExtractor()
+        extractor._extract_from_always_ff(self.node)
         
-        # 如果有事件
-        if evts:
-            # 第一个是时钟
-            self.clock_signal, self.clock_edge = evts[0]
-            # 检查是否有第二个(复位)
-            if len(evts) > 1:
-                self.reset_signal = evts[1][0]
-                self.is_async_reset = (evts[1][1] == "negedge")
-        else:
-            # 备用：直接在 AlwaysFFBlock 下找 EventControlWithExpression
-            for child in self.node:
-                if hasattr(child, 'kind') and child.kind.name == 'EventControlWithExpression':
-                    # 简化处理
-                    for sub in child:
-                        for item in sub:
-                            for it in item:
-                                if hasattr(it, 'kind') and it.kind.name in ('PosEdgeKeyword', 'NegEdgeKeyword'):
-                                    self.clock_edge = "negedge" if it.kind.name == 'NegEdgeKeyword' else "posedge"
+        # 设置时钟
+        if extractor.clock:
+            self.clock_signal = extractor.clock
+        
+        # 设置复位
+        if extractor.reset:
+            self.reset_signal = extractor.reset
+            self.is_async_reset = extractor.is_async
 
 
 @dataclass
@@ -204,9 +208,8 @@ class ClockExtractor:
                     elif tc.kind.name == 'EventControlWithExpression':
                         self._extract_from_event_control(tc)
                     
-                    # SequentialBlockStatement 包含 ConditionalStatement
-                    elif tc.kind.name == 'SequentialBlockStatement':
-                        self._find_conditional_statement(tc)
+                    # 查找 ConditionalStatement (同步复位)
+                    self._find_conditional_statement(tc)
     
     def _find_conditional_statement(self, node, depth=0):
         """递归查找 ConditionalStatement"""
