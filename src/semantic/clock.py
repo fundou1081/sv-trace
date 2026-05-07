@@ -189,7 +189,7 @@ class ClockExtractor:
             self._extract_from_always_ff(node)
     
     def _extract_from_always_ff(self, node):
-        """从 always_ff 块提取"""
+        """从 always_ff 块提取 - 包括同步复位"""
         try:
             children = list(node)
         except:
@@ -208,12 +208,103 @@ class ClockExtractor:
                 for tc in tc_children:
                     if not hasattr(tc, 'kind'):
                         continue
+                    
                     # SyntaxList 包含实际的 EventControl
                     if tc.kind.name == 'SyntaxList':
                         for inner in list(tc):
                             self._extract_from_event_control(inner)
-                    else:
+                    
+                    # EventControlWithExpression
+                    elif tc.kind.name == 'EventControlWithExpression':
                         self._extract_from_event_control(tc)
+                    
+                    # SequentialBlockStatement 包含 ConditionalStatement
+                    elif tc.kind.name == 'SequentialBlockStatement':
+                        self._find_conditional_statement(tc)
+    
+    def _find_conditional_statement(self, node, depth=0):
+        """递归查找 ConditionalStatement"""
+        if depth > 10 or not hasattr(node, 'kind'):
+            return
+        
+        if node.kind.name == 'ConditionalStatement':
+            self._extract_sync_reset_from_condition(node)
+            return
+        
+        try:
+            for child in list(node):
+                if hasattr(child, 'kind'):
+                    self._find_conditional_statement(child, depth+1)
+        except:
+            pass
+    
+    def _extract_sync_reset_from_condition(self, node):
+        """从 ConditionalStatement 提取同步复位 - 纯 AST
+        
+        结构: ConditionalStatement -> ConditionalPredicate -> SeparatedList -> ConditionalPattern -> IdentifierName
+        """
+        if not hasattr(node, 'kind'):
+            return
+        
+        # 递归查找 ConditionalPattern
+        self._find_conditional_pattern(node)
+    
+    def _find_conditional_pattern(self, node):
+        """递归查找 ConditionalPattern"""
+        if not hasattr(node, 'kind'):
+            return
+        
+        if node.kind.name == 'ConditionalPattern':
+            # 从 ConditionalPattern 提取信号名
+            try:
+                for child in list(node):
+                    if hasattr(child, 'kind') and child.kind.name in ('Identifier', 'IdentifierName'):
+                        signal = self._extract_identifier(child)
+                        if signal and not self.reset:
+                            self.reset = signal
+                            self.is_async = False
+                            return
+            except:
+                pass
+        
+        try:
+            for child in list(node):
+                if hasattr(child, 'kind'):
+                    self._find_conditional_pattern(child)
+        except:
+            pass
+    
+    def _extract_signal_from_condition(self, node) -> str:
+        """从条件表达式提取信号名 - 纯 AST"""
+        if not hasattr(node, 'kind'):
+            return ""
+        
+        kind = node.kind.name
+        
+        # Identifier 直接是信号名
+        if kind in ('Identifier', 'IdentifierName'):
+            return self._extract_identifier(node)
+        
+        # UnaryExpression (如 !rst_n)
+        if kind == 'UnaryExpression':
+            try:
+                for child in list(node):
+                    if hasattr(child, 'kind') and child.kind.name in ('Identifier', 'IdentifierName'):
+                        return self._extract_identifier(child)
+            except:
+                pass
+        
+        # 递归查找
+        try:
+            for child in list(node):
+                if hasattr(child, 'kind'):
+                    result = self._extract_signal_from_condition(child)
+                    if result:
+                        return result
+        except:
+            pass
+        
+        return ""
     
     def _extract_from_event_control(self, node):
         """从 EventControl 提取"""
@@ -292,6 +383,7 @@ class ClockExtractor:
                 signal = self._extract_identifier(child)
         
         if signal:
+            signal = signal.strip()  # 去除前导/尾随空格
             if edge_type and 'neg' in edge_type.lower():
                 self.reset = signal
                 self.is_async = True
