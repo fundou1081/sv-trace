@@ -22,10 +22,18 @@ sv-trace/
 │   └── query/             # 查询层
 │
 ├── tests/                 # 测试
-│   ├── sv_cases/          # 测试用例
-│   │   └── driver/        # Driver 测试用例
-│   ├── test_driver_*.py   # Driver 测试
-│   └── ...
+│   ├── unit/              # 单元测试
+│   │   ├── semantic/      # 语义层测试
+│   │   ├── trace/         # 追踪层测试
+│   │   │   ├── sv_cases/  # 测试用例
+│   │   │   └── test_*.py  # 测试文件
+│   │   └── ...
+│   ├── integration/       # 集成测试
+│   ├── e2e/               # 端到端测试
+│   ├── edge_cases/        # 边界测试
+│   └── archive/           # 归档
+│       ├── debug/         # 调试文件
+│       └── legacy/        # 旧测试
 │
 ├── docs/                  # 文档
 │   ├── DEVELOPMENT_DISCIPLINE.md  # 开发纪律
@@ -74,9 +82,45 @@ sv-trace/
 1. **铁律 1**: AST 唯一数据源
 2. **铁律 17**: 提取逻辑封装为独立 Visitor 类
 
-### 测试
+## 测试
 
 ```bash
 make test                  # 运行所有测试
-pytest tests/test_driver_*.py  # 运行 Driver 测试
+make test-driver           # 运行 Driver 测试
+make test-semantic         # 运行 Semantic 测试
+```
+
+## API 示例
+
+### DriverCollector
+
+```python
+from sv_manager import SVManager
+from trace.driver import DriverCollector
+
+mgr = SVManager()
+result = mgr.parse_file('design.sv')
+dc = DriverCollector(mgr)
+dc.collect(result.tree, 'design.sv')
+
+# 获取驱动信息
+print(dc.all_clocks)  # {'clk'}
+print(dc.all_resets)  # {'rst_n'}
+print(dc.drivers)     # {'data': [Driver(...)]}
+```
+
+### LoadTracer
+
+```python
+from sv_manager import SVManager
+from trace.load import LoadTracer
+
+mgr = SVManager()
+result = mgr.parse_file('design.sv')
+tracer = LoadTracer()
+tracer.collect(result.tree, 'design.sv')
+
+# 获取负载信息
+print(tracer.all_signals)  # ['a', 'b', 'c']
+print(tracer.find_load('a'))  # [LoadPoint(...)]
 ```
