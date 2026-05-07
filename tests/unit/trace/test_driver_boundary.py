@@ -20,7 +20,7 @@ class TestDriverBoundary:
     
     @pytest.fixture
     def test_file(self):
-        return 'tests/sv_cases/driver/driver_boundary_10.sv'
+        return 'tests/unit/trace/sv_cases/driver/driver_boundary_10.sv'
     
     def test_generate_for(self, parser, test_file):
         """1. Generate For 循环内的驱动"""

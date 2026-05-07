@@ -23,7 +23,7 @@ class TestDriverGrammarCoverage:
     
     @pytest.fixture
     def test_file(self):
-        return 'tests/sv_cases/driver/driver_grammar_coverage.sv'
+        return 'tests/unit/trace/sv_cases/driver/driver_grammar_coverage.sv'
     
     # ========== 完全支持 ==========
     

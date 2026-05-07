@@ -20,7 +20,7 @@ class TestDriverEdgeCases:
     
     @pytest.fixture
     def test_file(self):
-        return 'tests/sv_cases/driver/driver_edge_cases.sv'
+        return 'tests/unit/trace/sv_cases/driver/driver_edge_cases.sv'
     
     def test_01_generate_for(self, parser, test_file):
         """1. Generate For 中的驱动"""

@@ -2,7 +2,6 @@
 
 PYTHON := python3
 PYTEST := pytest
-SRCDIR := src/trace
 TESTDIR := tests
 
 .PHONY: test test-unit test-int test-e2e test-clean test-coverage
@@ -13,33 +12,33 @@ test:
 
 # 只跑单元测试
 test-unit:
-	@$(PYTEST) $(TESTDIR)/unit/ -v --tb=short -m unit
+	@$(PYTEST) $(TESTDIR)/unit/ -v --tb=short
 
 # 只跑集成测试
 test-int:
-	@$(PYTEST) $(TESTDIR)/integration/ -v --tb=short -m integration
+	@$(PYTEST) $(TESTDIR)/integration/ -v --tb=short
 
-# 只跑 E2E 测试
+# 只跑端到端测试
 test-e2e:
-	@$(PYTEST) $(TESTDIR)/e2e/ -v --tb=short -m e2e
+	@$(PYTEST) $(TESTDIR)/e2e/ -v --tb=short
 
-# 指定工具测试
-test-%:
-	@tool=$$(echo "$*" | tr '_' '-'); \
-	find $(TESTDIR)/unit -name "test_$$tool*.py" -o -name "test_*$$tool*.py" | xargs -I {} $(PYTEST) {} -v
+# 只跑边界测试
+test-edge:
+	@$(PYTEST) $(TESTDIR)/edge_cases/ -v --tb=short
 
 # 清理缓存
 test-clean:
-	@find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-	@find . -name "*.pyc" -delete
+	@find . -type d -name __pycache__ -exec rm -rf {} +
+	@find . -type d -name .pytest_cache -exec rm -rf {} +
 
-# 覆盖率报告
+# 测试覆盖率
 test-coverage:
-	@$(PYTEST) $(TESTDIR)/ --cov=$(SRCDIR) --cov-report=html --cov-report=term
+	@$(PYTEST) $(TESTDIR)/ -v --tb=short --cov=src --cov-report=html
 
-# 单独运行某个工具的测试（通过关键字）
-test-tools:
-	@echo "Usage: make test-tools TOOLS=driver"
-	@if [ -n "$(TOOLS)" ]; then \
-		find $(TESTDIR)/unit -name "test_*.py" | xargs grep -l "$(TOOLS)" | xargs -I {} $(PYTEST) {} -v; \
-	fi
+# Driver 测试
+test-driver:
+	@$(PYTEST) $(TESTDIR)/unit/trace/test_driver*.py -v --tb=short
+
+# Semantic 测试
+test-semantic:
+	@$(PYTEST) $(TESTDIR)/unit/semantic/ -v --tb=short
