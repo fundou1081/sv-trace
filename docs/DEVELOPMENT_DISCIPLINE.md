@@ -355,3 +355,52 @@ tests/
 - [ ] 铁律16: 是否可通过 `make test` 运行全部测试？
 - [ ] 测试是否包含：金标准推导 → 对比验证 → 边界覆盖？
 - [ ] 是否满足：基础用例 + 边界用例 + 真实项目用例？
+
+---
+
+### 铁律 17：提取逻辑封装为独立 Visitor 类
+
+**规则**：语义提取逻辑必须封装为独立的 `pyslang.SyntaxVisitor` 子类，不能分散在 `__post_init__` 中。
+
+**原因**：
+- **单一职责**：将 AST 遍历与语义建模分离
+- **可测试性**：Visitor 类可单独单元测试
+- **可维护性**：修改提取逻辑不影响 SemanticItem 数据结构
+- **性能**：避免重复遍历 AST
+
+**正确方式**：
+```python
+# semantic/clock.py
+class ClockExtractor(pyslang.SyntaxVisitor):
+    """时钟/复位提取器"""
+    
+    def on_AlwaysFFBlock(self, node):
+        # 提取时钟信号
+        ...
+    
+    def on_EventControl(self, node):
+        # 提取事件控制
+        ...
+
+
+# SemanticItem 只负责语义建模
+@dataclass
+class AlwaysFFItem(SemanticItem):
+    """时序块语义"""
+    SUPPORTED_KINDS: ClassVar[Set[str]] = {'AlwaysFFBlock'}
+    
+    clock: str = ""
+    reset: str = ""
+```
+
+**错误方式**（不允许）：
+```python
+# 在 __post_init__ 中提取 - 违反铁律
+def __post_init__(self):
+    self._extract_clock_reset()  # 分散的处理逻辑
+```
+
+**实施检查**：
+- [ ] semantic/clock.py 中是否有 `ClockExtractor` 类？
+- [ ] semantic/driver.py 中是否有 `DriverExtractor` 类？
+- [ ] 提取逻辑是否与 SemanticItem 分离？
