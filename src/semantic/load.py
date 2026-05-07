@@ -7,28 +7,10 @@ import pyslang
 from .base import SemanticItem
 
 
-def _extract_identifier(node) -> str:
-    """递归提取标识符"""
-    if node is None:
-        return ""
-    if not hasattr(node, 'kind'):
-        return ""
-    kind = node.kind.name
-    
-    if kind in ('Identifier', 'IdentifierName'):
-        val = node.value if hasattr(node, 'value') else str(node)
-        return val.strip() if val else ""
-    
-    if hasattr(node, '__iter__'):
-        try:
-            for child in list(node):
-                result = _extract_identifier(child)
-                if result:
-                    return result
-        except:
-            pass
-    
-    return ""
+# 使用公共工具函数
+from .utils import extract_identifier as _extract_identifier
+
+
 
 
 @dataclass

@@ -7,6 +7,7 @@
 """
 
 from .base import SemanticItem, SemanticCollector
+from .utils import extract_identifier
 
 # 信号/端口
 from .signal import SignalItem, PortItem, RegisterItem
