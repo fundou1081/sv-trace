@@ -154,3 +154,72 @@ class ResetSignalItem(SemanticItem):
 
 
 __all__ = ['ClockDomainItem', 'RegisterItem', 'ClockSignalItem', 'ResetSignalItem']
+
+
+
+class ClockExtractor:
+    """时钟/复位提取器
+    
+    从 AlwaysFFBlock 中提取时钟和复位信号
+    封装为独立类，符合铁律 17
+    
+    使用 pyslang.visit() 遍历，符合铁律 1
+    """
+    
+    def __init__(self):
+        self.clock: str = ""
+        self.reset: str = ""
+        self.is_async: bool = False
+    
+    def extract(self, root) -> 'ClockExtractor':
+        """从 AST 根节点提取"""
+        def visitor(node):
+            self._on_node(node)
+            return pyslang.VisitAction.Advance
+        
+        root.visit(visitor)
+        return self
+    
+    def _on_node(self, node):
+        """处理每个节点"""
+        if not hasattr(node, 'kind'):
+            return
+        
+        kind = node.kind.name
+        
+        if kind == 'AlwaysFFBlock':
+            self._extract_from_always_ff(node)
+    
+    def _extract_from_always_ff(self, node):
+        """从 always_ff 块提取"""
+        for child in list(node):
+            if not hasattr(child, 'kind'):
+                continue
+            
+            if child.kind.name == 'TimingControlStatement':
+                for tc in list(child):
+                    if hasattr(tc, 'kind') and tc.kind.name == 'EventControlWithExpression':
+                        self.clock = self._extract_clock(tc)
+                        # 检查整个 always_ff 的文本找异步复位
+                        self._check_async_reset(node)
+    
+    def _check_async_reset(self, node):
+        """检查 always_ff 块是否包含异步复位"""
+        text = str(node)
+        if 'negedge' in text or 'or' in text:
+            # 找到 negedge 后面的信号
+            import re
+            match = re.search(r'negedge\s+(\w+)', text)
+            if match:
+                self.reset = match.group(1)
+                self.is_async = True
+    
+    def _extract_clock(self, node) -> str:
+        """从 EventControl 提取时钟"""
+        text = str(node).strip().lstrip('@(').rstrip(')')
+        parts = text.split(' or ')
+        first = parts[0].strip()
+        for prefix in ('posedge ', 'negedge '):
+            if first.startswith(prefix):
+                return first[len(prefix):].strip()
+        return first.strip()
