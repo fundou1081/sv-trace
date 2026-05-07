@@ -299,3 +299,59 @@ class DriverAnalyzer:
 - [ ] trace/ 模块是否优先使用 SemanticCollector？
 - [ ] 是否保持对 core/models.py 的兼容？
 - [ ] ImportError 是否妥善处理？
+
+---
+
+## 九、测试管理铁律
+
+### 铁律 14：测试分层强制化
+
+**规则**：每个工具的测试必须放在 `tests/unit/tools/` 下的独立文件中，遵循：
+- `test_{tool_name}.py` 命名（如 `test_driver.py`）
+- 文件内按功能分类：`class Test{Component}`
+- 包含三层用例：**基础用例 → 边界用例 → 真实项目用例**
+
+**目录结构**：
+```
+tests/
+├── unit/tools/          # 工具单元测试
+│   ├── test_driver.py
+│   ├── test_load.py
+│   ├── test_signal_chain.py
+│   └── ...
+├── integration/         # 集成测试
+└── e2e/               # 端到端测试
+```
+
+---
+
+### 铁律 15：工具必须有独立 Test Plan
+
+**规则**：每个工具模块必须有一个对应的 `.testplan.md` 文件，内容包括：
+1. **工具定位**：功能说明、核心 API
+2. **测试覆盖矩阵**：功能点 → 测试用例 → 边界/异常
+3. **金标准用例**：至少 3 个可验证的正确输出示例
+4. **通过标准**：量化指标（如覆盖率、错误率）
+
+**Test Plan 命名**：`{tool_name}.testplan.md`
+
+**示例**：`tests/docs/driver.testplan.md`
+
+---
+
+### 铁律 16：统一 Test Runner
+
+**规则**：项目必须提供统一的测试入口，不允许手动 PYTHONPATH 运行：
+- `Makefile` 包含 `make test` 等标准目标
+- `pytest.ini` 包含 testpaths 和 markers
+- CI 必须能通过 `make test` 执行全部测试
+
+---
+
+### 检查清单（测试管理）
+
+- [ ] 铁律14: 工具测试是否在 `tests/unit/tools/` 下独立文件？
+- [ ] 铁律15: 是否为每个工具创建了 `.testplan.md`？
+- [ ] 铁律16: 是否可通过 `make test` 运行全部测试？
+- [ ] 测试是否包含：金标准推导 → 对比验证 → 边界覆盖？
+- [ ] 是否满足：基础用例 + 边界用例 + 真实项目用例？

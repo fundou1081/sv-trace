@@ -139,11 +139,24 @@ class DriverCollector:
     
     @property
     def all_resets(self) -> Set[str]:
+        # 首先尝试从 semantic 层获取所有已知的复位
         resets = set()
-        for sig, drivers in self.drivers.items():
-            for d in drivers:
-                if d.reset:
-                    resets.add(d.reset)
+        
+        # 从 NonBlockingAssign 获取
+        if self._collector:
+            from semantic.driver import NonBlockingAssign
+            nb_assigns = self._collector.get_by_type(NonBlockingAssign)
+            for nb in nb_assigns:
+                if nb.reset:
+                    resets.add(nb.reset)
+        
+        # 如果 semantic 层没有，从 driver 对象获取
+        if not resets:
+            for sig, drivers in self.drivers.items():
+                for d in drivers:
+                    if d.reset:
+                        resets.add(d.reset)
+        
         return resets
     
     def get_drivers(self, pattern: str = '*') -> Dict[str, List[Driver]]:

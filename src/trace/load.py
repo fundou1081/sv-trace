@@ -69,6 +69,10 @@ class LoadTracer:
         
         return self
     
+    def find_load(self, signal: str) -> List[LoadPoint]:
+        """查找信号的加载点 (API 兼容)"""
+        return self.loads.get(signal, [])
+    
     @property
     def all_signals(self) -> List[str]:
         return list(self.loads.keys())

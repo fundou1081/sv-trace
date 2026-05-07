@@ -19,7 +19,6 @@ import re
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from core.models import Signal
-from parse.params import ParameterResolver
 from typing import List, Optional
 
 
@@ -30,7 +29,7 @@ class SignalQuery:
 
     Attributes:
         parser: SVParser 实例
-        param_resolver: 参数解析器
+    
     
     Example:
         >>> sq = SignalQuery(parser)
@@ -44,7 +43,6 @@ class SignalQuery:
             parser: SVParser 实例
         """
         # 使用 SVManager.trees
-        self.param_resolver = ParameterResolver(parser)
     
     def find_signal(self, name: str, module_name: str = None) -> Optional[Signal]:
         """查找信号。

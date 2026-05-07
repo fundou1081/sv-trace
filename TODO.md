@@ -565,3 +565,28 @@ gen.generate_formal_testplan("testplan.md") # 测试计划
 3. 完善HTML报告的交互功能
 4. 集成到CI/CD流程
 
+
+## SignalClassifier 重构 - 已完成 ✅
+- 使用 SVManager 作为输入
+- 复用 DriverTracer 
+- 只分类 AlwaysFF 的 clock/reset
+
+## LoadTracer 需要修复 - 待完成
+
+### 问题
+1. DriverSignal.source 为空 - 没有提取驱动源表达式
+2. LoadTracer 算法错误 - 收集的是驱动信号而非负载
+
+### 原因
+- semantic/driver.py 的 _extract_expression 没有正确调用
+- 需要在 DriverSignal.__post_init__ 中调用
+
+### 后续修复需要
+```python
+# 1. 修复 DriverSignal 的 source 提取
+# 在 __post_init__ 中正确调用 _extract_expression(self.node.right)
+
+# 2. 重构 LoadTracer 
+# 使用 SemanticCollector 的 LoadSignal/DriverSignal items
+# 加载 = DriverSignal.signal 被使用的地方
+```
