@@ -64,46 +64,40 @@
 - **已支持**: 11 (100%)
 - **不支持**: 0 (0%)
 
-## 3. 测试覆盖
+## 3. 语义验证测试
 
-### Driver 测试
+### 验证点
 
-| 测试文件 | 测试用例数 | 状态 |
-|----------|------------|------|
-| test_driver_boundary.py | 8 | ✅ 通过 |
-| test_driver_grammar_coverage.py | 18 | ✅ 通过 |
-| test_driver_edge_cases.py | 8 | ✅ 通过 |
-| test_driver_p1_syntax.py | 6 | ✅ 通过 |
-| test_driver_p2_syntax.py | 6 | ✅ 通过 |
-| **总计** | **46** | **✅ 全部通过** |
+| 验证项 | 测试用例 | 状态 |
+|--------|----------|------|
+| 驱动信号名称 | test_basic_ff_signal_name | ✅ |
+| 时钟信号名称 | test_basic_ff_clock_name | ✅ |
+| 异步复位名称 | test_async_reset_signal_name | ✅ |
+| 同步复位名称 | test_sync_reset_signal_name | ✅ |
+| 多信号驱动 | test_multi_signal_names | ✅ |
+| 组合逻辑驱动 | test_comb_driver_signal | ✅ |
+| 连续赋值驱动 | test_assign_driver_signal | ✅ |
+| 语义一致性 | test_semantic_consistency | ✅ |
+| 时钟提取一致性 | test_clock_extraction_consistency | ✅ |
+| 复位提取一致性 | test_reset_extraction_consistency | ✅ |
 
-### Load 测试
+## 4. 测试覆盖
 
-| 测试文件 | 测试用例数 | 状态 |
-|----------|------------|------|
-| test_load_tracer.py | 4 | ✅ 通过 |
-| **总计** | **4** | **✅ 全部通过** |
+| 测试文件 | 用例数 | 状态 |
+|----------|--------|------|
+| test_driver_boundary.py | 8 | ✅ |
+| test_driver_grammar_coverage.py | 18 | ✅ |
+| test_driver_edge_cases.py | 8 | ✅ |
+| test_driver_p1_syntax.py | 6 | ✅ |
+| test_driver_p2_syntax.py | 6 | ✅ |
+| test_driver_semantic_validation.py | 10 | ✅ |
+| test_load_tracer.py | 4 | ✅ |
+| **总计** | **60** | **✅ 全部通过** |
 
-## 4. 语法支持时间线
+## 5. 修复记录
 
-| 版本 | 新增语法 | 测试用例 |
-|------|----------|----------|
-| v1.0 | always_ff, always_comb, assign | 8 |
-| v1.1 | if/else, case, generate for | 18 |
-| v1.2 | 异步复位, 同步复位 | 8 |
-| v1.3 | for loop, function, task | 6 |
-| v1.4 | always @, class, interface | 6 |
-
-## 5. 未来计划
-
-### P3 - 低优先级
-
-1. **assert 支持** - 验证断言
-2. **covergroup 支持** - 覆盖率
-3. **sequence/property 支持** - 断言序列
-
-### 性能优化
-
-1. **大型设计优化** - 支持 >1000 模块
-2. **增量分析** - 只分析修改的模块
-3. **并行处理** - 多线程分析
+| 日期 | 问题 | 修复 |
+|------|------|------|
+| 2026-05-08 | 时钟提取失败 | 修复 extract_events_from_block (SignalEventExpression) |
+| 2026-05-08 | 同步复位提取失败 | 修复 _extract_from_always_ff (ConditionalStatement) |
+| 2026-05-08 | 异步复位提取失败 | 修复 ClockDomainItem.__post_init__ |
