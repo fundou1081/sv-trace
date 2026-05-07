@@ -63,7 +63,38 @@ class ConditionalLoad(LoadSignal):
     
     def __post_init__(self):
         if self.node:
-            self.condition = str(self.node.condition) if hasattr(self.node, 'condition') else ""
+            # 纯 AST 提取条件
+            self._extract_condition()
+    
+    def _extract_condition(self):
+        """从 ConditionalStatement 提取条件 - 纯 AST"""
+        if not hasattr(self.node, 'kind'):
+            return
+        
+        # 递归查找 ConditionalPattern
+        self._find_conditional_pattern(self.node)
+    
+    def _find_conditional_pattern(self, node, depth=0):
+        """递归查找 ConditionalPattern"""
+        if depth > 10 or not hasattr(node, 'kind'):
+            return
+        
+        if node.kind.name == 'ConditionalPattern':
+            # 从 ConditionalPattern 提取信号名
+            try:
+                for child in list(node):
+                    if hasattr(child, 'kind') and child.kind.name in ('Identifier', 'IdentifierName'):
+                        self.condition = _extract_identifier(child)
+                        return
+            except:
+                pass
+        
+        try:
+            for child in list(node):
+                if hasattr(child, 'kind'):
+                    self._find_conditional_pattern(child, depth+1)
+        except:
+            pass
 
 
 __all__ = ['LoadSignal', 'PortLoad', 'ConditionalLoad']
@@ -114,17 +145,5 @@ class LoadExtractor:
                         })
     
     def _extract_identifier(self, node) -> str:
-        """提取标识符"""
-        if not hasattr(node, 'kind'):
-            return ""
-        
-        kind = node.kind.name
-        
-        if kind in ('Identifier', 'IdentifierName'):
-            return str(getattr(node, 'value', '')) or str(node)
-        
-        for child in list(node):
-            if hasattr(child, 'kind') and child.kind.name in ('Identifier', 'IdentifierName'):
-                return self._extract_identifier(child)
-        
-        return ""
+        """提取标识符 - 使用公共工具函数"""
+        return _extract_identifier(node)
