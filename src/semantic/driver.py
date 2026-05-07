@@ -205,7 +205,31 @@ class DriverSignal(SemanticItem):
     
     def __post_init__(self):
         if not self.signal_path and self.node:
-            self.signal_path = _extract_identifier(self.node)
+            # 从第一个子节点提取 LHS
+            try:
+                children = list(self.node)
+                if children and hasattr(children[0], 'kind'):
+                    self.signal_path = _extract_identifier(children[0])
+            except:
+                pass
+        
+        # 使用 ClockExtractor 提取时钟/复位
+        self._extract_clock_reset()
+    
+    def _extract_clock_reset(self):
+        """从父级链提取时钟和复位 - 纯 AST"""
+        from .clock import ClockExtractor
+        
+        parent = self.node.parent
+        for _ in range(5):
+            if parent and hasattr(parent, 'kind'):
+                if parent.kind.name == 'AlwaysFFBlock':
+                    extractor = ClockExtractor()
+                    extractor._extract_from_always_ff(parent)
+                    self.clock = extractor.clock
+                    self.reset = extractor.reset
+                    break
+            parent = getattr(parent, 'parent', None)
 
 
 @dataclass
