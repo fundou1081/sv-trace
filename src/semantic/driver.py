@@ -10,16 +10,19 @@ import pyslang
 
 
 class DriverExtractor:
-    """驱动信息提取器
+    """驱动信息提取器 - 纯 AST 遍历
     
-    独立提取驱动关系，支持：
+    符合铁律 1: 仅使用 pyslang AST 遍历
+    符合铁律 17: 独立 Visitor 类
+    
+    支持：
     - 时钟/复位提取
     - 驱动类型识别
     - 条件驱动
     """
     
     def __init__(self):
-        self.drivers = []  # [(signal, kind, clock, reset, condition), ...]
+        self.drivers = []  # [{signal, kind, clock, reset, condition}, ...]
     
     def extract(self, root) -> 'DriverExtractor':
         """从 AST 根节点提取驱动"""
@@ -45,8 +48,15 @@ class DriverExtractor:
             self._extract_continuous(node)
     
     def _extract_nonblocking(self, node):
-        """提取非阻塞赋值 (<=)"""
-        lhs = self._extract_identifier(node)
+        """提取非阻塞赋值 (<=) - 纯 AST"""
+        # LHS 是第一个子节点 (IdentifierName)
+        lhs = ""
+        try:
+            children = list(node)
+            if children and hasattr(children[0], 'kind'):
+                lhs = self._extract_identifier(children[0])
+        except:
+            pass
         
         # 父级链找时钟/复位
         clock = ""
@@ -59,9 +69,9 @@ class DriverExtractor:
                 break
             if hasattr(parent, 'kind'):
                 if parent.kind.name == 'AlwaysFFBlock':
-                    clock, reset = self._extract_clock_reset(parent)
+                    clock, reset = self._extract_clock_reset_from_always_ff(parent)
                 elif parent.kind.name == 'ConditionalStatement':
-                    condition = str(parent)[:50]
+                    condition = self._extract_condition(parent)
             parent = getattr(parent, 'parent', None)
         
         self.drivers.append({
@@ -94,58 +104,96 @@ class DriverExtractor:
             'condition': ''
         })
     
-    def _extract_clock_reset(self, node) -> tuple:
-        """从 always_ff 块提取时钟和复位"""
-        clock = ""
-        reset = ""
+    def _extract_clock_reset_from_always_ff(self, node) -> tuple:
+        """从 always_ff 块提取时钟和复位 - 纯 AST"""
+        from .clock import ClockExtractor
         
-        # 找 TimingControlStatement
+        extractor = ClockExtractor()
+        extractor._extract_from_always_ff(node)
+        return extractor.clock, extractor.reset
+    
+    def _extract_condition(self, node) -> str:
+        """从 ConditionalStatement 提取条件 - 纯 AST"""
+        if not hasattr(node, 'kind'):
+            return ""
+        
+        # 查找 condition 子节点
         for child in list(node):
             if not hasattr(child, 'kind'):
                 continue
             
-            if child.kind.name == 'TimingControlStatement':
-                for tc in list(child):
-                    if hasattr(tc, 'kind') and tc.kind.name == 'EventControlWithExpression':
-                        clock = self._extract_clock(tc)
-            
-            # 检查异步复位
-            text = str(node)
-            if 'negedge' in text or 'or' in text:
-                import re
-                match = re.search(r'negedge\s+(\w+)', text)
-                if match:
-                    reset = match.group(1)
+            # Expression 或 BinaryExpression 是条件
+            if child.kind.name in ('Expression', 'BinaryExpression', 'UnaryExpression'):
+                return self._extract_expression_text(child)
         
-        return clock, reset
+        return ""
     
-    def _extract_clock(self, node) -> str:
-        """从 EventControl 提取时钟"""
-        text = str(node).strip().lstrip('@(').rstrip(')')
-        parts = text.split(' or ')
-        first = parts[0].strip()
-        for prefix in ('posedge ', 'negedge '):
-            if first.startswith(prefix):
-                return first[len(prefix):].strip()
-        return first.strip()
-    
-    def _extract_identifier(self, node) -> str:
-        """提取标识符"""
+    def _extract_expression_text(self, node) -> str:
+        """从表达式节点提取文本 - 纯 AST"""
         if not hasattr(node, 'kind'):
             return ""
         
         kind = node.kind.name
         
+        # Identifier
         if kind in ('Identifier', 'IdentifierName'):
-            return str(node.value) if hasattr(node, 'value') else str(node)
+            return self._extract_identifier(node)
+        
+        # Literal
+        if 'Literal' in kind:
+            return str(getattr(node, 'text', '')) or ''
+        
+        # Binary/Unary expression - 递归提取
+        parts = []
+        try:
+            for child in list(node):
+                if hasattr(child, 'kind'):
+                    part = self._extract_expression_text(child)
+                    if part:
+                        parts.append(part)
+        except:
+            pass
+        
+        return ' '.join(parts) if parts else ''
+    
+    def _extract_identifier(self, node) -> str:
+        """提取标识符 - 纯 AST
+        
+        IdentifierName 结构:
+        - IdentifierName
+          - Identifier (包含实际名称)
+        """
+        if not hasattr(node, 'kind'):
+            return ""
+        
+        kind = node.kind.name
+        
+        # Identifier 直接包含名称
+        if kind == 'Identifier':
+            return str(getattr(node, 'value', '')) or str(node).strip()
+        
+        # IdentifierName 包含 Identifier 子节点
+        if kind == 'IdentifierName':
+            try:
+                for child in list(node):
+                    if hasattr(child, 'kind') and child.kind.name == 'Identifier':
+                        return str(getattr(child, 'value', '')) or str(child).strip()
+            except:
+                pass
+            # fallback: 直接转换
+            return str(node).strip()
         
         # 从子节点提取
-        for child in list(node):
-            if hasattr(child, 'kind') and child.kind.name in ('Identifier', 'IdentifierName'):
-                return self._extract_identifier(child)
+        try:
+            for child in list(node):
+                if hasattr(child, 'kind'):
+                    result = self._extract_identifier(child)
+                    if result:
+                        return result
+        except:
+            pass
         
         return ""
-
 
 """Driver Items - 驱动关系语义类型
 
@@ -340,16 +388,6 @@ class NonBlockingAssign(SemanticItem):
                 for tc in list(child):
                     if hasattr(tc, 'kind') and tc.kind.name == 'EventControlWithExpression':
                         self.clock = _extract_clock(tc)
-                        
-                        # 检查异步复位：包含 negedge
-                        txt = str(tc)
-                        if 'negedge' in txt:
-                            # 提取 negedge 后的信号
-                            import re
-                            match = re.search(r'negedge\s+(\w+)', txt)
-                            if match:
-                                self.reset = match.group(1)
-                                self.is_async_reset = True
         
         # 简化:从父级链找 ConditionalStatement，提取同步复位信号
         parent = self.node.parent
