@@ -158,12 +158,13 @@ __all__ = ['ClockDomainItem', 'RegisterItem', 'ClockSignalItem', 'ResetSignalIte
 
 
 class ClockExtractor:
-    """时钟/复位提取器
+    """时钟/复位提取器 - 纯 AST 遍历
     
-    从 AlwaysFFBlock 中提取时钟和复位信号
-    封装为独立类，符合铁律 17
+    符合铁律 1: 仅使用 pyslang AST 遍历
+    符合铁律 17: 独立 Visitor 类
     
-    使用 pyslang.visit() 遍历，符合铁律 1
+    AST 结构:
+    EventControlWithExpression      BinaryEventExpression        SignalEventExpression          PosEdgeKeyword + IdentifierName        SignalEventExpression          NegEdgeKeyword + IdentifierName
     """
     
     def __init__(self):
@@ -181,45 +182,126 @@ class ClockExtractor:
         return self
     
     def _on_node(self, node):
-        """处理每个节点"""
+        if not hasattr(node, 'kind'):
+            return
+        
+        if node.kind.name == 'AlwaysFFBlock':
+            self._extract_from_always_ff(node)
+    
+    def _extract_from_always_ff(self, node):
+        """从 always_ff 块提取"""
+        try:
+            children = list(node)
+        except:
+            return
+        
+        for child in children:
+            if not hasattr(child, 'kind'):
+                continue
+            
+            if child.kind.name == 'TimingControlStatement':
+                try:
+                    tc_children = list(child)
+                except:
+                    continue
+                
+                for tc in tc_children:
+                    if not hasattr(tc, 'kind'):
+                        continue
+                    # SyntaxList 包含实际的 EventControl
+                    if tc.kind.name == 'SyntaxList':
+                        for inner in list(tc):
+                            self._extract_from_event_control(inner)
+                    else:
+                        self._extract_from_event_control(tc)
+    
+    def _extract_from_event_control(self, node):
+        """从 EventControl 提取"""
         if not hasattr(node, 'kind'):
             return
         
         kind = node.kind.name
         
-        if kind == 'AlwaysFFBlock':
-            self._extract_from_always_ff(node)
+        if kind == 'EventControlWithExpression':
+            try:
+                children = list(node)
+            except:
+                return
+            
+            for child in children:
+                if not hasattr(child, 'kind'):
+                    continue
+                
+                child_kind = child.kind.name
+                
+                # @ 符号跳过
+                if child_kind == 'At':
+                    continue
+                
+                # 单个或多个事件
+                if child_kind == 'BinaryEventExpression':
+                    self._extract_binary_event(child)
+                elif child_kind == 'ParenthesizedEventExpression':
+                    self._extract_parenthesized_event(child)
+                elif child_kind in ('SignalEventExpression', 'EdgeExpression'):
+                    self._extract_signal_event(child)
     
-    def _extract_from_always_ff(self, node):
-        """从 always_ff 块提取"""
+    def _extract_parenthesized_event(self, node):
+        """处理 ParenthesizedEventExpression"""
+        if not hasattr(node, 'kind'):
+            return
+        
+        # 遍历找事件
         for child in list(node):
             if not hasattr(child, 'kind'):
                 continue
+            kind = child.kind.name
             
-            if child.kind.name == 'TimingControlStatement':
-                for tc in list(child):
-                    if hasattr(tc, 'kind') and tc.kind.name == 'EventControlWithExpression':
-                        self.clock = self._extract_clock(tc)
-                        # 检查整个 always_ff 的文本找异步复位
-                        self._check_async_reset(node)
+            if kind in ('SignalEventExpression', 'EdgeExpression'):
+                self._extract_signal_event(child)
+            elif kind == 'BinaryEventExpression':
+                self._extract_binary_event(child)
     
-    def _check_async_reset(self, node):
-        """检查 always_ff 块是否包含异步复位"""
-        text = str(node)
-        if 'negedge' in text or 'or' in text:
-            # 找到 negedge 后面的信号
-            import re
-            match = re.search(r'negedge\s+(\w+)', text)
-            if match:
-                self.reset = match.group(1)
+    def _extract_binary_event(self, node):
+        """处理 BinaryEventExpression (a or b)"""
+        try:
+            children = list(node)
+        except:
+            return
+        
+        for child in children:
+            if not hasattr(child, 'kind'):
+                continue
+            kind = child.kind.name
+            if kind in ('SignalEventExpression', 'EdgeExpression'):
+                self._extract_signal_event(child)
+    
+    def _extract_signal_event(self, node):
+        """从 SignalEventExpression 提取 (posedge clk / negedge rst)"""
+        edge_type = None
+        signal = None
+        
+        for child in list(node):
+            if not hasattr(child, 'kind'):
+                continue
+            kind = child.kind.name
+            
+            if kind in ('PosEdgeKeyword', 'NegEdgeKeyword', 'EdgeKeyword'):
+                edge_type = str(child).strip()
+            elif kind in ('Identifier', 'IdentifierName'):
+                signal = self._extract_identifier(child)
+        
+        if signal:
+            if edge_type and 'neg' in edge_type.lower():
+                self.reset = signal
                 self.is_async = True
+            elif not self.clock:
+                self.clock = signal
     
-    def _extract_clock(self, node) -> str:
-        """从 EventControl 提取时钟"""
-        text = str(node).strip().lstrip('@(').rstrip(')')
-        parts = text.split(' or ')
-        first = parts[0].strip()
-        for prefix in ('posedge ', 'negedge '):
-            if first.startswith(prefix):
-                return first[len(prefix):].strip()
-        return first.strip()
+    def _extract_identifier(self, node) -> str:
+        if not hasattr(node, 'kind'):
+            return ""
+        kind = node.kind.name
+        if kind in ('Identifier', 'IdentifierName'):
+            return str(getattr(node, 'value', '')) or str(node)
+        return ""
