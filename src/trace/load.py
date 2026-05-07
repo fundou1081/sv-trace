@@ -72,8 +72,27 @@ class LoadTracer:
             self._process_nb_assign(node, 'always_ff')
         elif kind == 'AssignmentExpression':
             self._process_assign_expr(node, 'always_comb')
+        elif kind == 'AlwaysCombProcedure':
+            # 递归遍历以找到 AssignmentExpression
+            try:
+                for child in list(node):
+                    self._collect_from_tree(child, depth + 1)
+            except:
+                pass
+        elif kind == 'AlwaysCombBlock':
+            # 递归遍历以找到 AssignmentExpression
+            try:
+                for child in list(node):
+                    self._collect_from_tree(child, depth + 1)
+            except:
+                pass
         elif kind in ('IfStatement', 'CaseStatement'):
-            self._process_conditional_loads(node)
+            # 递归遍历以找到 AssignmentExpression
+            try:
+                for child in list(node):
+                    self._collect_from_tree(child, depth + 1)
+            except:
+                pass
         else:
             # 只有非目标节点才递归遍历
             try:
