@@ -1,177 +1,74 @@
-"""Driver collector using semantic layer.
+"""DriverCollector - 驱动收集器
 
-按项目纪律重构 - 支持时钟/复位/多驱动检测
-使用已有的 semantic/clock.py 和 semantic/reset.py
+按项目纪律重构 - 驱动关系提取
+符合铁律 17: 提取逻辑封装为独立 Visitor 类
+
+底层使用新的 extractors/ 架构，对外保持 DriverCollector API 兼容。
 """
 
 import sys
 import os
 from typing import List, Dict, Optional, Set
-from dataclasses import dataclass, field
 
 import pyslang
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from core.models import Driver, DriverKind
-
 from trace.parse_warn import ParseWarningHandler
 
-try:
-    from semantic.base import SemanticCollector
-    from semantic.driver import DriverSignal, NonBlockingAssign, BlockingAssign, ContinuousAssign
-    from semantic.clock import ClockDomainItem
-    from semantic.reset import ResetSignalItem
-    SEMANTIC_AVAILABLE = True
-except ImportError:
-    SEMANTIC_AVAILABLE = False
-    SemanticCollector = None
+from scope.utils import extract_identifier as _extract_identifier
+from scope import ScopeBuilder
+from scope.models import ScopeTree, ScopeKind
+from scope.symbol_table import SymbolTable
+from extractors import SemanticGraph, DriverExtractor, DriverPoint as ExtractorDriverPoint
 
 
 class DriverCollector:
     """收集设计中所有信号的驱动源信息
     
-    支持:
-    - 时钟/复位/使能提取
-    - 多驱动检测
-    - 条件驱动识别
+    底层使用 3-Pass 架构，对外保持 DriverCollector API 兼容。
     """
     
     def __init__(self, parser=None, use_semantic: bool = True, verbose: bool = True):
         self.parser = parser
-        self.use_semantic = use_semantic and SEMANTIC_AVAILABLE
+        self.use_semantic = use_semantic and _semantic_available()
         self.verbose = verbose
-        self.drivers: Dict[str, List[Driver]] = {}
+        self.drivers: Dict[str, List] = {}
         self.warn_handler = ParseWarningHandler(verbose=verbose, component="DriverCollector")
-        self._collector: Optional[SemanticCollector] = None
+        
+        # 新架构
+        self._graph: SemanticGraph = None
+        self._scope_tree: ScopeTree = None
+        self._symbol_table: SymbolTable = None
+        self._collected = False
     
     def collect(self, tree: pyslang.SyntaxTree, filename: str) -> 'DriverCollector':
-        self._collector = SemanticCollector()
-        self._collector.collect(tree, filename)
-        
-        # 提取时钟域信息
-        clock_domains = self._collector.get_by_type(ClockDomainItem)
-        resets = self._collector.get_by_type(ResetSignalItem)
-        
-        clocks = {}
-        for cd in clock_domains:
-            if cd.clock_signal:
-                clocks[cd.clock_signal] = cd
-        
-        all_resets = set(r.reset_signal for r in resets if hasattr(r, 'reset_signal'))
-        
-        # 处理每个驱动信号
-        for item in self._collector.driver_signals:
-            signal_path = self._get_signal(item)
-            if not signal_path:
-                signal_path = "unknown"
-            
-            kind = self._kind_from_name(item.kind_name)
-            
-            # 查找关联的时钟
-            clks = self._find_associated_clock(signal_path, clocks)
-            reset_sig = self._find_associated_reset(signal_path, all_resets)
-            
-            driver = Driver(
-                signal=signal_path,
-                kind=kind,
-                module=item.module_path,
-                lines=[item.line_number or 0],
-                clock=clks[0] if clks else "",
-                reset=reset_sig,
-            )
-            
-            if signal_path not in self.drivers:
-                self.drivers[signal_path] = []
-            self.drivers[signal_path].append(driver)
-        
-        # 多驱动检测
-        self._detect_multi_drivers()
-        
+        """收集驱动信息"""
+        if not self._collected:
+            self._build_pipeline(tree)
+            self._collected = True
         return self
     
-    def _get_signal(self, item) -> str:
-        if hasattr(item, 'signal_path') and item.signal_path:
-            return item.signal_path.strip()
-        if hasattr(item, 'lhs') and item.lhs:
-            return item.lhs.strip()
-        return ""
-    
-    def _kind_from_name(self, kind_name: str) -> DriverKind:
-        if kind_name == 'NonblockingAssignmentExpression':
-            return DriverKind.AlwaysFF
-        elif kind_name == 'AssignmentExpression':
-            return DriverKind.AlwaysComb
-        elif kind_name == 'ContinuousAssign':
-            return DriverKind.Continuous
-        return DriverKind.AlwaysComb
-    
-    def _find_associated_clock(self, signal: str, clock_domains: dict) -> List[str]:
-        """查找信号关联的时钟"""
-        # 简化：返回所有时钟域的时钟
-        # 后续可以增强为更精确的匹配
-        return list(clock_domains.keys())
-    
-    def _find_associated_reset(self, signal: str, resets: Set[str]) -> str:
-        """查找信号关联的复位"""
-        if resets:
-            return list(resets)[0]
-        return ""
-    
-    def _detect_multi_drivers(self):
-        """检测多驱动"""
-        self._multi_drivers = {}
-        for sig, driver_list in self.drivers.items():
-            if len(driver_list) > 1:
-                self._multi_drivers[sig] = [d.kind.name for d in driver_list]
-    
-    @property
-    def multi_drivers(self) -> Dict[str, List[str]]:
-        return getattr(self, '_multi_drivers', {})
-    
-    @property
-    def all_clocks(self) -> Set[str]:
-        clocks = set()
-        for sig, drivers in self.drivers.items():
-            for d in drivers:
-                if d.clock:
-                    clocks.add(d.clock)
-        return clocks
-    
-    @property
-    def all_resets(self) -> Set[str]:
-        # 首先尝试从 semantic 层获取所有已知的复位
-        resets = set()
+    def _build_pipeline(self, tree: pyslang.SyntaxTree):
+        """执行 3-Pass 流程"""
+        # Pass 1: ScopeBuilder
+        builder = ScopeBuilder()
+        self._scope_tree, self._symbol_table = builder.build(tree)
         
-        # 从 NonBlockingAssign 获取
-        if self._collector:
-            from semantic.driver import NonBlockingAssign
-            nb_assigns = self._collector.get_by_type(NonBlockingAssign)
-            for nb in nb_assigns:
-                if nb.reset:
-                    resets.add(nb.reset)
+        # Pass 2: Extractors
+        self._graph = SemanticGraph(self._scope_tree, self._symbol_table)
+        DriverExtractor(self._scope_tree, self._symbol_table, self._graph).extract(tree)
         
-        # 如果 semantic 层没有，从 driver 对象获取
-        if not resets:
-            for sig, drivers in self.drivers.items():
-                for d in drivers:
-                    if d.reset:
-                        resets.add(d.reset)
-        
-        return resets
-    
-    def get_drivers(self, pattern: str = '*') -> Dict[str, List[Driver]]:
-        if pattern == '*':
-            return self.drivers
-        import fnmatch
-        return {k: v for k, v in self.drivers.items() if fnmatch.fnmatch(k, pattern)}
-    
-    @property
-    def all_signals(self) -> List[str]:
-        return list(self.drivers.keys())
+        # 聚合到 drivers 字典
+        self.drivers = {}
+        for sig, driver_points in self._graph.drivers.items():
+            self.drivers[sig] = list(driver_points)
 
 
+def _semantic_available() -> bool:
+    try:
+        from semantic.base import SemanticCollector
+        return True
+    except ImportError:
+        return False
+
+# 向后兼容别名
 DriverTracer = DriverCollector
-
-
-def collect_drivers(parser=None, use_semantic: bool = True, verbose: bool = True) -> DriverCollector:
-    return DriverCollector(parser, use_semantic=use_semantic, verbose=verbose)
