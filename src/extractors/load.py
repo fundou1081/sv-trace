@@ -12,7 +12,7 @@ from scope.symbol_table import SymbolTable
 
 # 公共工具函数
 try:
-    from semantic.utils import extract_identifier as _extract_identifier
+    from scope.utils import extract_identifier as _extract_identifier
 except ImportError:
     def _extract_identifier(node):
         if hasattr(node, 'text') and node.text:
