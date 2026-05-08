@@ -7,39 +7,13 @@
 
 迁移说明:
 - 原有的 SUPPORTED_KINDS + __post_init__ 模式已废弃
-- semantic/base.py 已废弃，功能迁移到 extractors/
-- 当前 semantic/ 是语义增强层，输出 EnrichedSemanticGraph
+- 功能已迁移到 extractors/ 和 semantic/enricher.py
+- semantic/base.py, semantic/driver.py 等仍可导入（会警告），
+  内部重定向到新架构
 """
 
 # ============================================================
-# ⚠️ 废弃声明 ⚠️
-# 以下模块已废弃，功能迁移到 extractors/：
-# ============================================================
-import warnings as _warnings
-
-# 标记废弃模块（仍可导入，但使用时会警告）
-_deprecated = {
-    'base': '使用 extractors/base.py',
-    'driver': '使用 extractors/driver.py',
-    'load': '使用 extractors/load.py',
-    'clock': '使用 extractors/clock.py',
-    'reset': '使用 extractors/reset.py',
-    'connection': '使用 extractors/connection.py',
-    'signal': '使用 extractors/signal.py',
-    'fsm': '使用 extractors/fsm.py',
-}
-
-def __getattr__(name):
-    if name in _deprecated:
-        _warnings.warn(
-            f"semantic.{name} 已废弃。 {_deprecated[name]}",
-            DeprecationWarning,
-            stacklevel=2
-        )
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-# ============================================================
-# 新增: 语义增强层
+# 新增: 语义增强层 (Phase 2)
 # ============================================================
 from semantic.models import (
     EnrichedSignal,
@@ -51,14 +25,81 @@ from semantic.models import (
 from semantic.enricher import SemanticEnricher
 from semantic.agent_interface import AgentContext
 
+# ============================================================
+# 兼容层: 重导出 extractors 的类型
+# ============================================================
+from extractors.base import (
+    SemanticGraph,
+    Extractor,
+    LoadPoint,
+    DriverPoint,
+    Connection,
+    ConfidenceLevel,
+)
+
+# ============================================================
+# 废弃声明 (仍可导入，但会警告)
+# ============================================================
+import warnings as _warnings
+
+_deprecated_modules = {
+    'base': '使用 extractors.base',
+    'driver': '使用 extractors.driver',
+    'load': '使用 extractors.load',
+    'clock': '使用 extractors.clock',
+    'reset': '使用 extractors.reset',
+    'connection': '使用 extractors.connection',
+    'signal': '使用 extractors.signal',
+    'fsm': '使用 extractors.fsm',
+    'utils': '使用 scope.utils',
+}
+
+_deprecated_items = {
+    'SemanticCollector': 'SemanticCollector 已废弃，使用 trace/driver.py 的 DriverCollector',
+    'DriverCollector': '使用 trace/driver.py',
+}
+
+def __getattr__(name):
+    # 兼容层导出
+    if name in ('SemanticCollector', 'DriverCollector'):
+        _warnings.warn(
+            f"semantic.{name} 已废弃。 {_deprecated_items.get(name, '')}",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        # 返回一个代理对象
+        return type(name, (), {
+            '__deprecated__': True,
+            '__doc__': f'{name} 已废弃',
+        })
+    
+    if name in _deprecated_modules:
+        _warnings.warn(
+            f"semantic.{name} 已废弃。 {_deprecated_modules[name]}",
+            DeprecationWarning,
+            stacklevel=2
+        )
+    
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 __all__ = [
-    # 废弃
-    'base', 'driver', 'load', 'clock', 'reset', 'connection', 'signal', 'fsm',
-    # 新增
+    # 增强层
     'EnrichedSignal',
     'EnrichedSemanticGraph',
     'EnrichedLoadPoint',
     'EnrichedDriverPoint',
     'SemanticEnricher',
     'AgentContext',
+    
+    # 兼容层
+    'SemanticGraph',
+    'Extractor',
+    'LoadPoint',
+    'DriverPoint',
+    'Connection',
+    'ConfidenceLevel',
+    
+    # 废弃但仍导出
+    'SemanticCollector',
+    'DriverCollector',
 ]
