@@ -1,0 +1,210 @@
+"""LoadExtractor - 负载关系提取器
+
+迁移自 trace/load.py，使用 ScopeTree。
+"""
+
+import pyslang
+from typing import List, Set
+
+from extractors.base import Extractor, SemanticGraph, LoadPoint
+from scope.models import ScopeTree, RefContext
+from scope.symbol_table import SymbolTable
+
+# 公共工具函数
+try:
+    from semantic.utils import extract_identifier as _extract_identifier
+except ImportError:
+    def _extract_identifier(node):
+        if hasattr(node, 'text') and node.text:
+            return node.text
+        return ""
+
+
+class LoadExtractor(Extractor):
+    """负载提取器
+    
+    符合铁律 18: 使用 pyslang.visit() 遍历
+    符合铁律 19: 通过 ScopeTree 解析引用
+    """
+    
+    # 赋值操作符
+    _ASSIGN_OPS: Set[str] = {
+        'Equals', 'LessThanEquals',
+        'PlusEquals', 'MinusEquals', 'MultiplyEquals', 'DivideEquals', 'ModuloEquals',
+        'AndEquals', 'OrEquals', 'XorEquals',
+        'LeftShiftEquals', 'RightShiftEquals',
+    }
+    
+    # 跳过节点
+    _SKIP_KINDS: Set[str] = {
+        'TokenList',
+        'Plus', 'Minus', 'Multiply', 'Divide', 'Modulo',
+        'OpenParenthesis', 'CloseParenthesis',
+        'OpenBracket', 'CloseBracket',
+        'IntegerLiteral', 'IntegerBase', 'VariableDimension',
+        'RangeDimensionSpecifier', 'SimpleRangeSelect',
+        'TimeUnit', 'DoublePeriod',
+        'AssignKeyword', 'Question', 'Colon', 'At',
+        'And', 'Or', 'Xor', 'Not', 'Tilde',
+        'Ampersand', 'Bar', 'Caret',
+    }
+    
+    def extract(self, tree: pyslang.SyntaxTree) -> None:
+        """从 AST 提取负载关系"""
+        def visitor(node):
+            self._on_node(node)
+            return pyslang.VisitAction.Advance
+        
+        tree.root.visit(visitor)
+    
+    def _on_node(self, node) -> pyslang.VisitAction:
+        """处理每个节点"""
+        kind = self._get_kind(node)
+        if not kind:
+            return None
+        
+        if kind == 'ContinuousAssign':
+            return self._process_continuous_assign(node)
+        elif kind == 'SequentialBlockStatement':
+            return self._process_sequential_block(node)
+        elif kind == 'ConditionalStatement':
+            return self._process_conditional_statement(node)
+        elif kind == 'ExpressionStatement':
+            return self._process_expression_statement(node)
+        
+        return None
+    
+    def _process_continuous_assign(self, node) -> pyslang.VisitAction:
+        """处理连续赋值 assign x = y"""
+        for child in self._iter_children(node):
+            if self._get_kind(child) == 'SeparatedList':
+                for sub in self._iter_children(child):
+                    if self._get_kind(sub) == 'AssignmentExpression':
+                        self._process_assign(sub, 'assign')
+        return pyslang.VisitAction.Skip
+    
+    def _process_sequential_block(self, node) -> pyslang.VisitAction:
+        """处理 begin...end 块"""
+        for child in self._iter_children(node):
+            if self._get_kind(child) == 'SyntaxList':
+                for sub in self._iter_children(child):
+                    sk = self._get_kind(sub)
+                    if sk == 'ExpressionStatement':
+                        self._process_expression_statement(sub)
+                    elif sk == 'ConditionalStatement':
+                        self._process_conditional_statement(sub)
+                    elif sk == 'SequentialBlockStatement':
+                        self._process_sequential_block(sub)
+        return pyslang.VisitAction.Skip
+    
+    def _process_conditional_statement(self, node) -> pyslang.VisitAction:
+        """处理 if/else"""
+        for child in self._iter_children(node):
+            sk = self._get_kind(child)
+            if sk == 'ExpressionStatement':
+                self._process_expression_statement(child)
+            elif sk == 'ConditionalStatement':
+                self._process_conditional_statement(child)
+            elif sk == 'SequentialBlockStatement':
+                self._process_sequential_block(child)
+            elif sk == 'ElseClause':
+                for sub in self._iter_children(child):
+                    ssk = self._get_kind(sub)
+                    if ssk == 'ExpressionStatement':
+                        self._process_expression_statement(sub)
+                    elif ssk == 'ConditionalStatement':
+                        self._process_conditional_statement(sub)
+        return pyslang.VisitAction.Skip
+    
+    def _process_expression_statement(self, node) -> pyslang.VisitAction:
+        """处理表达式语句"""
+        for child in self._iter_children(node):
+            kind = self._get_kind(child)
+            if kind in ('NonblockingAssignmentExpression', 'AssignmentExpression'):
+                ctx = 'always_ff' if kind == 'NonblockingAssignmentExpression' else 'always_comb'
+                self._process_assign(child, ctx)
+        return pyslang.VisitAction.Skip
+    
+    def _process_assign(self, node, context: str):
+        """处理赋值语句"""
+        line = getattr(node, 'span', None) and node.span.start_line or 0
+        
+        lhs_list = []
+        rhs_list = []
+        children = self._iter_children(node)
+        found_eq = False
+        
+        for child in children:
+            kind = self._get_kind(child)
+            
+            if kind in self._SKIP_KINDS:
+                continue
+            
+            if kind in self._ASSIGN_OPS:
+                found_eq = True
+                continue
+            
+            if kind in ('Identifier', 'IdentifierName'):
+                sig = _extract_identifier(child)
+                if sig:
+                    if not found_eq:
+                        lhs_list.append(sig)
+                    else:
+                        rhs_list.append(sig)
+                continue
+            
+            self._scan_expression(child, lhs_list, rhs_list, found_eq)
+        
+        for lhs in lhs_list:
+            for rhs in rhs_list:
+                if rhs and rhs not in lhs_list:
+                    self.graph.add_load(lhs, rhs, context, line)
+        
+        for rhs in rhs_list:
+            for lhs in lhs_list:
+                if lhs:
+                    self.graph.add_load(rhs, lhs, context, line)
+    
+    def _scan_expression(self, node, lhs_list: list, rhs_list: list, found_eq: bool):
+        """递归扫描表达式"""
+        if not hasattr(node, 'kind'):
+            return
+        
+        kind = self._get_kind(node)
+        if not kind or kind in self._SKIP_KINDS:
+            return
+        
+        if kind in self._ASSIGN_OPS:
+            return
+        
+        if kind in ('Identifier', 'IdentifierName'):
+            sig = _extract_identifier(node)
+            if sig:
+                if not found_eq:
+                    lhs_list.append(sig)
+                else:
+                    rhs_list.append(sig)
+            return
+        
+        if kind in ('ElementSelect', 'BitSelect', 'IdentifierSelectName', 'SyntaxList', 'SeparatedList'):
+            for child in self._iter_children(node):
+                self._scan_expression(child, lhs_list, rhs_list, found_eq)
+            return
+        
+        if kind == 'ConditionalExpression':
+            for child in self._iter_children(node):
+                self._scan_expression(child, lhs_list, rhs_list, found_eq=True)
+            return
+        
+        if kind == 'ConditionalPredicate':
+            for child in self._iter_children(node):
+                self._scan_expression(child, lhs_list, rhs_list, found_eq=True)
+            return
+        
+        if kind == 'ConditionalPattern':
+            for child in self._iter_children(node):
+                self._scan_expression(child, lhs_list, rhs_list, found_eq=True)
+            return
+        
+        for child in self._iter_children(node):
+            self._scan_expression(child, lhs_list, rhs_list, found_eq)

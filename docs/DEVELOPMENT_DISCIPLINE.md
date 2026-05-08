@@ -404,3 +404,204 @@ def __post_init__(self):
 - [ ] semantic/clock.py 中是否有 `ClockExtractor` 类？
 - [ ] semantic/driver.py 中是否有 `DriverExtractor` 类？
 - [ ] 提取逻辑是否与 SemanticItem 分离？
+
+---
+
+### 铁律 18：Extractor 设计原则
+
+**规则**：所有语义提取器必须：
+- 继承 Extractor 基类
+- 接收 ScopeTree 作为构造参数
+- 使用 pyslang.visit() 遍历
+- 输出结果写入 SemanticGraph
+
+**原因**：
+- **可测试性**：Extractor 可独立于其他模块测试
+- **可组合性**：多个 Extractor 可并行执行
+- **职责分离**：Extractor 只负责 AST 遍历，不做语义增强
+
+**正确方式**：
+```python
+class LoadExtractor(Extractor):
+    def __init__(self, scope_tree: ScopeTree, symbol_table: SymbolTable):
+        super().__init__(scope_tree, symbol_table)
+    
+    def extract(self, tree: SyntaxTree) -> None:
+        def visitor(node):
+            self._on_node(node)
+            return pyslang.VisitAction.Advance
+        tree.root.visit(visitor)
+```
+
+**错误方式**：
+```python
+# 直接接收 parser 或 tree，不接收 ScopeTree
+class BadExtractor:
+    def __init__(self, parser):  # ❌
+        self.parser = parser
+```
+
+---
+
+### 铁律 19：ScopeTree 即上下文
+
+**规则**：所有跨作用域的引用解析必须通过 ScopeTree，不得在 Extractor 内部手动实现作用域查找。
+
+**原因**：
+- **统一性**：所有引用解析逻辑集中在 ScopeTree
+- **可维护性**：修改作用域规则只需改一处
+- **正确性**：避免各 Extractor 实现不一致
+
+```python
+class LoadExtractor(Extractor):
+    def extract(self, tree: SyntaxTree) -> None:
+        # 引用解析通过 symbol_table
+        ref = self.symbols.resolve_reference("data", current_scope)
+        # 不手动实现：不要在这里写 scope 查找逻辑
+```
+
+---
+
+### 铁律 20：多轮执行纪律
+
+**规则**：
+- Pass 1 (ScopeBuilder) 必须先于所有 Extractor 执行
+- Extractor 之间不得有依赖关系（可并行执行）
+- QueryInterface 是唯一对外接口
+
+**原因**：
+- **正确性**：Extractor 依赖 ScopeTree 的上下文信息
+- **性能**：无依赖的 Extractor 可并行加速
+- **清晰性**：数据流方向明确
+
+**执行顺序**：
+```
+Pass 1: ScopeBuilder → ScopeTree + SymbolTable
+          ↓
+Pass 2: Extractors (可并行)
+          ↓
+Pass 3: SemanticEnricher → EnrichedSemanticGraph
+          ↓
+Pass 4: QueryInterface → 对外 API
+```
+
+---
+
+### 铁律 21：Semantic 层定位
+
+**规则**：semantic/ 是语义增强层，消费 extractors 输出的 SemanticGraph，不得直接遍历 AST。
+
+**原因**：
+- **职责分离**：AST 遍历由 extractors 负责，semantic 层专注语义增强
+- **AGENT 友好**：semantic 层提供 AGENT 填充业务语义的接口
+
+**正确方式**：
+```python
+# semantic/enricher.py
+class SemanticEnricher:
+    def __init__(self, base_graph: SemanticGraph):
+        self.graph = base_graph  # ✅ 消费 SemanticGraph
+    
+    def enrich(self, agent_context: AgentContext = None) -> EnrichedSemanticGraph:
+        # 在 SemanticGraph 基础上做增强
+        ...
+```
+
+**错误方式**：
+```python
+# ❌ semantic 层直接遍历 AST
+class BadEnricher:
+    def enrich(self, tree: SyntaxTree):  # ❌ 接收 SyntaxTree
+        tree.root.visit(...)  # ❌ 直接遍历
+```
+
+---
+
+### 铁律 22：Enricher 置信度
+
+**规则**：SemanticEnricher 必须为每个信号标注 confidence 和 caveats，不得输出不可信的原始数据。
+
+**原因**：
+- **铁律 3 延续**：不可信则不输出
+- **AGENT 友好**：AGENT 需要知道数据的置信度才能正确决策
+
+```python
+@dataclass
+class EnrichedSignal:
+    raw: SignalRef
+    confidence: ConfidenceLevel  # high / medium / low / uncertain
+    caveats: List[str]         # 不确定项说明
+    
+    def __post_init__(self):
+        if self.confidence == ConfidenceLevel.UNCERTAIN and not self.caveats:
+            raise ValueError("uncertain 信号必须提供 caveats")
+```
+
+---
+
+### 铁律 23：pyslang-ast-ref 禁止引用
+
+**规则**：`src/pyslang-ast-ref/` 目录下的参考代码仅供学习，严禁在任何生产代码中 import。
+
+**原因**：
+- 该目录为"AST 节点参考范本"，不代表生产级实现
+- 直接引用会导致架构混乱
+
+---
+
+## 检查清单（更新版）
+
+### 多轮架构检查
+
+- [ ] 铁律 18：Extractor 是否继承 Extractor 基类并接收 ScopeTree？
+- [ ] 铁律 19：引用解析是否通过 symbol_table？
+- [ ] 铁律 20：ScopeBuilder 是否在 Extractor 之前执行？
+- [ ] 铁律 21：semantic/ 是否消费 SemanticGraph 而非直接遍历 AST？
+- [ ] 铁律 22：EnrichedSignal 是否包含 confidence 和 caveats？
+- [ ] 铁律 23：是否没有 import pyslang-ast-ref？
+
+### 新功能检查
+
+- [ ] 是否使用 pyslang AST 而非正则分析源码？
+- [ ] 信号是否保留完整的位级信息？
+- [ ] 无法解析时是否返回 confidence: "uncertain"？
+- [ ] 数据字段是否都有对应的 AST 填充代码？
+- [ ] 新功能是否附带边界测试用例？
+- [ ] API 返回是否包含 confidence 和 caveats？
+- [ ] pyslang-ast-ref 是否仅作为参考而非直接引用？
+
+### 迁移检查（从旧架构）
+
+- [ ] semantic/ 模块是否已迁移为 SemanticEnricher？
+- [ ] trace/load.py 是否已迁移为 extractors/load.py？
+- [ ] 是否已删除 pyslang-ast-ref/？
+- [ ] 是否已清理冗余文件？
+- [ ] ScopeBuilder 是否能正确处理所有 scope 类型？
+
+---
+
+## 架构迁移说明
+
+### 旧架构 vs 新架构
+
+| 组件 | 旧架构 | 新架构 |
+|------|--------|--------|
+| AST 遍历 | semantic/base.py (SUPPORTED_KINDS) | extractors/ (独立 Extractor) |
+| 作用域 | 无 | scope/builder.py → ScopeTree |
+| 语义建模 | semantic/*.py (__post_init__) | extractors/ → SemanticGraph |
+| 语义增强 | 无 | semantic/enricher.py → EnrichedSemanticGraph |
+| AGENT 接口 | 无 | semantic/agent_interface.py |
+
+### 迁移原则
+
+1. **不破坏现有功能**：在 trace/ 层保留兼容接口，内部调用新架构
+2. **逐步迁移**：每个模块独立迁移，完成后验证
+3. **文档同步**：迁移完成即更新对应文档
+
+---
+
+## 相关文档
+
+- `docs/MULTI_PASS_ARCHITECTURE_PLAN.md` - 详细迁移计划
+- `STRUCTURE.md` - 项目结构
+- `docs/pyslang-spec/` - pyslang AST 参考
