@@ -1,126 +1,180 @@
 # sv-trace 项目结构
 
-> 2026-05-07 整理
+> 更新时间: 2026-05-08
+
+---
+
+## 整体架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Parse (pyslang)                                           │
+│  输入: .sv 源码 → 输出: SyntaxTree                          │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Pass 1: ScopeBuilder (scope/)                               │
+│  输入: SyntaxTree → 输出: ScopeTree + SymbolTable             │
+│  - 模块/接口/program 定义边界                               │
+│  - 过程块 (always_ff/comb/always) 边界                      │
+│  - 实例层级 (module → instance → sub_instance)              │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Pass 2: Extractors (extractors/)                           │
+│  输入: SyntaxTree + ScopeTree + SymbolTable                 │
+│  输出: SemanticGraph                                        │
+│  - LoadExtractor     → 负载关系                             │
+│  - DriverExtractor   → 驱动关系                             │
+│  - ConnectionTracer  → 端口连接                             │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Pass 3: SemanticEnricher (semantic/)                       │
+│  输入: SemanticGraph + AgentContext                         │
+│  输出: EnrichedSemanticGraph                                │
+│  - 置信度评估                                              │
+│  - 自然语言描述生成                                         │
+│  - AGENT 填充 business_meaning / tags                       │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│  QueryInterface (trace/query/, trace/debug/)                │
+│  - 信号查询、路径追踪、覆盖率分析                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
 
 ## 目录结构
 
 ```
-sv-trace/
-├── src/                    # 源代码
-│   ├── core/              # 核心模型
-│   ├── parse/             # 解析器
-│   ├── semantic/          # 语义层
-│   │   ├── utils.py       # 公共工具函数
-│   │   ├── clock.py       # 时钟域 (ClockExtractor)
-│   │   ├── driver.py      # 驱动 (DriverExtractor)
-│   │   ├── load.py        # 负载 (LoadExtractor)
-│   │   └── ...
-│   ├── trace/             # 追踪层
-│   │   ├── driver.py      # DriverCollector
-│   │   ├── load.py        # LoadTracer
-│   │   └── ...
-│   └── query/             # 查询层
+src/
+├── scope/                    # 🆕 Scope 体系 (Phase 0)
+│   ├── __init__.py
+│   ├── models.py             # ScopeInfo, SignalRef, ScopeKind, ScopeTree
+│   ├── builder.py            # ScopeBuilder (Pass 1)
+│   ├── symbol_table.py       # SymbolTable
+│   └── utils.py             # extract_identifier 等工具函数
 │
-├── tests/                 # 测试
-│   ├── unit/              # 单元测试
-│   │   ├── semantic/      # 语义层测试
-│   │   ├── trace/         # 追踪层测试
-│   │   │   ├── sv_cases/  # 测试用例
-│   │   │   └── test_*.py  # 测试文件
-│   │   └── ...
-│   ├── integration/       # 集成测试
-│   ├── e2e/               # 端到端测试
-│   ├── edge_cases/        # 边界测试
-│   └── archive/           # 归档
-│       ├── debug/         # 调试文件
-│       └── legacy/        # 旧测试
+├── extractors/              # 🆕 统一 Extractor 体系 (Phase 0)
+│   ├── __init__.py
+│   ├── base.py             # Extractor 基类, SemanticGraph, LoadPoint, DriverPoint
+│   ├── load.py             # LoadExtractor
+│   └── driver.py           # DriverExtractor (骨架)
 │
-├── docs/                  # 文档
-│   ├── DEVELOPMENT_DISCIPLINE.md  # 开发纪律
-│   ├── adr/               # 架构决策记录
-│   ├── core/              # 核心文档
-│   ├── guides/            # 指南
-│   └── reference/         # 参考文档
+├── semantic/               # 🔄 语义增强层 (Phase 2)
+│   ├── __init__.py
+│   ├── models.py          # EnrichedSignal, EnrichedSemanticGraph
+│   ├── enricher.py       # SemanticEnricher
+│   ├── agent_interface.py  # AgentContext
+│   └── base.py           # ⚠️ 兼容层，内部调用 extractors
 │
-├── archive/               # 归档
-│   └── deprecated/        # 已弃用代码
+├── trace/                 # 🔄 对外 API 层
+│   ├── __init__.py
+│   ├── load.py           # LoadTracer (底层 → extractors/)
+│   ├── driver.py         # DriverCollector (底层 → extractors/)
+│   ├── load_ext.py      # LoadTracerExt 兼容层
+│   ├── connection.py     # 端口连接追踪
+│   ├── controlflow.py   # 控制流分析
+│   ├── dataflow.py       # 数据流分析
+│   ├── dependency.py     # 依赖图构建
+│   ├── signal_classifier.py
+│   ├── pipeline_analyzer.py
+│   ├── power_estimation.py
+│   ├── flow_analyzer.py
+│   ├── area_estimator.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── signal.py
+│   │   ├── module.py
+│   │   ├── instance.py
+│   │   └── connection.py
+│   └── query/
+│       ├── __init__.py
+│       ├── signal.py
+│       ├── path.py
+│       ├── signal_chain.py
+│       ├── condition_relation_extractor.py
+│       ├── sample_condition_analyzer.py
+│       ├── nested_condition_expander.py
+│       └── hierarchy/
+│           ├── __init__.py
+│           └── resolver.py
 │
-├── Makefile               # 构建脚本
-├── pytest.ini             # pytest 配置
-├── STRUCTURE.md           # 项目结构 (本文件)
-├── TEST_PLAN.md           # 测试计划
-└── TODO.md                # 开发计划
+├── debug/                 # 🔄 调试分析器
+│   ├── __init__.py
+│   ├── analyzers/       # 分析器集合
+│   │   ├── multi_driver.py
+│   │   ├── clock_domain.py
+│   │   ├── reset_domain_analyzer.py
+│   │   ├── fsm_analyzer.py
+│   │   ├── coverage_analyzer.py
+│   │   ├── xvalue.py
+│   │   ├── uninitialized.py
+│   │   ├── cdc.py
+│   │   ├── timing_analyzer.py
+│   │   ├── class_extractor.py
+│   │   ├── class_quality.py
+│   │   ├── complexity.py
+│   │   ├── code_metrics_analyzer.py
+│   │   └── design_evaluator.py
+│   ├── patterns/
+│   └── reports/
+│
+├── parse/                # 解析器 (pyslang 封装)
+│   ├── __init__.py
+│   └── sv_parser.py
+│
+└── apps/                # 应用层
+    ├── __init__.py
+    ├── dataflow.py
+    ├── controlflow.py
+    └── evaluate.py
 ```
 
-## 核心架构
+---
 
-### 语义层 (semantic/)
+## ⚠️ 已废弃模块
 
-使用 **Extractor 模式** 提取硬件语义：
+以下目录/文件已删除，不再可用：
 
-| Extractor | 功能 | 符合铁律 |
-|-----------|------|----------|
-| ClockExtractor | 时钟/复位提取 | 1, 17 |
-| DriverExtractor | 驱动关系提取 | 1, 17 |
-| LoadExtractor | 负载关系提取 | 1, 17 |
-
-### 追踪层 (trace/)
-
-使用 **Collector 模式** 收集设计信息：
-
-| Collector | 功能 |
+| 目录/文件 | 原因 |
 |-----------|------|
-| DriverCollector | 驱动信息收集 |
-| LoadTracer | 负载信息收集 |
+| `src/pyslang-ast-ref/` | 删除：297 个参考文件，违反铁律 23 |
+| `src/debug/_archive/` | 删除：备份文件 |
+| `src/trace/load_ext.py` (旧版) | 被新版覆盖 |
 
-## 开发纪律
+---
 
-详见 [docs/DEVELOPMENT_DISCIPLINE.md](docs/DEVELOPMENT_DISCIPLINE.md)
+## 核心数据流
 
-### 核心铁律
-
-1. **铁律 1**: AST 唯一数据源
-2. **铁律 17**: 提取逻辑封装为独立 Visitor 类
-
-## 测试
-
-```bash
-make test                  # 运行所有测试
-make test-driver           # 运行 Driver 测试
-make test-semantic         # 运行 Semantic 测试
+```
+1. SVParser.parse_text() → SyntaxTree
+2. ScopeBuilder.build() → ScopeTree + SymbolTable
+3. LoadExtractor.extract() → SemanticGraph (loads)
+4. DriverExtractor.extract() → SemanticGraph (drivers)
+5. SemanticEnricher.enrich() → EnrichedSemanticGraph
+6. QueryInterface → 用户查询
 ```
 
-## API 示例
+---
 
-### DriverCollector
+## 命名约定
 
-```python
-from sv_manager import SVManager
-from trace.driver import DriverCollector
+| 类型 | 前缀/后缀 | 示例 |
+|------|-----------|------|
+| Extractor | Extractor | `LoadExtractor`, `DriverExtractor` |
+| 数据模型 | Point / Info / Ref | `LoadPoint`, `ScopeInfo`, `SignalRef` |
+| Builder | Builder | `ScopeBuilder` |
+| Enricher | Enricher | `SemanticEnricher` |
+| Analyzer | Analyzer | `ClockDomainAnalyzer`, `FSMAnalyzer` |
+| 查询类 | Query | `SignalQuery`, `PathQuery` |
 
-mgr = SVManager()
-result = mgr.parse_file('design.sv')
-dc = DriverCollector(mgr)
-dc.collect(result.tree, 'design.sv')
+---
 
-# 获取驱动信息
-print(dc.all_clocks)  # {'clk'}
-print(dc.all_resets)  # {'rst_n'}
-print(dc.drivers)     # {'data': [Driver(...)]}
-```
+## 相关文档
 
-### LoadTracer
-
-```python
-from sv_manager import SVManager
-from trace.load import LoadTracer
-
-mgr = SVManager()
-result = mgr.parse_file('design.sv')
-tracer = LoadTracer()
-tracer.collect(result.tree, 'design.sv')
-
-# 获取负载信息
-print(tracer.all_signals)  # ['a', 'b', 'c']
-print(tracer.find_load('a'))  # [LoadPoint(...)]
-```
+- `docs/DEVELOPMENT_DISCIPLINE.md` - 开发纪律（铁律 1-23）
+- `docs/MULTI_PASS_ARCHITECTURE_PLAN.md` - 多轮架构迁移计划
+- `docs/pyslang-spec/` - pyslang AST 规范
