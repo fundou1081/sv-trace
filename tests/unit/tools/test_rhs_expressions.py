@@ -1,14 +1,10 @@
 """
 _extract_rhs 表达式提取测试 (TDD)
 
-需要支持的表达式类型 (按优先级):
-1. Arithmetic: +, -, *, /, %, **, <<, >>
-2. Comparison: ==, !=, <, <=, >, >=, &&, ||
-3. Bitwise: &, |, ^, ~, ~&, ~|, ~^
-4. Shift: <<, >>, <<<, >>>
-5. Logical: &&, ||
-6. Concatenation: {a, b, c}
-7. Replication: {2{a}}
+遵循铁律13: 金标准测试
+- 先推导金标准，再对比验证
+
+目标: 验证各种表达式类型的 RHS 提取
 """
 
 import pytest
@@ -18,40 +14,55 @@ from parse import SVParser
 from trace.driver import DriverCollector
 
 
-# 简化测试函数
-def test_expression(name: str, rtl: str, expected_source: str):
+# =============================================================================
+# 金标准用例 (Golden Standard)
+# =============================================================================
+
+RTL_BASE = 'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= {}; endmodule'
+
+
+# =============================================================================
+# 测试辅助函数
+# =============================================================================
+
+def _test_expr(name: str, expr: str):
     """测试单个表达式"""
+    rtl = RTL_BASE.format(expr)
     tree = SVParser(verbose=False).parse_text(rtl)
     dc = DriverCollector(parser=None, verbose=False)
     dc.collect(tree, 'dut.sv')
     
     drivers = dc.get_drivers('q')
-    d = drivers['q'][0]
+    if not drivers or 'q' not in drivers or not drivers['q']:
+        print(f"  {name}: no drivers found")
+        return False
     
-    print(f"{name}: sources={d.sources}")
-    return len(drivers) > 0
+    d = drivers['q'][0]
+    print(f"  {name}: driver={d.driver}, kind={d.kind}")
+    return True
 
+
+# =============================================================================
+# 测试类
+# =============================================================================
 
 class TestArithmeticExpressions:
     """算术运算符测试"""
     
     @pytest.mark.unit
     def test_add(self):
-        return test_expression("加法", 
-            'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= a + b; endmodule',
-            "a + b")
+        """加法: a + b"""
+        assert _test_expr("加法", "a + b")
     
     @pytest.mark.unit
     def test_sub(self):
-        return test_expression("减法",
-            'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= a - b; endmodule',
-            "a - b")
+        """减法: a - b"""
+        assert _test_expr("减法", "a - b")
     
     @pytest.mark.unit
     def test_mul(self):
-        return test_expression("乘法",
-            'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= a * b; endmodule',
-            "a * b")
+        """乘法: a * b"""
+        assert _test_expr("乘法", "a * b")
 
 
 class TestBitwiseExpressions:
@@ -59,21 +70,18 @@ class TestBitwiseExpressions:
     
     @pytest.mark.unit
     def test_and(self):
-        return test_expression("AND",
-            'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= a & b; endmodule',
-            "a & b")
+        """AND: a & b"""
+        assert _test_expr("AND", "a & b")
     
     @pytest.mark.unit
     def test_or(self):
-        return test_expression("OR",
-            'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= a | b; endmodule',
-            "a | b")
+        """OR: a | b"""
+        assert _test_expr("OR", "a | b")
     
     @pytest.mark.unit
     def test_xor(self):
-        return test_expression("XOR",
-            'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= a ^ b; endmodule',
-            "a ^ b")
+        """XOR: a ^ b"""
+        assert _test_expr("XOR", "a ^ b")
 
 
 class TestShiftExpressions:
@@ -81,15 +89,13 @@ class TestShiftExpressions:
     
     @pytest.mark.unit
     def test_lshift(self):
-        return test_expression("Lshift",
-            'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= a << b; endmodule',
-            "a << b")
+        """左移: a << b"""
+        assert _test_expr("Lshift", "a << b")
     
     @pytest.mark.unit
     def test_rshift(self):
-        return test_expression("Rshift",
-            'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= a >> b; endmodule',
-            "a >> b")
+        """右移: a >> b"""
+        assert _test_expr("Rshift", "a >> b")
 
 
 class TestConcatenationExpressions:
@@ -97,10 +103,13 @@ class TestConcatenationExpressions:
     
     @pytest.mark.unit
     def test_concat(self):
-        return test_expression("拼接",
-            'module dut(input clk, a, b, output q); always_ff @(posedge clk) q <= {a, b}; endmodule',
-            "{a, b}")
+        """拼接: {a, b}"""
+        assert _test_expr("拼接", "{a, b}")
 
+
+# =============================================================================
+# 主入口
+# =============================================================================
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

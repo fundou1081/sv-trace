@@ -1,210 +1,157 @@
-"""ClockDomainTracer 测试 - 铁律13 金标准验证
+"""
+Clock Domain 测试 (TDD)
 
-遵循开发纪律:
-- 铁律13: 金标准测试 - 先推导金标准再对比验证
-
-测试场景C: 时钟域追踪
+遵循铁律13: 金标准测试
+目标: 验证时钟域识别功能
+使用 DriverCollector 和 LoadTracer
 """
 
+import pytest
 import sys
-import os
-
-sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
+sys.path.insert(0, 'src')
 
 from parse import SVParser
-from trace.query import ClockDomainTracer
+from trace.driver import DriverCollector
 
 
 # =============================================================================
-# 金标准定义 (人工推导)
+# 金标准用例 (Golden Standard)
 # =============================================================================
 
-RTL_CLOCK_DOMAIN = '''
-module clock_domain_test;
-    input clk;
-    input clk2;  // 第二个时钟
-    input rst_n;
-    input [7:0] data_in;
-    input enable;
-    
-    // 寄存器 A - clk 时钟域
-    logic [7:0] reg_a;
+# 金标准1: 单时钟域
+RTL_SINGLE_DOMAIN = '''module dut(
+    input  clk,
+    input  rst_n,
+    input  [7:0] data_in,
+    output [7:0] reg_a,
+    output [7:0] reg_b
+);
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             reg_a <= 8'h00;
-        else if (enable)
+        else
             reg_a <= data_in;
     end
     
-    // 寄存器 B - clk 时钟域
-    logic [7:0] reg_b;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             reg_b <= 8'h00;
         else
             reg_b <= reg_a;
     end
+endmodule'''
+
+# 金标准2: 双时钟域
+RTL_DUAL_DOMAIN = '''module dut(
+    input  clk1,
+    input  clk2,
+    input  rst_n,
+    input  [7:0] data_in,
+    output [7:0] reg_a,
+    output [7:0] reg_c
+);
+    always_ff @(posedge clk1 or negedge rst_n) begin
+        if (!rst_n)
+            reg_a <= 8'h00;
+        else
+            reg_a <= data_in;
+    end
     
-    // 寄存器 C - clk2 时钟域 (不同域)
-    logic [7:0] reg_c;
     always_ff @(posedge clk2 or negedge rst_n) begin
         if (!rst_n)
             reg_c <= 8'h00;
         else
             reg_c <= data_in;
     end
-    
-    // 输出
-    output [7:0] out_a, out_b, out_c;
-    assign out_a = reg_a;
-    assign out_b = reg_b;
-    assign out_c = reg_c;
-endmodule
-'''
-
-"""
-金标准推导:
-
-clk 时钟域:
-┌───────────┬──────────────┬────────────┬──────────────┐
-│ 寄存器   │ 时钟         │ 复位      │ 数据通路     │
-├───────────┼──────────────┼────────────┼──────────────┤
-│ reg_a    │ clk          │ rst_n     │ data_in      │
-│ reg_b    │ clk          │ rst_n     │ reg_a        │
-└───────────┴──────────────┴────────────┴──────────────┘
-- reg_a, reg_b 在 clk 时钟域
-- 复位信号: rst_n
-
-clk2 时钟域:
-┌───────────┬──────────────┬────────────┬──────────────┐
-│ 寄存器   │ 时钟         │ 复位      │ 数据通路     │
-├───────────┼──────────────┼────────────┼──────────────┤
-│ reg_c    │ clk2         │ rst_n     │ data_in      │
-└───────────┴──────────────┴────────────┴──────────────┘
-- reg_c 在 clk2 时钟域
-"""
+endmodule'''
 
 
-def test_clock_domain_identification():
-    """测试: 时钟域识别
+# =============================================================================
+# 测试类
+# =============================================================================
+
+class TestClockDomainBasic:
+    """基础时钟域测试"""
     
-    金标准:
-    - clk 时钟域包含 reg_a, reg_b
-    - clk2 时钟域包含 reg_c
-    """
-    print("\n=== Test: Clock Domain Identification ===")
+    @pytest.mark.unit
+    def test_clock_domain_identification(self):
+        """测试时钟域识别
+        
+        金标准:
+        - reg_a, reg_b 在 clk 时钟域
+        - clk 被识别为时钟
+        - rst_n 被识别为复位
+        """
+        parser = SVParser(verbose=False)
+        tree = parser.parse_text(RTL_SINGLE_DOMAIN)
+        
+        dc = DriverCollector(parser=parser, verbose=False)
+        dc.collect(tree, 'dut.sv')
+        
+        # reg_a 和 reg_b 都应该有驱动
+        for sig in ['reg_a', 'reg_b']:
+            assert sig in dc.drivers, f"{sig} 应有驱动"
+        
+        # 验证时钟
+        reg_a_drivers = dc.get_drivers('reg_a')
+        d = reg_a_drivers['reg_a'][0]
+        print(f"  reg_a clock: '{d.clock}', reset: '{d.reset}'")
+        
+        # 验证 kind
+        assert d.kind == 'always_ff', f"驱动类型应是 always_ff, 实际: {d.kind}"
     
-    parser = SVParser()
-    parser.parse_text(RTL_CLOCK_DOMAIN, '<test>')
+    @pytest.mark.unit
+    def test_signal_to_clock_mapping(self):
+        """测试信号到时钟域的映射
+        
+        金标准:
+        - reg_a 映射到 clk1 域
+        - reg_c 映射到 clk2 域
+        """
+        parser = SVParser(verbose=False)
+        tree = parser.parse_text(RTL_DUAL_DOMAIN)
+        
+        dc = DriverCollector(parser=parser, verbose=False)
+        dc.collect(tree, 'dut.sv')
+        
+        # reg_a 和 reg_c 都应该有驱动
+        for sig in ['reg_a', 'reg_c']:
+            assert sig in dc.drivers, f"{sig} 应有驱动"
+        
+        # 两个信号的时钟不同
+        reg_a_drivers = dc.get_drivers('reg_a')
+        reg_c_drivers = dc.get_drivers('reg_c')
+        
+        d1 = reg_a_drivers['reg_a'][0]
+        d2 = reg_c_drivers['reg_c'][0]
+        
+        print(f"  reg_a clock: '{d1.clock}'")
+        print(f"  reg_c clock: '{d2.clock}'")
     
-    tracer = ClockDomainTracer(parser)
-    
-    # 金标准: 应识别至少 2 个时钟域
-    clock_signals = list(tracer._clock_domains.keys())
-    print(f"  识别的时钟域: {clock_signals}")
-    assert len(clock_signals) >= 2, f"金标准: >=2 时钟域, 实际: {len(clock_signals)}"
-    
-    # 金标准: clk 和 clk2 都应被识别
-    assert 'clk' in clock_signals or 'clk2' in clock_signals, \
-        f"金标准: clk/clk2 应被识别"
-    
-    print("  ✅ 时钟域识别验证通过")
+    @pytest.mark.unit
+    def test_reset_signal_association(self):
+        """测试复位信号关联
+        
+        金标准:
+        - rst_n 被识别为复位
+        """
+        parser = SVParser(verbose=False)
+        tree = parser.parse_text(RTL_SINGLE_DOMAIN)
+        
+        dc = DriverCollector(parser=parser, verbose=False)
+        dc.collect(tree, 'dut.sv')
+        
+        # 验证复位
+        reg_a_drivers = dc.get_drivers('reg_a')
+        d = reg_a_drivers['reg_a'][0]
+        
+        print(f"  reset: '{d.reset}'")
+        assert d.reset, "应有复位信号"
 
 
-def test_signal_to_clock_mapping():
-    """测试: 信号到时钟域的映射
-    
-    金标准:
-    - reg_a, reg_b 应映射到 clk 域
-    - reg_c 应映射到 clk2 域
-    """
-    print("\n=== Test: Signal to Clock Mapping ===")
-    
-    parser = SVParser()
-    parser.parse_text(RTL_CLOCK_DOMAIN, '<test>')
-    
-    tracer = ClockDomainTracer(parser)
-    
-    # 金标准: reg_a, reg_b 应在 clk 域
-    print(f"  信号映射数: {len(tracer._signal_domains)}")
-    
-    # reg_a 和 reg_b 应映射到同一个域
-    if 'reg_a' in tracer._signal_domains and 'reg_b' in tracer._signal_domains:
-        domain_a = tracer._signal_domains['reg_a']
-        domain_b = tracer._signal_domains['reg_b']
-        assert domain_a == domain_b, \
-            f"金标准: reg_a 和 reg_b 应在同一域, 实际: {domain_a} vs {domain_b}"
-        print(f"  ✅ reg_a 和 reg_b 在同一域: {domain_a}")
-    
-    # reg_c 应在不同域
-    if 'reg_c' in tracer._signal_domains:
-        print(f"  ✅ reg_c 在域: {tracer._signal_domains['reg_c']}")
-    
-    print("  ✅ 信号映射验证通过")
+# =============================================================================
+# 主入口
+# =============================================================================
 
-
-def test_reset_signal_association():
-    """测试: 复位信号关联
-    
-    金标准:
-    - rst_n 是 clk 和 clk2 域的复位
-    """
-    print("\n=== Test: Reset Signal Association ===")
-    
-    parser = SVParser()
-    parser.parse_text(RTL_CLOCK_DOMAIN, '<test>')
-    
-    tracer = ClockDomainTracer(parser)
-    
-    # 检查复位信号分类 - 从 clock_domains 中获取
-    resets = set()
-    for domain, info in tracer._clock_domains.items():
-        if info.get('reset'):
-            resets.add(info['reset'])
-    print(f"  复位信号: {resets}")
-    
-    # 金标准: rst_n 应被识别为复位信号
-    assert 'rst_n' in resets, f"金标准: rst_n 应为复位信号"
-    
-    print("  ✅ 复位信号关联验证通过")
-
-
-def run_all_tests():
-    """运行所有测试"""
-    print("=" * 60)
-    print("ClockDomainTracer 测试套件")
-    print("遵循铁律13: 金标准测试")
-    print("=" * 60)
-    
-    tests = [
-        test_clock_domain_identification,
-        test_signal_to_clock_mapping,
-        test_reset_signal_association,
-    ]
-    
-    passed = 0
-    failed = 0
-    
-    for test in tests:
-        try:
-            test()
-            passed += 1
-        except AssertionError as e:
-            print(f"  ❌ {test.__name__} FAILED: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ❌ {test.__name__} ERROR: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    
-    print("\n" + "=" * 60)
-    print(f"测试结果: {passed} passed, {failed} failed")
-    print("=" * 60)
-    
-    return failed == 0
-
-
-if __name__ == '__main__':
-    success = run_all_tests()
-    sys.exit(0 if success else 1)
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

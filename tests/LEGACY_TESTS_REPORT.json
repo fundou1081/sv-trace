@@ -1,0 +1,157 @@
+{
+  "title": "SV-Trace 历史遗留测试文件清单",
+  "generated": "2026-05-13",
+  "total_issues": 28,
+  "by_type": {
+    "ModuleNotFoundError": 10,
+    "ImportError": 16,
+    "AttributeError": 1,
+    "SyntaxError": 1
+  },
+  "files": [
+    {
+      "file": "tests/archive/legacy/test_datapath_full.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'trace.datapath'"
+    },
+    {
+      "file": "tests/archive/legacy/test_pipeline.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'trace.datapath'"
+    },
+    {
+      "file": "tests/archive/legacy/test_pipeline_final.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'trace.datapath'"
+    },
+    {
+      "file": "tests/archive/legacy/test_pipeline_v2.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'trace.datapath'"
+    },
+    {
+      "file": "tests/archive/legacy/test_pipeline_v3.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'trace.datapath'"
+    },
+    {
+      "file": "tests/archive/legacy/test_quality_performance.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'trace.performance_estimator'"
+    },
+    {
+      "file": "tests/unit/sv_codecheck/test_performance_benchmark.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/sv_codecheck/test_performance_benchmark.py'."
+    },
+    {
+      "file": "tests/unit/sv_trace/test_foundation.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/sv_trace/test_foundation.py'."
+    },
+    {
+      "file": "tests/unit/sv_trace/test_reg_debug.py",
+      "type": "AttributeError",
+      "reason": "E   AttributeError: 'DriverCollector' object has no attribute 'find_driver'"
+    },
+    {
+      "file": "tests/unit/sv_trace/test_tier3_open_source.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/sv_trace/test_tier3_open_source.py'."
+    },
+    {
+      "file": "tests/unit/sv_trace/test_viz.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'trace.visualize'"
+    },
+    {
+      "file": "tests/unit/sv_verify/test_app_tools.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/sv_verify/test_app_tools.py'."
+    },
+    {
+      "file": "tests/unit/sv_verify/test_constraint_analysis.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'parse.constraint'"
+    },
+    {
+      "file": "tests/unit/sv_verify/test_corners.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/sv_verify/test_corners.py'."
+    },
+    {
+      "file": "tests/unit/sv_verify/test_new_features.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/sv_verify/test_new_features.py'."
+    },
+    {
+      "file": "tests/unit/sv_verify/test_targeted.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/sv_verify/test_targeted.py'."
+    },
+    {
+      "file": "tests/unit/test_all.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/test_all.py'."
+    },
+    {
+      "file": "tests/unit/test_app_tools.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/test_app_tools.py'."
+    },
+    {
+      "file": "tests/unit/test_cdc_edge_cases.py",
+      "type": "SyntaxError",
+      "reason": "E   SyntaxError: invalid character '✅' (U+2705)"
+    },
+    {
+      "file": "tests/unit/test_comprehensive.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/test_comprehensive.py'."
+    },
+    {
+      "file": "tests/unit/test_corners.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/test_corners.py'."
+    },
+    {
+      "file": "tests/unit/test_foundation.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/test_foundation.py'."
+    },
+    {
+      "file": "tests/unit/test_new_features.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/test_new_features.py'."
+    },
+    {
+      "file": "tests/unit/test_performance_benchmark.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/test_performance_benchmark.py'."
+    },
+    {
+      "file": "tests/unit/test_targeted.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/test_targeted.py'."
+    },
+    {
+      "file": "tests/unit/tools/test_module_connections.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'query.module_connections'",
+      "status": "FIXED_P1",
+      "new_implementation": "使用新架构 (ConnectionExtractor/DriverCollector/LoadTracer)"
+    },
+    {
+      "file": "tests/unit/tools/test_signal_chain.py",
+      "type": "ModuleNotFoundError",
+      "reason": "E   ModuleNotFoundError: No module named 'query.signal_chain'",
+      "status": "FIXED_P1",
+      "new_implementation": "使用新架构 (ConnectionExtractor/DriverCollector/LoadTracer)"
+    },
+    {
+      "file": "tests/unit/trace/test_driver_semantic_validation.py",
+      "type": "ImportError",
+      "reason": "ImportError while importing test module '/Users/fundou/my_dv_proj/sv-trace/tests/unit/trace/test_driver_semantic_validation.py'."
+    }
+  ]
+}

@@ -187,10 +187,10 @@ class TestConcatSyntax:
         assert len(drivers) > 0
         
         d = drivers['q'][0]
-        print(f"  q source: {d.sources}")
+        print(f"  q driver: {d.driver}, kind: {d.kind}")
         
         # 验证 confidence
-        assert d.confidence in ['high', 'medium', 'uncertain']
+        assert hasattr(d.confidence, 'value'), f"confidence 应为枚举: {d.confidence}"
     
     @pytest.mark.unit
     def test_multi_concat(self):

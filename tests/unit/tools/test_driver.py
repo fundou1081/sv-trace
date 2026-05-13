@@ -151,7 +151,32 @@ class TestDriverIntegration:
     @pytest.mark.integration
     def test_opentitan_module(self):
         """测试 OpenTitan 模块"""
-        pytest.skip("需要 OpenTitan 项目文件")
+        # 使用 uart_core.sv (uart.sv 是顶层 wrapper，主要逻辑在 uart_core)
+        uart_rtl = os.path.join(
+            os.path.dirname(__file__),
+            '../../../../opentitan/hw/ip/uart/rtl/uart_core.sv'
+        )
+        
+        if not os.path.exists(uart_rtl):
+            pytest.skip(f"OpenTitan RTL 不存在: {uart_rtl}")
+        
+        with open(uart_rtl, 'r') as f:
+            rtl_content = f.read()
+        
+        parser = SVParser(verbose=False)
+        tree = parser.parse_text(rtl_content)
+        
+        dc = DriverCollector(parser=parser, verbose=False)
+        dc.collect(tree, 'uart_core.sv')
+        
+        # 验证驱动关系
+        assert len(dc.drivers) > 0, "应有驱动关系"
+        
+        # uart_core 有多个 always_ff 块，应有时钟和复位
+        print(f"\nuart_core.sv 驱动分析:")
+        print(f"  驱动数量: {len(dc.drivers)}")
+        print(f"  时钟: {dc.all_clocks}")
+        print(f"  复位: {dc.all_resets}")
 
 
 if __name__ == "__main__":

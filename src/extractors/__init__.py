@@ -15,6 +15,7 @@ from extractors.base import (
 )
 from extractors.load import LoadExtractor
 from extractors.driver import DriverExtractor
+from extractors.connection import ConnectionExtractor
 
 __all__ = [
     'Extractor',
@@ -24,4 +25,5 @@ __all__ = [
     'Connection',
     'LoadExtractor',
     'DriverExtractor',
+    'ConnectionExtractor',
 ]

@@ -1,30 +1,39 @@
-import sys
-sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
-
 """
-Driver 测试
-"""
-import sys
-import os
-import tempfile
+Driver 测试 (TDD)
 
-sys.path.insert(0, '/Users/fundou/my_dv_proj/sv-trace/src')
+遵循铁律13: 金标准测试
+目标: 验证 DriverCollector 功能
+"""
+
+import pytest
+import sys
+sys.path.insert(0, 'src')
 
 from parse import SVParser
-from trace.driver import DriverCollector, DriverTracer
+from trace.driver import DriverCollector
 
 
-TEST1 = '''
-module t;
-    logic [31:0] a, b, r;
+# =============================================================================
+# 金标准用例 (Golden Standard)
+# =============================================================================
+
+# 金标准1: 简单加法赋值
+TEST_SIMPLE = '''module t(
+    input  logic [31:0] a,
+    input  logic [31:0] b,
+    output logic [31:0] r
+);
     always_comb r = a + b;
-endmodule
-'''
+endmodule'''
 
-TEST2 = '''
-module t;
-    logic [31:0] a, b, c, r;
-    logic [1:0] sel;
+# 金标准2: 多路选择
+TEST_NESTED = '''module t(
+    input  logic [31:0] a,
+    input  logic [31:0] b,
+    input  logic [31:0] c,
+    input  logic [1:0] sel,
+    output logic [31:0] r
+);
     always_comb begin
         if (sel == 2'b00)
             r = a;
@@ -33,80 +42,52 @@ module t;
         else
             r = c;
     end
-endmodule
-'''
+endmodule'''
 
 
+# =============================================================================
+# 测试函数
+# =============================================================================
+
+@pytest.mark.unit
 def test_simple():
     """简单赋值测试"""
-    print("\n=== Simple If/Else ===")
+    parser = SVParser(verbose=False)
+    tree = parser.parse_text(TEST_SIMPLE)
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-        f.write(TEST1)
-        tmp = f.name
+    dc = DriverCollector(parser=parser, verbose=False)
+    dc.collect(tree, 't.sv')
     
-    try:
-        parser = SVParser()
-        parser.parse_file(tmp)
-        
-        drv = DriverTracer(parser)
-        drivers = drv.find_driver('r')
-        
-        print(f"Drivers for r: {len(drivers)}")
-        for d in drivers:
-            sources = d.sources if d.sources else ['<no sources>']
-            print(f"  - kind={d.kind}, source={sources[0].strip()[:60] if sources[0] else 'N/A'}")
-        
-        print("  ✅ 简单赋值测试通过")
-        return True
-    finally:
-        os.unlink(tmp)
+    # r 有驱动
+    drivers = dc.get_drivers('r')
+    assert drivers, "r 应有驱动"
+    
+    d = drivers['r'][0]
+    print(f"  r: kind={d.kind}, driver={d.driver}")
+    assert d.kind == 'always_comb', "驱动类型应是 always_comb"
 
 
+@pytest.mark.unit
 def test_nested():
     """嵌套 if 测试"""
-    print("\n=== Nested If/Else ===")
+    parser = SVParser(verbose=False)
+    tree = parser.parse_text(TEST_NESTED)
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.sv', delete=False) as f:
-        f.write(TEST2)
-        tmp = f.name
+    dc = DriverCollector(parser=parser, verbose=False)
+    dc.collect(tree, 't.sv')
     
-    try:
-        parser = SVParser()
-        parser.parse_file(tmp)
-        
-        drv = DriverTracer(parser)
-        drivers = drv.find_driver('r')
-        
-        print(f"Drivers for r: {len(drivers)}")
-        for d in drivers:
-            sources = d.sources if d.sources else ['<no sources>']
-            print(f"  - kind={d.kind}")
-        
-        print("  ✅ 嵌套 if 测试通过")
-        return True
-    finally:
-        os.unlink(tmp)
+    # r 有驱动
+    drivers = dc.get_drivers('r')
+    assert drivers, "r 应有驱动"
+    
+    d = drivers['r'][0]
+    print(f"  r: kind={d.kind}, driver={d.driver}")
+    assert d.kind == 'always_comb', "驱动类型应是 always_comb"
 
 
-def main():
-    tests = [
-        test_simple,
-        test_nested,
-    ]
-    
-    passed = 0
-    for test in tests:
-        try:
-            if test():
-                passed += 1
-        except Exception as e:
-            print(f"  ❌ {test.__name__}: {e}")
-    
-    print(f"\n总计: {passed}/{len(tests)} 通过")
-    return passed == len(tests)
-
+# =============================================================================
+# 主入口
+# =============================================================================
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    pytest.main([__file__, "-v"])

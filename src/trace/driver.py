@@ -61,6 +61,33 @@ class DriverCollector:
         self.drivers = {}
         for sig, driver_points in self._graph.drivers.items():
             self.drivers[sig] = list(driver_points)
+    
+    @property
+    def all_clocks(self) -> Set[str]:
+        """返回所有时钟信号"""
+        clocks = set()
+        for sig, driver_list in self.drivers.items():
+            for dp in driver_list:
+                if hasattr(dp, 'clock') and dp.clock:
+                    clocks.add(dp.clock)
+        return clocks
+    
+    @property
+    def all_resets(self) -> Set[str]:
+        """返回所有复位信号"""
+        resets = set()
+        for sig, driver_list in self.drivers.items():
+            for dp in driver_list:
+                if hasattr(dp, 'reset') and dp.reset:
+                    resets.add(dp.reset)
+        return resets
+    
+    def get_drivers(self, pattern: str = '*') -> Dict[str, List]:
+        """查找匹配的驱动"""
+        if pattern == '*':
+            return self.drivers
+        import fnmatch
+        return {k: v for k, v in self.drivers.items() if fnmatch.fnmatch(k, pattern)}
 
 
 def _semantic_available() -> bool:

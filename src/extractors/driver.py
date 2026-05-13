@@ -77,7 +77,7 @@ class DriverExtractor(Extractor):
         if hasattr(node, 'statement'):
             timing_stmt = node.statement
             if timing_stmt and hasattr(timing_stmt, 'statement'):
-                self._process_stmt(timing_stmt.statement)
+                self._process_stmt(timing_stmt.statement, clocks)
         
         return pyslang.VisitAction.Skip
     
@@ -136,25 +136,26 @@ class DriverExtractor(Extractor):
                 clocks.extend(self._extract_clocks_from_event_expr(expr.expr))
         
         elif kind == SyntaxKind.BinaryEventExpression:
-            # 多时钟 or
-            if hasattr(expr, 'expr') and expr.expr:
-                clocks.extend(self._extract_clocks_from_event_expr(expr.expr))
-            if hasattr(expr, 'expr2') and expr.expr2:
-                clocks.extend(self._extract_clocks_from_event_expr(expr.expr2))
+            # 多时钟 or - 遍历子节点找 SignalEventExpression
+            for child in self._iter_children(expr):
+                if self._get_kind(child) == SyntaxKind.SignalEventExpression:
+                    clocks.extend(self._extract_clocks_from_event_expr(child))
         
         return clocks
     
-    def _process_stmt(self, stmt):
+    def _process_stmt(self, stmt, clocks: list = None):
+        if clocks is None:
+            clocks = []
         if not hasattr(stmt, 'kind'):
             return
         kind = self._get_kind(stmt)
         
         if kind == SyntaxKind.ExpressionStatement:
-            self._process_expression_statement(stmt)
+            self._process_expression_statement(stmt, clocks)
         elif kind == SyntaxKind.SequentialBlockStatement:
-            self._process_sequential_block(stmt)
+            self._process_sequential_block(stmt, clocks)
         elif kind == SyntaxKind.ConditionalStatement:
-            self._process_conditional_statement(stmt)
+            self._process_conditional_statement(stmt, clocks)
     
     def _iter_children(self, node) -> list:
         try:
@@ -170,42 +171,50 @@ class DriverExtractor(Extractor):
                         self._process_assign(sub, 'continuous')
         return pyslang.VisitAction.Skip
     
-    def _process_sequential_block(self, node) -> pyslang.VisitAction:
+    def _process_sequential_block(self, node, clocks: list = None) -> pyslang.VisitAction:
+        if clocks is None:
+            clocks = []
         for child in self._iter_children(node):
             if self._get_kind(child) == SyntaxKind.SyntaxList:
                 for sub in self._iter_children(child):
                     sk = self._get_kind(sub)
                     if sk == SyntaxKind.ExpressionStatement:
-                        self._process_expression_statement(sub)
+                        self._process_expression_statement(sub, clocks)
                     elif sk == SyntaxKind.ConditionalStatement:
-                        self._process_conditional_statement(sub)
+                        self._process_conditional_statement(sub, clocks)
         return pyslang.VisitAction.Skip
     
-    def _process_conditional_statement(self, node) -> pyslang.VisitAction:
+    def _process_conditional_statement(self, node, clocks: list = None) -> pyslang.VisitAction:
+        if clocks is None:
+            clocks = []
         for child in self._iter_children(node):
             sk = self._get_kind(child)
             if sk == SyntaxKind.ExpressionStatement:
-                self._process_expression_statement(child)
+                self._process_expression_statement(child, clocks)
             elif sk == SyntaxKind.ConditionalStatement:
-                self._process_conditional_statement(child)
+                self._process_conditional_statement(child, clocks)
             elif sk == SyntaxKind.SequentialBlockStatement:
-                self._process_sequential_block(child)
+                self._process_sequential_block(child, clocks)
             elif sk == SyntaxKind.ElseClause:
                 for sub in self._iter_children(child):
                     ssk = self._get_kind(sub)
                     if ssk == SyntaxKind.ExpressionStatement:
-                        self._process_expression_statement(sub)
+                        self._process_expression_statement(sub, clocks)
         return pyslang.VisitAction.Skip
     
-    def _process_expression_statement(self, node) -> pyslang.VisitAction:
+    def _process_expression_statement(self, node, clocks: list = None) -> pyslang.VisitAction:
+        if clocks is None:
+            clocks = []
         for child in self._iter_children(node):
             kind = self._get_kind(child)
             ctx = 'always_ff' if kind == SyntaxKind.NonblockingAssignmentExpression else 'always_comb'
             if kind in (SyntaxKind.NonblockingAssignmentExpression, SyntaxKind.AssignmentExpression):
-                self._process_assign(child, ctx)
+                self._process_assign(child, ctx, clocks)
         return pyslang.VisitAction.Skip
     
-    def _process_assign(self, node, kind: str):
+    def _process_assign(self, node, kind: str, clocks: list = None):
+        if clocks is None:
+            clocks = []
         line = getattr(node, 'span', None) and node.span.start_line or 0
         
         lhs_list = []
@@ -224,7 +233,7 @@ class DriverExtractor(Extractor):
                 found_eq = True
                 continue
             
-            if ck in (SyntaxKind.Identifier, SyntaxKind.IdentifierName):
+            if ck.name in ("Identifier", "IdentifierName"):
                 sig = _extract_identifier(child)
                 if sig and not found_eq:
                     lhs_list.append(sig)
@@ -233,7 +242,15 @@ class DriverExtractor(Extractor):
             self._scan_lhs(child, lhs_list, found_eq)
         
         for lhs in lhs_list:
-            self.graph.add_driver(lhs, lhs, kind, line)
+            # 从 clocks 列表中找时钟信号
+            clock_signal = ""
+            reset_signal = ""
+            for sig, edge in clocks:
+                if edge == 'posedge' or edge is None:
+                    clock_signal = sig
+                elif edge == 'negedge':
+                    reset_signal = sig
+            self.graph.add_driver(lhs, lhs, kind, line, clock=clock_signal, reset=reset_signal)
     
     def _scan_lhs(self, node, lhs_list: list, found_eq: bool):
         if not hasattr(node, 'kind'):
@@ -246,7 +263,7 @@ class DriverExtractor(Extractor):
         if str(kind) in self._SKIP_KINDS:
             return
         
-        if kind in (SyntaxKind.Identifier, SyntaxKind.IdentifierName):
+        if kind.name in ("Identifier", "IdentifierName"):
             sig = _extract_identifier(node)
             if sig and not found_eq:
                 lhs_list.append(sig)

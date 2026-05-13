@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, 'src')
 from parse import SVParser
 from trace.driver import DriverCollector
+from extractors.base import ConfidenceLevel
 
 
 RTL_CROSS_MODULE = '''module sub(
@@ -82,7 +83,7 @@ class TestCrossModuleDriverTDD:
         drivers = dc.get_drivers('q')
         # 基础功能应该正常
         assert len(drivers) > 0
-        assert drivers['q'][0].confidence == "high"
+        assert drivers['q'][0].confidence == ConfidenceLevel.HIGH
 
 
 if __name__ == "__main__":
