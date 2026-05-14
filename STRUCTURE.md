@@ -1,6 +1,6 @@
 # sv-trace 项目结构
 
-> 更新时间: 2026-05-08
+> 更新时间: 2026-05-15
 
 ---
 
@@ -26,21 +26,24 @@
 │  输出: SemanticGraph                                        │
 │  - LoadExtractor     → 负载关系                             │
 │  - DriverExtractor   → 驱动关系                             │
-│  - ConnectionTracer  → 端口连接                             │
+│  - ConnectionExtractor → 端口连接                           │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  Pass 3: SemanticEnricher (semantic/)                       │
 │  输入: SemanticGraph + AgentContext                         │
 │  输出: EnrichedSemanticGraph                                │
-│  - 置信度评估                                              │
+│  - 置信度评估 (ConfidenceLevel)                            │
 │  - 自然语言描述生成                                         │
 │  - AGENT 填充 business_meaning / tags                       │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  QueryInterface (trace/query/, trace/debug/)                │
-│  - 信号查询、路径追踪、覆盖率分析                            │
+│  QueryInterface (trace/)                                    │
+│  - driver.py: DriverCollector (驱动收集)                   │
+│  - load.py: LoadTracer (负载追踪)                          │
+│  - connection.py, dataflow.py, controlflow.py              │
+│  - query/clock_domain.py, signal_chain.py, timing_path.py  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -50,100 +53,94 @@
 
 ```
 src/
-├── scope/                    # 🆕 Scope 体系 (Phase 0)
+├── scope/                    # ✅ Pass 1: 作用域体系
 │   ├── __init__.py
-│   ├── models.py             # ScopeInfo, SignalRef, ScopeKind, ScopeTree
-│   ├── builder.py            # ScopeBuilder (Pass 1)
+│   ├── models.py             # ScopeKind, ScopeInfo, SignalRef, ScopeTree
+│   ├── builder.py            # ScopeBuilder
 │   ├── symbol_table.py       # SymbolTable
-│   └── utils.py             # extract_identifier 等工具函数
+│   └── utils.py              # extract_identifier 等工具函数
 │
-├── extractors/              # 🆕 统一 Extractor 体系 (Phase 0)
+├── extractors/              # ✅ Pass 2: 提取器体系
 │   ├── __init__.py
-│   ├── base.py             # Extractor 基类, SemanticGraph, LoadPoint, DriverPoint
-│   ├── load.py             # LoadExtractor
-│   └── driver.py           # DriverExtractor (骨架)
+│   ├── base.py              # Extractor 基类, SemanticGraph, LoadPoint, DriverPoint
+│   ├── load.py              # LoadExtractor (负载关系)
+│   ├── driver.py            # DriverExtractor (驱动关系)
+│   └── connection.py         # ConnectionExtractor (端口连接)
 │
-├── semantic/               # 🔄 语义增强层 (Phase 2)
+├── semantic/               # ✅ Pass 3: 语义增强层
 │   ├── __init__.py
-│   ├── models.py          # EnrichedSignal, EnrichedSemanticGraph
-│   ├── enricher.py       # SemanticEnricher
-│   ├── agent_interface.py  # AgentContext
-│   └── base.py           # ⚠️ 兼容层，内部调用 extractors
+│   ├── models.py           # EnrichedSignal, EnrichedSemanticGraph
+│   ├── enricher.py          # SemanticEnricher
+│   └── agent_interface.py   # AgentContext
 │
-├── trace/                 # 🔄 对外 API 层
+├── trace/                 # ✅ 对外 API 层
 │   ├── __init__.py
-│   ├── load.py           # LoadTracer (底层 → extractors/)
-│   ├── driver.py         # DriverCollector (底层 → extractors/)
-│   ├── load_ext.py      # LoadTracerExt 兼容层
-│   ├── connection.py     # 端口连接追踪
-│   ├── controlflow.py   # 控制流分析
-│   ├── dataflow.py       # 数据流分析
-│   ├── dependency.py     # 依赖图构建
-│   ├── signal_classifier.py
-│   ├── pipeline_analyzer.py
-│   ├── power_estimation.py
-│   ├── flow_analyzer.py
-│   ├── area_estimator.py
+│   ├── load.py             # LoadTracer (底层 → extractors/)
+│   ├── driver.py           # DriverCollector (底层 → extractors/)
+│   ├── parse_warn.py       # ParseWarningHandler
+│   ├── connection.py       # 端口连接追踪
+│   ├── controlflow.py      # 控制流分析
+│   ├── dataflow.py         # 数据流分析
+│   ├── dependency.py        # 依赖分析
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── signal.py
-│   │   ├── module.py
-│   │   ├── instance.py
-│   │   └── connection.py
+│   │   ├── base.py
+│   │   └── interfaces.py
 │   └── query/
 │       ├── __init__.py
-│       ├── signal.py
-│       ├── path.py
-│       ├── signal_chain.py
-│       ├── condition_relation_extractor.py
-│       ├── sample_condition_analyzer.py
-│       ├── nested_condition_expander.py
-│       └── hierarchy/
-│           ├── __init__.py
-│           └── resolver.py
+│       ├── clock_domain.py    # 时钟域追踪
+│       ├── signal_chain.py    # 信号链路追踪
+│       ├── timing_path.py     # 时序路径追踪
+│       └── module_connections.py
 │
-├── debug/                 # 🔄 调试分析器
+├── debug/                 # 🔄 调试分析器 (待适配)
+│   ├── analyzers/
+│   └── ...
+│
+├── parse/                # ✅ pyslang 封装
 │   ├── __init__.py
-│   ├── analyzers/       # 分析器集合
-│   │   ├── multi_driver.py
-│   │   ├── clock_domain.py
-│   │   ├── reset_domain_analyzer.py
-│   │   ├── fsm_analyzer.py
-│   │   ├── coverage_analyzer.py
-│   │   ├── xvalue.py
-│   │   ├── uninitialized.py
-│   │   ├── cdc.py
-│   │   ├── timing_analyzer.py
-│   │   ├── class_extractor.py
-│   │   ├── class_quality.py
-│   │   ├── complexity.py
-│   │   ├── code_metrics_analyzer.py
-│   │   └── design_evaluator.py
-│   ├── patterns/
-│   └── reports/
+│   └── sv_parser.py       # SVParser
 │
-├── parse/                # 解析器 (pyslang 封装)
-│   ├── __init__.py
-│   └── sv_parser.py
-│
-└── apps/                # 应用层
-    ├── __init__.py
-    ├── dataflow.py
-    ├── controlflow.py
-    └── evaluate.py
+└── apps/                # 🔄 应用层 (待评估)
 ```
 
 ---
 
-## ⚠️ 已废弃模块
+## ✅ 已完成架构
 
-以下目录/文件已删除，不再可用：
+| 模块 | 状态 | 文件数 | 说明 |
+|------|------|--------|------|
+| scope/ | ✅ | 4 | Pass 1: ScopeTree 构建 |
+| extractors/ | ✅ | 4 | Pass 2: SemanticGraph 提取 |
+| semantic/ | ✅ | 3 | Pass 3: 语义增强 |
+| trace/ 核心 | ✅ | 3 | load, driver, parse_warn |
+| parse/ | ✅ | 1 | SVParser |
 
-| 目录/文件 | 原因 |
-|-----------|------|
-| `src/pyslang-ast-ref/` | 删除：297 个参考文件，违反铁律 23 |
-| `src/debug/_archive/` | 删除：备份文件 |
-| `src/trace/load_ext.py` (旧版) | 被新版覆盖 |
+---
+
+## 🔄 待适配模块
+
+| 模块 | 说明 |
+|------|------|
+| trace/ 其他 | connection, dataflow, controlflow 等已添加 fallback |
+| trace/query/ | 已适配: clock_domain, signal_chain, timing_path |
+| debug/ | 调试分析器，待适配新架构 |
+| apps/ | 独立入口，待评估是否需要 |
+
+---
+
+## 📁 _archive/ 归档
+
+```
+_archive/
+├── semantic_old/           # 归档的 semantic 旧模块
+│   ├── base.py              # 兼容层（已废弃）
+│   ├── clock.py, driver.py, fsm.py, load.py 等
+├── test_driver_semantic_validation.py  # 归档的测试
+└── ...
+```
+
+**说明**: 归档的文件不再使用，但保留以防需要回溯。
 
 ---
 
@@ -155,7 +152,7 @@ src/
 3. LoadExtractor.extract() → SemanticGraph (loads)
 4. DriverExtractor.extract() → SemanticGraph (drivers)
 5. SemanticEnricher.enrich() → EnrichedSemanticGraph
-6. QueryInterface → 用户查询
+6. DriverCollector / LoadTracer → 用户查询
 ```
 
 ---
@@ -168,13 +165,14 @@ src/
 | 数据模型 | Point / Info / Ref | `LoadPoint`, `ScopeInfo`, `SignalRef` |
 | Builder | Builder | `ScopeBuilder` |
 | Enricher | Enricher | `SemanticEnricher` |
-| Analyzer | Analyzer | `ClockDomainAnalyzer`, `FSMAnalyzer` |
-| 查询类 | Query | `SignalQuery`, `PathQuery` |
+| Tracer | Tracer | `LoadTracer`, `DriverCollector` |
+| Analyzer | Analyzer | `ClockDomainAnalyzer` |
 
 ---
 
 ## 相关文档
 
-- `docs/DEVELOPMENT_DISCIPLINE.md` - 开发纪律（铁律 1-23）
+- `docs/README.md` - 项目首页
+- `docs/MIGRATION_GUIDE.md` - 架构迁移指南
+- `docs/DEVELOPMENT_DISCIPLINE.md` - 开发纪律（铁律 1-24）
 - `docs/MULTI_PASS_ARCHITECTURE_PLAN.md` - 多轮架构迁移计划
-- `docs/pyslang-spec/` - pyslang AST 规范
