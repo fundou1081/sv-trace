@@ -9,7 +9,6 @@ sys.path.insert(0, 'src')
 
 from parse import SVParser
 from trace.driver import DriverCollector
-from semantic.base import SemanticCollector
 
 
 def test_driver_always_ff():

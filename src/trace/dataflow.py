@@ -66,48 +66,79 @@ class DataFlowTracer:
         self._collector: SemanticCollector = None
     
     def collect(self, tree: pyslang.SyntaxTree, filename: str) -> 'DataFlowTracer':
-        self._collector = SemanticCollector()
-        self._collector.collect(tree, filename)
-        
-        # 提取信号
-        for sig in self._collector.get_by_type(SignalItem):
-            if sig.path:
-                self.wires.add(sig.path)
-        
-        # 提取寄存器
-        for nb in self._collector.get_by_type(NonBlockingAssign):
-            if nb.lhs:
-                self.registers.add(nb.lhs)
-                # 驱动关系
-                if nb.lhs not in self.driver_map:
-                    self.driver_map[nb.lhs] = []
-                # 简化：添加 RHS
-                if hasattr(nb, 'rhs') and nb.rhs:
-                    for src in nb.rhs:
-                        if src and src not in self.driver_map[nb.lhs]:
-                            self.driver_map[nb.lhs].append(src)
-                # 负载关系
-                for src in (nb.rhs if hasattr(nb, 'rhs') else []):
+        if self.use_semantic and SEMANTIC_AVAILABLE and self._collector:
+            self._collector.collect(tree, filename)
+            
+            # 提取信号
+            for sig in self._collector.get_by_type(SignalItem):
+                if sig.path:
+                    self.wires.add(sig.path)
+            
+            # 提取寄存器
+            for nb in self._collector.get_by_type(NonBlockingAssign):
+                if nb.lhs:
+                    self.registers.add(nb.lhs)
+                    if nb.lhs not in self.driver_map:
+                        self.driver_map[nb.lhs] = []
+                    if hasattr(nb, 'rhs') and nb.rhs:
+                        for src in nb.rhs:
+                            if src and src not in self.driver_map[nb.lhs]:
+                                self.driver_map[nb.lhs].append(src)
+                    for src in (nb.rhs if hasattr(nb, 'rhs') else []):
+                        if src and src not in self.load_map:
+                            self.load_map[src] = []
+                        if nb.lhs and nb.lhs not in self.load_map[src]:
+                            self.load_map[src].append(nb.lhs)
+            
+            # 阻塞赋值
+            for b in self._collector.get_by_type(BlockingAssign):
+                if b.lhs:
+                    if b.lhs not in self.registers:
+                        self.wires.add(b.lhs)
+                    if b.lhs not in self.driver_map:
+                        self.driver_map[b.lhs] = []
+            
+            # 连续赋值
+            for c in self._collector.get_by_type(ContinuousAssign):
+                if c.lhs:
+                    self.wires.add(c.lhs)
+                    if c.lhs not in self.driver_map:
+                        self.driver_map[c.lhs] = []
+        else:
+            # Fallback: use DriverCollector
+            from trace.driver import DriverCollector
+            from trace.load import LoadTracer
+            dc = DriverCollector()
+            dc.collect(tree, filename)
+            
+            # Extract registers and wires from drivers
+            for sig, drivers in dc.drivers.items():
+                for drv in drivers:
+                    if drv.kind == 'always_ff':
+                        self.registers.add(sig)
+                    elif drv.kind in ('always_comb', 'continuous'):
+                        self.wires.add(sig)
+                    
+                    # Build driver map from driver.driver (source signal)
+                    src = drv.driver
+                    if src and src != sig:
+                        if sig not in self.driver_map:
+                            self.driver_map[sig] = []
+                        if src not in self.driver_map[sig]:
+                            self.driver_map[sig].append(src)
+            
+            # Use LoadTracer for load info
+            lt = LoadTracer()
+            lt.trees[filename] = tree
+            lt.collect(tree, filename)
+            
+            for sig, loads in lt.loads.items():
+                for load in loads:
+                    src = load.load_by
                     if src and src not in self.load_map:
                         self.load_map[src] = []
-                    if nb.lhs and nb.lhs not in self.load_map[src]:
-                        self.load_map[src].append(nb.lhs)
-        
-        # 阻塞赋值
-        for b in self._collector.get_by_type(BlockingAssign):
-            if b.lhs:
-                # 如果不在非阻塞中，就是组合逻辑
-                if b.lhs not in self.registers:
-                    self.wires.add(b.lhs)
-                if b.lhs not in self.driver_map:
-                    self.driver_map[b.lhs] = []
-        
-        # 连续赋值
-        for c in self._collector.get_by_type(ContinuousAssign):
-            if c.lhs:
-                self.wires.add(c.lhs)
-                if c.lhs not in self.driver_map:
-                    self.driver_map[c.lhs] = []
+                    if sig not in self.load_map[src]:
+                        self.load_map[src].append(sig)
         
         # 构建结果
         for sig in self.registers:

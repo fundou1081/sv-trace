@@ -247,7 +247,7 @@ class DriverExtractor(Extractor):
             reset_signal = ""
             for sig, edge in clocks:
                 if edge == 'posedge' or edge is None:
-                    clock_signal = sig
+                    clock_signal = sig.strip()
                 elif edge == 'negedge':
                     reset_signal = sig
             self.graph.add_driver(lhs, lhs, kind, line, clock=clock_signal, reset=reset_signal)

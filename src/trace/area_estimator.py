@@ -127,16 +127,7 @@ class AreaEstimator:
         always_comb_signals = set()
         
         # 获取所有有驱动的信号
-        try:
-            all_signals = self._dc.get_all_signals()
-        except Exception as e:
-            self.warn_handler.warn_error(
-                "SignalCollection",
-                e,
-                context="analyze",
-                component="AreaEstimator"
-            )
-            all_signals = []
+        all_signals = list(self._dc.drivers.keys())
         
         for sig in all_signals:
             try:
@@ -159,12 +150,12 @@ class AreaEstimator:
             for d in drivers:
                 try:
                     # FF统计 - always_ff
-                    if d.kind.name == 'AlwaysFf':
+                    if d.kind == 'always_ff':
                         total_ff += width
                         always_ff_signals.add(sig)
-                        
+                    
                     # LUT统计 - always_comb
-                    if d.kind.name == 'AlwaysComb':
+                    if d.kind == 'always_comb':
                         total_lut += self._estimate_lut(sig, d, width)
                         always_comb_signals.add(sig)
                 except Exception as e:
@@ -214,19 +205,21 @@ class AreaEstimator:
     
     def _estimate_lut(self, sig: str, driver, width: int) -> int:
         """估算LUT使用"""
-        # 从驱动表达式推断操作类型
-        expr = " ".join(driver.sources) if driver.sources else ""
+        # 从驱动信号推断操作类型
+        # driver.driver 是驱动源信号名
+        src = getattr(driver, 'driver', '') or ''
+        src_str = str(src)
         
-        if '+' in expr or '-' in expr:
-            return width * self.LUT_PER_OP['add']
-        elif '*' in expr:
-            return width * self.LUT_PER_OP['mul']
-        elif '/' in expr:
-            return width * self.LUT_PER_OP['div']
-        elif '>' in expr or '<' in expr or '==' in expr:
-            return width * self.LUT_PER_OP['compare']
-        elif '&' in expr or '|' in expr or '^' in expr:
-            return width * self.LUT_PER_OP['logic']
+        if '+' in src_str or '-' in src_str:
+            return int(width * self.LUT_PER_OP['add'])
+        elif '*' in src_str:
+            return int(width * self.LUT_PER_OP['mul'])
+        elif '/' in src_str:
+            return int(width * self.LUT_PER_OP['div'])
+        elif '>' in src_str or '<' in src_str or '==' in src_str:
+            return int(width * self.LUT_PER_OP['compare'])
+        elif '&' in src_str or '|' in src_str or '^' in src_str:
+            return int(width * self.LUT_PER_OP['logic'])
         
         return width  # 默认1:1
     

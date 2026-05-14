@@ -70,34 +70,51 @@ class ClockDomainTracer:
     
     def collect(self, tree: pyslang.SyntaxTree, filename: str) -> 'ClockDomainTracer':
         """收集时钟域信息"""
-        self._collector = SemanticCollector()
-        self._collector.collect(tree, filename)
-        
-        # 提取时钟域
-        for cd in self._collector.get_by_type(ClockDomainItem):
-            domain = ClockDomainResult(
-                clock_signal=cd.clock_signal if cd.clock_signal else "unknown"
-            )
-            self.domains[domain.clock_signal] = domain
-        
-        # 提取寄存器
-        for reg in self._collector.get_by_type(RegisterItem):
-            # 找到关联的时钟域
-            clock = self._find_clock_for_signal(reg.signal_path)
+        if self.use_semantic and SEMANTIC_AVAILABLE:
+            self._collector.collect(tree, filename)
             
-            reg_info = RegisterInfo(
-                name=reg.signal_path,
-                clock_domain=clock,
-                has_async_reset=False,
-            )
+            # 提取时钟域
+            for cd in self._collector.get_by_type(ClockDomainItem):
+                domain = ClockDomainResult(
+                    clock_signal=cd.clock_signal if cd.clock_signal else "unknown"
+                )
+                self.domains[domain.clock_signal] = domain
             
-            if clock in self.domains:
-                self.domains[clock].registers.append(reg_info)
-            else:
-                # 新时钟域
-                new_domain = ClockDomainResult(clock_signal=clock)
-                new_domain.registers.append(reg_info)
-                self.domains[clock] = new_domain
+            # 提取寄存器
+            for reg in self._collector.get_by_type(RegisterItem):
+                clock = self._find_clock_for_signal(reg.signal_path)
+                reg_info = RegisterInfo(
+                    name=reg.signal_path,
+                    clock_domain=clock,
+                    has_async_reset=False,
+                )
+                
+                if clock in self.domains:
+                    self.domains[clock].registers.append(reg_info)
+                else:
+                    new_domain = ClockDomainResult(clock_signal=clock)
+                    new_domain.registers.append(reg_info)
+                    self.domains[clock] = new_domain
+        else:
+            # 使用 DriverCollector 提取时钟信息
+            from trace.driver import DriverCollector
+            dc = DriverCollector()
+            dc.collect(tree, filename)
+            
+            # 从 drivers 中提取时钟
+            for sig, drivers in dc.drivers.items():
+                for drv in drivers:
+                    if drv.clock:
+                        clock = drv.clock.strip()
+                        if clock not in self.domains:
+                            self.domains[clock] = ClockDomainResult(clock_signal=clock)
+                        
+                        reg_info = RegisterInfo(
+                            name=sig,
+                            clock_domain=clock,
+                            has_async_reset=bool(drv.reset),
+                        )
+                        self.domains[clock].registers.append(reg_info)
         
         return self
     

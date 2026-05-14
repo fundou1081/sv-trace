@@ -1,26 +1,30 @@
 """
 DependencyAnalyzer - 信号依赖分析
-分析信号的前向依赖（影响它的）和后向依赖（它影响的）
 
-增强版: 添加解析警告，显式打印不支持的语法结构
+按项目纪律重构 - 信号依赖关系分析
+符合铁律 17: 提取逻辑封装为独立 Visitor 类
+
+底层使用 3-Pass 架构:
+- Pass 1: ScopeBuilder → ScopeTree
+- Pass 2: DriverExtractor / LoadExtractor → SemanticGraph
+- 本类: 基于 SemanticGraph 分析依赖关系
+
+对外保持 DependencyAnalyzer API 兼容。
 """
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Set, Optional
-import re
 
-# 导入解析警告模块
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from trace.parse_warn import (
-    ParseWarningHandler,
-    warn_unsupported,
-    warn_error,
-    WarningLevel
-)
+import pyslang
+
+from trace.parse_warn import ParseWarningHandler
+
+# 导入新架构
+from scope.utils import extract_identifier as _extract_identifier
+from scope import ScopeBuilder
+from scope.models import ScopeTree
+from scope.symbol_table import SymbolTable
+from extractors import SemanticGraph, DriverExtractor, LoadExtractor
 
 
 @dataclass
@@ -36,169 +40,132 @@ class SignalDependency:
 class DependencyAnalyzer:
     """信号依赖分析器
     
-    增强: 添加解析警告
+    基于 SemanticGraph 分析信号的依赖关系。
     """
     
-    # 不支持的语法类型
-    UNSUPPORTED_TYPES = {
-        'CovergroupDeclaration': 'covergroup不影响信号依赖分析',
-        'PropertyDeclaration': 'property声明无信号依赖',
-        'SequenceDeclaration': 'sequence声明无信号依赖',
-        'ClassDeclaration': 'class内部信号依赖分析可能不完整',
-        'InterfaceDeclaration': 'interface内部信号依赖分析可能不完整',
-        'PackageDeclaration': 'package无信号依赖',
-        'ProgramDeclaration': 'program块信号依赖分析可能不完整',
-        'ClockingBlock': 'clocking block信号依赖分析有限',
-    }
-    
-    def __init__(self, parser, verbose: bool = True):
+    def __init__(self, parser=None, verbose: bool = True):
         self.parser = parser
         self.verbose = verbose
-        # 创建警告处理器
         self.warn_handler = ParseWarningHandler(
             verbose=verbose,
             component="DependencyAnalyzer"
         )
-        self._driver_cache: Dict[str, List[str]] = {}
-        self._load_cache: Dict[str, List[str]] = {}
-        self._unsupported_encountered: Set[str] = set()
+        
+        # 新架构
+        self._graph: SemanticGraph = None
+        self._scope_tree: ScopeTree = None
+        self._symbol_table: SymbolTable = None
+        self._collected = False
+    
+    def collect(self, tree: pyslang.SyntaxTree, filename: str = "") -> 'DependencyAnalyzer':
+        """收集依赖信息
+        
+        首次调用时执行 3-Pass 流程。
+        """
+        if not self._collected:
+            self._build_pipeline(tree)
+            self._collected = True
+        return self
+    
+    def _build_pipeline(self, tree: pyslang.SyntaxTree):
+        """执行 3-Pass 流程"""
+        # Pass 1: ScopeBuilder
+        builder = ScopeBuilder()
+        self._scope_tree, self._symbol_table = builder.build(tree)
+        
+        # Pass 2: Extractors
+        self._graph = SemanticGraph(self._scope_tree, self._symbol_table)
+        DriverExtractor(self._scope_tree, self._symbol_table, self._graph).extract(tree)
+        LoadExtractor(self._scope_tree, self._symbol_table, self._graph).extract(tree)
     
     def analyze(self, signal_name: str, module_name: str = None) -> SignalDependency:
-        """分析信号的依赖关系"""
+        """分析信号的依赖关系
         
-        # 1. 找前向依赖（驱动这个信号的信号）
-        forward_deps = self._find_forward_dependencies(signal_name, module_name)
+        Args:
+            signal_name: 信号名
+            module_name: 模块名（可选）
         
-        # 2. 找后向依赖（这个信号影响的信号）
-        backward_deps = self._find_backward_dependencies(signal_name, module_name)
+        Returns:
+            SignalDependency: 依赖关系
+        """
+        if not self._collected:
+            return SignalDependency(signal=signal_name)
         
-        # 3. 找源头信号（没有前向依赖的）
-        source_signals = self._find_source_signals(signal_name, module_name, forward_deps)
+        # 找前向依赖（驱动这个信号的信号）
+        forward_deps = self._get_drivers(signal_name)
         
-        # 4. 找汇信号（没有后向依赖的）
-        sink_signals = backward_deps  # 简化处理
+        # 找后向依赖（这个信号影响的信号）
+        backward_deps = self._get_loads(signal_name)
+        
+        # 找源头信号
+        source_signals = self._find_source_signals(signal_name, set(forward_deps))
         
         return SignalDependency(
             signal=signal_name,
-            depends_on=forward_deps,
-            influences=backward_deps,
-            source_signals=source_signals,
-            sink_signals=sink_signals
+            depends_on=list(forward_deps),
+            influences=list(backward_deps),
+            source_signals=list(source_signals),
+            sink_signals=list(backward_deps)
         )
     
-    def _check_unsupported_syntax(self):
-        """检查不支持的语法"""
-        for key, tree in self.parser.trees.items():
-            if not tree or not hasattr(tree, 'root'):
-                continue
-            
-            root = tree.root
-            if hasattr(root, 'members') and root.members:
-                try:
-                    members = list(root.members) if hasattr(root.members, '__iter__') else [root.members]
-                    for member in members:
-                        if member is None:
-                            continue
-                        kind_name = str(member.kind) if hasattr(member, 'kind') else type(member).__name__
-                        
-                        if kind_name in self.UNSUPPORTED_TYPES:
-                            if kind_name not in self._unsupported_encountered:
-                                self.warn_handler.warn_unsupported(
-                                    kind_name,
-                                    context=key,
-                                    suggestion=self.UNSUPPORTED_TYPES[kind_name],
-                                    component="DependencyAnalyzer"
-                                )
-                                self._unsupported_encountered.add(kind_name)
-                        elif 'Declaration' in kind_name or 'Block' in kind_name:
-                            if kind_name not in self._unsupported_encountered:
-                                self.warn_handler.warn_unsupported(
-                                    kind_name,
-                                    context=key,
-                                    suggestion="可能影响依赖分析完整性",
-                                    component="DependencyAnalyzer"
-                                )
-                                self._unsupported_encountered.add(kind_name)
-                except Exception as e:
-                    self.warn_handler.warn_error(
-                        "UnsupportedSyntaxCheck",
-                        e,
-                        context=f"file={key}",
-                        component="DependencyAnalyzer"
-                    )
+    def _get_drivers(self, signal: str) -> Set[str]:
+        """获取驱动该信号的来源"""
+        if not self._graph or signal not in self._graph.drivers:
+            return set()
+        
+        sources = set()
+        for dp in self._graph.drivers[signal]:
+            sources.add(dp.driver)
+        
+        return sources
     
-    def _find_forward_dependencies(self, signal_name: str, module_name: str = None) -> List[str]:
-        """找前向依赖 - 驱动这个信号的信号"""
-        try:
-            from .driver import DriverTracer
-        except Exception as e:
-            self.warn_handler.warn_error(
-                "DriverTracerImport",
-                e,
-                context="DependencyAnalyzer",
-                component="DependencyAnalyzer"
-            )
-            return []
+    def _get_loads(self, signal: str) -> Set[str]:
+        """获取该信号加载的信号"""
+        if not self._graph:
+            return set()
         
-        tracer = DriverTracer(self.parser, verbose=self.verbose)
-        drivers = tracer.find_driver(signal_name, module_name)
+        # signal 作为驱动源，影响哪些信号被加载
+        influenced = set()
+        for sig, load_points in self._graph.loads.items():
+            for lp in load_points:
+                if lp.load_by == signal:
+                    influenced.add(sig)
         
-        forward_deps = set()
-        
-        for driver in drivers:
-            for src in driver.sources:
-                if src and src != signal_name:
-                    forward_deps.add(src)
-        
-        return list(forward_deps)
+        return influenced
     
-    def _find_backward_dependencies(self, signal_name: str, module_name: str = None) -> List[str]:
-        """找后向依赖 - 这个信号影响的信号（负载）"""
-        try:
-            from .load import LoadTracer
-        except Exception as e:
-            self.warn_handler.warn_error(
-                "LoadTracerImport",
-                e,
-                context="DependencyAnalyzer",
-                component="DependencyAnalyzer"
-            )
-            return []
+    def _find_source_signals(self, signal: str, forward_deps: Set[str], _visited: Set[str] = None) -> Set[str]:
+        """递归找源头信号"""
+        if _visited is None:
+            _visited = set()
         
-        tracer = LoadTracer(self.parser, verbose=self.verbose)
-        loads = tracer.find_load(signal_name, module_name)
-        
-        backward_deps = set()
-        
-        for load in loads:
-            # 从 context 提取信号名
-            if hasattr(load, 'context') and load.context:
-                # 简化处理：从上下文中提取信号
-                pass
-        
-        return list(backward_deps)
-    
-    def _find_source_signals(self, signal_name: str, module_name: str = None, 
-                            forward_deps: List[str] = None) -> List[str]:
-        """找源头信号"""
-        if not forward_deps:
-            return [signal_name]
-        
-        source_signals = []
+        sources = set()
         for dep in forward_deps:
-            # 递归找源头
-            sub_deps = self._find_forward_dependencies(dep, module_name)
+            if dep in _visited:
+                continue
+            _visited.add(dep)
+            
+            sub_deps = self._get_drivers(dep)
             if not sub_deps:
-                source_signals.append(dep)
+                sources.add(dep)
             else:
-                source_signals.extend(self._find_source_signals(dep, module_name, sub_deps))
-        
-        return list(set(source_signals))
+                sources.update(self._find_source_signals(dep, sub_deps, _visited))
+        return sources
     
-    def get_warning_report(self) -> str:
-        """获取警告报告"""
-        return self.warn_handler.get_report()
-    
-    def print_warning_report(self):
-        """打印警告报告"""
-        self.warn_handler.print_report()
+    def visualize(self, signal_name: str) -> str:
+        """可视化依赖关系"""
+        dep = self.analyze(signal_name)
+        lines = [
+            f"Signal: {signal_name}",
+            f"  depends_on: {dep.depends_on}",
+            f"  influences: {dep.influences}",
+            f"  source_signals: {dep.source_signals}",
+            f"  sink_signals: {dep.sink_signals}",
+        ]
+        return "\n".join(lines)
+
+
+# 向后兼容
+def analyze_dependency(parser, signal_name: str) -> SignalDependency:
+    """便捷函数：分析信号依赖"""
+    analyzer = DependencyAnalyzer(parser)
+    return analyzer.analyze(signal_name)

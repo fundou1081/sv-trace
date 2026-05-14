@@ -75,8 +75,23 @@ class TimingPathTracer:
         self._collector: SemanticCollector = None
     
     def collect(self, tree: pyslang.SyntaxTree, filename: str) -> 'TimingPathTracer':
-        self._collector = SemanticCollector()
-        self._collector.collect(tree, filename)
+        if self.use_semantic and SEMANTIC_AVAILABLE and self._collector:
+            self._collector.collect(tree, filename)
+        else:
+            # Fallback: use DriverCollector
+            from trace.driver import DriverCollector
+            dc = DriverCollector()
+            dc.collect(tree, filename)
+            
+            for sig, drivers in dc.drivers.items():
+                for drv in drivers:
+                    if drv.kind == 'always_ff' and drv.clock:
+                        path = TimingPathResult(
+                            start_register=sig,
+                            end_register="",
+                            clock_domain=drv.clock.strip()
+                        )
+                        self.paths.append(path)
         
         # 提取寄存器
         for reg in self._collector.get_by_type(RegisterItem):

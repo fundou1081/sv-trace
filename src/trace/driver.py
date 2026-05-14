@@ -88,6 +88,18 @@ class DriverCollector:
             return self.drivers
         import fnmatch
         return {k: v for k, v in self.drivers.items() if fnmatch.fnmatch(k, pattern)}
+    
+    def find_driver(self, signal: str, module_name: str = None) -> List:
+        """查找信号的驱动源
+        
+        Args:
+            signal: 信号名
+            module_name: 模块名（可选，当前未使用）
+        
+        Returns:
+            List[DriverPoint]: 驱动点列表
+        """
+        return self.drivers.get(signal, [])
 
 
 def _semantic_available() -> bool:

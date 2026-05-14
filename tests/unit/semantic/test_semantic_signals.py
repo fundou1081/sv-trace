@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, 'src')
 
 from parse import SVParser
-from semantic.base import SemanticCollector
+from trace.driver import DriverCollector
 
 
 def test_signal_declarator():
@@ -20,20 +20,18 @@ def test_signal_declarator():
     endmodule'''
     
     tree = SVParser().parse_text(sv, 't.sv')
-    coll = SemanticCollector()
-    coll.collect(tree, 't.sv')
-    
-    from semantic.signal import SignalItem
-    items = coll.get_by_type(SignalItem)
+    dc = DriverCollector()
+    dc.collect(tree, 't.sv')
+    signals = list(dc.drivers.keys())
     
     print(f'【信号声明】')
-    print(f'  提取数量: {len(items)}')
+    print(f'  提取数量: {len(signals)}')
     
     # 验证
-    names = [i.path for i in items if i.path]
+    names = [i.path for i in signals if i.path]
     print(f'  信号: {names[:5]}')
     
-    passed = len(items) >= 2
+    passed = len(signals) >= 2
     print(f'  结果: {"✅" if passed else "❌"}')
     return passed
 
@@ -52,12 +50,12 @@ def test_port_declaration():
     coll.collect(tree, 't.sv')
     
     from semantic.signal import PortItem
-    items = coll.get_by_type(PortItem)
+    signals = coll.get_by_type(PortItem)
     
     print(f'【端口声明】')
-    print(f'  提取数量: {len(items)}')
+    print(f'  提取数量: {len(signals)}')
     
-    passed = len(items) >= 2
+    passed = len(signals) >= 2
     print(f'  结果: {"✅" if passed else "❌"}')
     return passed
 
@@ -75,11 +73,11 @@ def test_register():
     coll.collect(tree, 't.sv')
     
     from semantic.signal import RegisterItem
-    items = coll.get_by_type(RegisterItem)
+    signals = coll.get_by_type(RegisterItem)
     
     print(f'【寄存器】')
-    print(f'  提取数量: {len(items)}')
-    passed = len(items) >= 1
+    print(f'  提取数量: {len(signals)}')
+    passed = len(signals) >= 1
     print(f'  结果: {"✅" if passed else "❌"}')
     return passed
 
@@ -104,8 +102,8 @@ def test_all_in_real_designs():
             coll.collect(tree, name)
             
             from semantic.signal import SignalItem
-            items = coll.get_by_type(SignalItem)
-            total_signals += len(items)
+            signals = coll.get_by_type(SignalItem)
+            total_signals += len(signals)
         except:
             pass
     

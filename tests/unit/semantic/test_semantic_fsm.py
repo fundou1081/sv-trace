@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, 'src')
 
 from parse import SVParser
-from semantic.base import SemanticCollector
+from trace.driver import DriverCollector
 
 
 def test_fsm_basic():
@@ -26,7 +26,7 @@ def test_fsm_basic():
     endmodule'''
     
     tree = SVParser().parse_text(sv, 'fsm.sv')
-    coll = SemanticCollector()
+    dc = DriverCollector()
     coll.collect(tree, 'fsm.sv')
     
     from semantic.fsm import FSMStateItem
@@ -47,7 +47,7 @@ def test_fsm_state_encoding():
     endmodule'''
     
     tree = SVParser().parse_text(sv, 'fsm.sv')
-    coll = SemanticCollector()
+    dc = DriverCollector()
     coll.collect(tree, 'fsm.sv')
     
     from semantic.fsm import FSMStateItem
@@ -79,7 +79,7 @@ def test_real_designs():
             if 'case' not in code.lower():
                 continue
             tree = SVParser().parse_text(code, name)
-            coll = SemanticCollector()
+            dc = DriverCollector()
             coll.collect(tree, name)
             
             from semantic.fsm import FSMStateItem

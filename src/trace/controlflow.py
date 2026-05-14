@@ -64,8 +64,23 @@ class ControlFlowTracer:
         self._collector: SemanticCollector = None
     
     def collect(self, tree: pyslang.SyntaxTree, filename: str) -> 'ControlFlowTracer':
-        self._collector = SemanticCollector()
-        self._collector.collect(tree, filename)
+        if self.use_semantic and SEMANTIC_AVAILABLE:
+            self._collector.collect(tree, filename)
+        else:
+            # Use DriverCollector to collect driver info
+            from trace.driver import DriverCollector
+            dc = DriverCollector()
+            dc.collect(tree, filename)
+            
+            # Build control flow result from driver info
+            for sig, drivers in dc.drivers.items():
+                for drv in drivers:
+                    if drv.kind == 'always_ff':
+                        self.result.always_ff.append(sig)
+                    elif drv.kind == 'always_comb':
+                        self.result.always_comb.append(sig)
+                    elif drv.kind == 'always_latch':
+                        self.result.always_latch.append(sig)
         
         # 遍历 AST 识别控制流块
         def scan(node, depth=0):
