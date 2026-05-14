@@ -94,12 +94,12 @@ print(f"描述: {sig.description}")
 
 ### semantic.base.SemanticCollector
 
-**已废弃:** `from semantic.base import SemanticCollector`
+**已归档:** `from semantic.base import SemanticCollector` 不可用。文件已移动到 `_archive/semantic_old/`。
 
 **替代:** 使用 trace 层 API 或新的 3-Pass 架构
 
 ```python
-# ❌ 旧方式 (已废弃)
+# ❌ 旧方式 (已不可用)
 from semantic.base import SemanticCollector
 
 # ✅ 新方式
@@ -113,7 +113,7 @@ from extractors import SemanticGraph, LoadExtractor
 
 ### semantic/driver.py, semantic/load.py 等
 
-**已废弃:** 直接 import semantic 下的模块
+**已归档:** 直接 import semantic 下的模块已不可用。这些文件已移动到 `_archive/semantic_old/`。
 
 **替代:** 使用 trace/ 模块或 extractors/ 模块
 
@@ -168,7 +168,7 @@ EnrichedSignal 包含 confidence 字段：
 from semantic.base import SemanticCollector
 from trace.load import LoadTracer
 
-# 测试 SemanticCollector (已废弃)
+# 测试 SemanticCollector (已归档)
 ```
 
 ### 新测试写法
@@ -215,7 +215,7 @@ assert 'q' in enriched.all_signals
 
 ### Q: semantic/ 模块还能用吗？
 
-**⚠️ 警告:** semantic/ 下的模块（base.py, driver.py 等）已废弃，内部重定向到 extractors/。继续使用会收到 DeprecationWarning。
+**⚠️ 警告:** semantic/ 下的模块已全部归档到 _archive/semantic_old/，内部重定向到 extractors/。继续使用会收到 DeprecationWarning。
 
 ### Q: 如何获取信号的置信度？
 
