@@ -47,13 +47,23 @@ class ClassExtractor:
         Args:
             parser: SVParser 实例
         """
+        self.parser = parser
         # 使用 SVManager.trees
         self.classes: Dict[str, ClassInfo] = {}
         self._extract_all()
     
+    def extract(self) -> Dict[str, ClassInfo]:
+        """提取所有类定义。
+        
+        Returns:
+            Dict[str, ClassInfo]: 类名字典
+        """
+        return self.classes
+    
     def _extract_all(self):
         """提取所有类定义。"""
-        for fname, tree in self.parser.trees.items():
+        trees = getattr(self.parser, 'trees', {}) or {}
+        for fname, tree in trees.items():
             if not tree or not hasattr(tree, 'root'):
                 continue
             self._scan_tree(tree)
@@ -92,32 +102,37 @@ class ClassExtractor:
         """
         info = ClassInfo(name="")
         
-        # Get class name
-        if hasattr(class_node, 'header') and class_node.header:
-            if hasattr(class_node.header, 'name') and class_node.header.name:
-                name_val = class_node.header.name
-                if hasattr(name_val, 'value'):
-                    info.name = str(name_val.value).strip()
-                else:
-                    info.name = str(name_val).strip()
+        # Get class name - pyslang ClassDeclarationSyntax has 'name' attribute as Token
+        if hasattr(class_node, 'name') and class_node.name:
+            name_obj = class_node.name
+            # name is a Token, get text value
+            if hasattr(name_obj, 'text'):
+                info.name = str(name_obj.text).strip()
+            else:
+                info.name = str(name_obj).strip()
         
         if not info.name:
             return info
         
-        # Check for extends (inheritance)
-        if hasattr(class_node, 'header') and class_node.header:
-            if hasattr(class_node.header, 'extends') and class_node.header.extends:
-                extends_node = class_node.header.extends
-                if hasattr(extends_node, 'name') and extends_node.name:
-                    info.extends = str(extends_node.name).strip()
+        # Check for extends (inheritance) - pyslang uses extendsClause.baseName (IdentifierNameSyntax)
+        if hasattr(class_node, 'extendsClause') and class_node.extendsClause:
+            ec = class_node.extendsClause
+            if hasattr(ec, 'baseName') and ec.baseName:
+                bn = ec.baseName
+                if hasattr(bn, 'name'):
+                    info.extends = str(bn.name).strip()
+                elif hasattr(bn, 'text'):
+                    info.extends = str(bn.text).strip()
+                else:
+                    info.extends = str(bn).strip()
         
-        # Check virtual/abstract
-        if hasattr(class_node, 'qualifiers') and class_node.qualifiers:
-            quals_str = str(class_node.qualifiers).lower()
-            if 'virtual' in quals_str:
-                info.is_virtual = True
-            if 'abstract' in quals_str:
-                info.is_abstract = True
+        # Check virtual/abstract - pyslang uses virtualOrInterface and kind
+        kind_str = str(class_node.kind) if hasattr(class_node, 'kind') else ''
+        virt_iface = str(getattr(class_node, 'virtualOrInterface', '') or '').lower()
+        if 'virtual' in virt_iface:
+            info.is_virtual = True
+        if 'abstract' in kind_str.lower() or 'virtual' in virt_iface:
+            info.is_abstract = True
         
         # Extract parameters
         if hasattr(class_node, 'parameters') and class_node.parameters:
