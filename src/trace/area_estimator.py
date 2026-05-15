@@ -7,7 +7,6 @@ AreaEstimator - 芯片面积估算器 v3
 
 import sys
 import os
-import re
 from typing import Dict
 from dataclasses import dataclass
 
@@ -186,22 +185,102 @@ class AreaEstimator:
         )
     
     def _estimate_width(self, sig: str) -> int:
-        """估算信号位宽"""
-        # 从信号名推断
-        if '[' in sig:
-            m = re.search(r'\[(\d+):', sig)
-            if m:
-                return int(m.group(1)) + 1
-            m = re.search(r'\[(\d+)\]', sig)
-            if m:
-                return 1
+        """估算信号位宽
         
-        # 常见后缀
+        符合铁律1: 优先从 AST 提取实际位宽信息
+        仅在 AST 无法提供时使用启发式推断作为后备
+        """
+        # 先尝试从 AST 声明中提取实际位宽
+        width = self._get_width_from_ast(sig)
+        if width > 0:
+            return width
+        
+        # AST 无法提供时的启发式推断（后备方案）
+        # 这些是经验规则，作为最后手段
         for suffix, width in [('_d', 1), ('_q', 1), ('_v', 8), ('_data', 32)]:
             if sig.endswith(suffix):
                 return width
         
         return 1  # 默认1位
+    
+    def _get_width_from_ast(self, sig: str) -> int:
+        """从 AST 声明中提取信号位宽（铁律1 优先方案）"""
+        for key, tree in self.parser.trees.items():
+            if not tree or not hasattr(tree, 'root'):
+                continue
+            
+            width = self._search_signal_width(tree.root, sig)
+            if width > 0:
+                return width
+        
+        return 0
+    
+    def _search_signal_width(self, node, sig: str) -> int:
+        """在 AST 中搜索信号声明的位宽"""
+        if not hasattr(node, 'kind') or not node.kind:
+            return 0
+        
+        kind_name = node.kind.name if hasattr(node.kind, 'name') else ''
+        
+        # 在 DataDeclaration 中查找信号
+        if kind_name == 'DataDeclaration':
+            # 查找 Declarator（信号名）
+            for child in node:
+                if child.kind and child.kind.name == 'SeparatedList':
+                    for sep in child:
+                        if sep.kind and sep.kind.name == 'Declarator':
+                            # 检查这个 Declarator 是否是我们要找的信号
+                            decl_name = ''
+                            for decl_child in sep:
+                                
+                                if decl_child.kind and decl_child.kind.name == 'TokenKind':
+                                    if hasattr(decl_child, 'value'):
+                                        decl_name = decl_child.value
+                                        break
+                                elif decl_child.kind and decl_child.kind.name == 'Identifier':
+                                    decl_name = str(decl_child).strip()
+                                    break
+                            
+                            if decl_name == sig:
+                                # 找到匹配的信号，回溯查找 LogicType 中的位宽声明
+                                return self._extract_width_from_declaration(node)
+        
+        # 递归搜索子节点
+        try:
+            for child in node:
+                width = self._search_signal_width(child, sig)
+                if width > 0:
+                    return width
+        except:
+            pass
+        
+        return 0
+    
+    def _extract_width_from_declaration(self, decl_node) -> int:
+        """从 DataDeclaration 节点提取位宽"""
+        for child in decl_node:
+            if hasattr(child, 'kind') and child.kind and child.kind.name == 'LogicType':
+                # 在 SyntaxList 中查找 VariableDimension
+                for lt_child in child:
+                    if lt_child.kind and lt_child.kind.name == 'SyntaxList':
+                        for sl_child in lt_child:
+                            if sl_child.kind and sl_child.kind.name == 'VariableDimension':
+                                return self._parse_width_from_dimension(sl_child)
+        return 1  # 默认1位
+    
+    def _parse_width_from_dimension(self, dim_node) -> int:
+        """从 VariableDimension 节点解析位宽"""
+        for child in dim_node:
+            if hasattr(child, 'kind') and child.kind and child.kind.name == 'RangeDimensionSpecifier':
+                range_text = str(child).strip()
+                if ':' in range_text:
+                    parts = range_text.split(':')
+                    try:
+                        high = int(parts[0].strip())
+                        return high + 1
+                    except:
+                        pass
+        return 1
     
     def _estimate_lut(self, sig: str, driver, width: int) -> int:
         """估算LUT使用"""

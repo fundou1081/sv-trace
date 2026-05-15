@@ -6,7 +6,6 @@ ResourceEstimation - 资源利用率估算器
 """
 import sys
 import os
-import re
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -225,71 +224,12 @@ class ResourceEstimation:
             if not tree or not hasattr(tree, 'root'):
                 continue
             
-            # 获取源码
             try:
-                source = tree.source if hasattr(tree, 'source') else ""
-            except:
-                source = ""
-            
-            if not source:
-                try:
-                    with open(fname) as f:
-                        source = f.read()
-                except:
-                    continue
-            
-            try:
-                # 1. 统计模块中的 always_ff 块数量 (FF 估算)
-                lines = source.split('\n')
-                in_always_ff = False
-                in_module = False
-                
-                for line in lines:
-                    stripped = line.strip()
-                    
-                    # 检查模块边界
-                    if stripped.startswith('module '):
-                        in_module = module_name in stripped
-                        continue
-                    elif stripped.startswith('endmodule'):
-                        in_module = False
-                        continue
-                    
-                    if not in_module:
-                        continue
-                    
-                    # always_ff 块 -> FF
-                    if 'always_ff' in stripped:
-                        in_always_ff = True
-                        stats['ff_count'] += 1
-                    
-                    # 运算符统计
-                    for op in ['*', '/', '+', '-']:
-                        if op in stripped:
-                            stats['operators'][op]['count'] += stripped.count(op)
-                    
-                    # 比较运算符
-                    for op in ['==', '!=', '<', '>', '<=', '>=']:
-                        if op in stripped:
-                            stats['operators'][op]['count'] += stripped.count(op)
-                    
-                    # MUX 结构
-                    if stripped.startswith('if') or 'if (' in stripped:
-                        stats['muxes']['if_else'] += 1
-                    if stripped.startswith('case'):
-                        stats['muxes']['case'] += 1
-                    if '?' in stripped and ':' in stripped:
-                        stats['muxes']['ternary'] += 1
-                    
-                    # 估算位宽
-                    width = self._extract_width(stripped)
-                    if width > 0:
-                        for op in stats['operators']:
-                            stats['operators'][op]['bit_width'] = max(stats['operators'][op]['bit_width'], width)
-                            
+                # 基于 AST 分析模块内容
+                self._analyze_module_ast(tree, module_name, stats)
             except Exception as e:
                 self.warn_handler.warn_error(
-                    "LineAnalysis",
+                    "ASTAnalysis",
                     e,
                     context=f"file={fname}",
                     component="ResourceEstimation"
@@ -297,19 +237,105 @@ class ResourceEstimation:
         
         return stats
     
-    def _extract_width(self, line: str) -> int:
-        """提取位宽"""
-        # 匹配 [7:0] 或 [7:0] 格式
-        match = re.search(r'\[(\d+):0\]', line)
-        if match:
-            return int(match.group(1)) + 1
+    def _analyze_module_ast(self, tree, module_name: str, stats: Dict) -> None:
+        """基于 AST 分析模块内容（符合铁律1：AST 唯一数据源）"""
+        root = tree.root
         
-        # 匹配 logic [7:0]
-        match = re.search(r'logic\s*\[(\d+):0\]', line)
-        if match:
-            return int(match.group(1)) + 1
+        # 1. 找到目标模块
+        for member in root.members:
+            if not hasattr(member, 'kind') or member.kind.name != 'ModuleDeclaration':
+                continue
+            
+            # 检查模块名
+            mod_name = self._get_module_name(member)
+            if mod_name != module_name:
+                continue
+            
+            # 2. 分析模块内的 always_ff 块和其他结构
+            self._walk_module_for_stats(member, stats)
+            break
+    
+    def _get_module_name(self, module_node) -> str:
+        """从模块节点提取模块名"""
+        for child in module_node:
+            if hasattr(child, 'kind') and child.kind and child.kind.name == 'Identifier':
+                return str(child).strip()
+        return ""
+    
+    def _walk_module_for_stats(self, node, stats: Dict) -> None:
+        """遍历模块节点，提取资源统计信息"""
+        kind = getattr(node, 'kind', None)
+        if not kind:
+            return
         
-        return 0
+        kind_name = kind.name if hasattr(kind, 'name') else str(kind)
+        
+        # always_ff 块 -> FF
+        if kind_name == 'Always_ffBlock':
+            stats['ff_count'] += 1
+        
+        # 运算符检测（基于语法结构）
+        if kind_name in ('BinaryExpression', 'UnaryExpression'):
+            # 从文本中提取运算符符号
+            op_text = self._extract_operator_text(node)
+            for op in ['*', '/', '+', '-', '==', '!=', '<', '>', '<=', '>=']:
+                if op in op_text:
+                    stats['operators'][op]['count'] += 1
+        
+        # 三元运算符
+        if kind_name == 'ConditionalExpression':
+            stats['muxes']['ternary'] += 1
+        
+        # if/case 结构
+        if kind_name == 'ConditionalStatement':
+            stats['muxes']['if_else'] += 1
+        if kind_name == 'CaseStatement':
+            stats['muxes']['case'] += 1
+        
+        # 继续遍历子节点
+        try:
+            for child in node:
+                self._walk_module_for_stats(child, stats)
+        except:
+            pass
+    
+    def _extract_operator_text(self, node) -> str:
+        """从表达式节点提取运算符文本"""
+        try:
+            for child in node:
+                if hasattr(child, 'kind'):
+                    kind_name = child.kind.name if hasattr(child.kind, 'name') else ''
+                    if kind_name.startswith('Binary') or kind_name.startswith('Unary'):
+                        return str(child)
+        except:
+            pass
+        return ""
+    
+    def _extract_width_from_declaration(self, decl_node) -> int:
+        """从 DataDeclaration 节点提取信号位宽"""
+        for child in decl_node:
+            if hasattr(child, 'kind') and child.kind and child.kind.name == 'LogicType':
+                # 查找 VariableDimension
+                for lt_child in child:
+                    if lt_child.kind.name == 'SyntaxList':
+                        for sl_child in lt_child:
+                            if sl_child.kind.name == 'VariableDimension':
+                                return self._parse_width_from_dim(sl_child)
+        return 1  # 默认 1 位
+    
+    def _parse_width_from_dim(self, dim_node) -> int:
+        """从 VariableDimension 节点解析位宽"""
+        for child in dim_node:
+            if hasattr(child, 'kind') and child.kind and child.kind.name == 'RangeDimensionSpecifier':
+                range_text = str(child).strip()
+                if ':' in range_text:
+                    parts = range_text.split(':')
+                    try:
+                        high = int(parts[0].strip())
+                        return high + 1
+                    except:
+                        pass
+        return 1
     
     def _calculate_lut(self, stats: Dict) -> int:
         total = 0.0
