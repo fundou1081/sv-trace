@@ -101,6 +101,14 @@ class DriverCollector:
             List[DriverPoint]: 驱动点列表
         """
         return self.drivers.get(signal, [])
+    
+    @property
+    def multi_drivers(self) -> Dict[str, List]:
+        """返回多驱动信号字典 (铁律8)
+        
+        多驱动指同一个信号被多个驱动源赋值的情况。
+        """
+        return {sig: drivers for sig, drivers in self.drivers.items() if len(drivers) > 1}
 
 
 def _semantic_available() -> bool:
