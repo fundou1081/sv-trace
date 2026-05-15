@@ -35,6 +35,23 @@ class Stimulus:
         self.expected = expected
 
 
+# Backward compatibility stubs (铁律8)
+class CoverageType:
+    BRANCH = "branch"
+    CONDITION = "condition"
+    EXPRESSION = "expression"
+    FSM = "fsm"
+    COVERGROUP = "covergroup"
+
+
+class CoverageTarget:
+    """Coverage目标 (stub)"""
+    def __init__(self, coverage_type=None, file=None, line=None):
+        self.coverage_type = coverage_type
+        self.file = file
+        self.line = line
+
+
 class CoverageStimulusSuggester:
     def __init__(self, parser=None):
         self.parser = parser

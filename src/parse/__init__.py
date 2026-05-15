@@ -54,3 +54,33 @@ try:
     __all__.extend(['CovergroupExtractor', 'extract_covergroups'])
 except ImportError as e:
     pass
+
+# Backward compatibility stubs (铁律8)
+# 这些类在旧版本中存在但尚未迁移到新架构
+try:
+    from .class_utils import ClassExtractor
+    
+    class ParameterResolver:
+        """参数解析器 (stub)"""
+        def __init__(self, parser=None):
+            self.parser = parser
+        def resolve(self, param_name):
+            return None
+    
+    class ConstraintExtractor:
+        """约束提取器 (stub)"""
+        def __init__(self):
+            pass
+        def extract(self, tree):
+            return []
+    
+    class AssertionExtractor:
+        """断言提取器 (stub)"""
+        def __init__(self):
+            pass
+        def extract(self, tree):
+            return []
+    
+    __all__.extend(['ParameterResolver', 'ConstraintExtractor', 'AssertionExtractor'])
+except ImportError:
+    pass

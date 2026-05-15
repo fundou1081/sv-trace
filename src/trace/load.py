@@ -128,3 +128,17 @@ def trace_load(parser=None, verbose: bool = True) -> LoadTracer:
         for filename, tree in (parser.trees.items() if hasattr(parser, 'trees') else []):
             tracer.trees[filename] = tree
     return tracer
+
+
+# Backward compatibility stub (铁律8)
+class LoadTracerRegex:
+    """基于正则的负载追踪器 (stub)
+    
+    Note: 已弃用，请使用 LoadTracer
+    """
+    def __init__(self):
+        pass
+    def collect(self, code):
+        return []
+    def find_load(self, signal):
+        return []
