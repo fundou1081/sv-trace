@@ -75,6 +75,8 @@ class ConnectionExtractor(Extractor):
     - generate 块内实例化
     - 命名端口连接 (NamedPortConnection)
     
+    铁律3: 不可信则不输出 - 遇到不支持的语法时记录并警告
+    
     AST 结构:
     - HierarchyInstantiation → [Identifier(module_type), SeparatedList<HierarchicalInstance>]
     - HierarchicalInstance → [InstanceName, OpenParenthesis, SeparatedList<NamedPortConnection>]
@@ -84,8 +86,50 @@ class ConnectionExtractor(Extractor):
     - graph.connections: List[Connection]
     """
     
+    # 显式支持的语法类型 (铁律3: 明确声明)
+    SUPPORTED_KINDS: Set[str] = {
+        'HierarchyInstantiation',
+        'HierarchicalInstance',
+        'NamedPortConnection',
+        'Identifier', 'IdentifierName',
+        'Dot', 'Comma',
+        'OpenParenthesis', 'CloseParenthesis',
+        'Semicolon',
+    }
+    
+    # 已知但不相关的语法类型 (铁律3: 明确忽略)
+    KNOWN_BUT_IGNORED: Set[str] = {
+        'TokenList', 'SyntaxList', 'SeparatedList',
+        'IntegerLiteral', 'IntegerBase', 'VariableDimension',
+        'RangeDimensionSpecifier', 'SimpleRangeSelect',
+        'TimeUnit', 'DoublePeriod',
+        'AssignKeyword', 'Question', 'Colon', 'At',
+        'And', 'Or', 'Xor', 'Not', 'Tilde',
+        'Ampersand', 'Bar', 'Caret',
+        'Plus', 'Minus', 'Multiply', 'Divide', 'Modulo',
+        'OpenBracket', 'CloseBracket',
+        'Declarator', 'DataDeclaration', 'LogicType', 'LogicKeyword',
+        'ModuleDeclaration', 'ModuleHeader', 'ModuleKeyword',
+        'EndModuleKeyword',
+        'IfKeyword', 'ElseKeyword', 'ElseClause',
+        'BeginKeyword', 'EndKeyword',
+        'LoopGenerate', 'IfGenerate', 'CaseGenerate',
+        'GenerateRegion', 'GenerateKeyword',
+        'GenvarDeclaration', 'GenVarKeyword',
+        'FunctionDeclaration', 'TaskDeclaration',
+        'ClassDeclaration', 'InterfaceDeclaration',
+        'PackageDeclaration', 'ProgramDeclaration',
+        'CompilationUnit',
+        'ParameterDeclaration', 'LocalParameterDeclaration',
+        'PortDeclaration',
+    }
+    
     # 追踪当前实例层级
     _instance_stack: List[Tuple[str, str]] = []  # [(instance_name, module_type), ...]
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._unsupported_encountered: Set[str] = set()
     
     def extract(self, tree: pyslang.SyntaxTree) -> None:
         """从 AST 提取连接关系"""
@@ -121,6 +165,20 @@ class ConnectionExtractor(Extractor):
         kind = self._get_syntax_kind(node)
         if not kind:
             return None
+        
+        kind_name = self._get_kind(node)
+        
+        # 铁律3: 未知语法类型 - 记录警告（只警告一次）
+        if kind_name not in self.SUPPORTED_KINDS and kind_name not in self.KNOWN_BUT_IGNORED:
+            if kind_name not in self._unsupported_encountered:
+                if hasattr(self, 'warn_handler') and self.warn_handler:
+                    self.warn_handler.warn_unsupported(
+                        kind_name,
+                        context='ConnectionExtractor',
+                        suggestion='连接关系提取可能不完整',
+                        component='ConnectionExtractor'
+                    )
+                self._unsupported_encountered.add(kind_name)
         
         # 模块实例化 - HierarchyInstantiation 是顶层
         if kind == SyntaxKind.HierarchyInstantiation:
