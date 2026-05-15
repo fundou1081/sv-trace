@@ -1,6 +1,6 @@
 # sv-trace 项目结构
 
-> 更新时间: 2026-05-15
+> 更新时间: 2026-05-15 15:50 GMT+8
 
 ---
 
@@ -93,8 +93,15 @@ src/
 │       ├── timing_path.py     # 时序路径追踪
 │       └── module_connections.py
 │
-├── debug/                 # 🔄 调试分析器 (待适配)
-│   ├── analyzers/
+├── debug/                 # ✅ 调试分析器 (已适配 pyslang)
+│   ├── class_extractor.py  # ✅ 类提取器 (已适配)
+│   ├── class_hierarchy.py  # 类层次结构
+│   ├── class_usage.py      # 类实例化追踪
+│   ├── analyzers/          # 分析器集合
+│   │   ├── cdc.py          # 跨时钟域分析
+│   │   ├── multi_driver.py # 多驱动检测
+│   │   ├── uninitialized.py # 未初始化检测
+│   │   └── ...
 │   └── ...
 │
 ├── parse/                # ✅ pyslang 封装

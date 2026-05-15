@@ -1,6 +1,15 @@
 # SV-TRACE 开发计划
 
+> 更新时间: 2026-05-15 15:50 GMT+8
+
 ## 已完成 ✅
+
+### Phase 1-3: pyslang 重构完成
+- [x] Phase 1: Unsupported 语法追踪机制 (LoadExtractor, DriverExtractor)
+- [x] Phase 2: ConnectionExtractor 验证 + generate 块支持
+- [x] Phase 3: debug 模块适配 (ClassExtractor 修复)
+- [x] 铁律3: 不可信则不输出 - 置信度标注
+- [x] 铁律10: 所有 API 返回包含 confidence 字段
 
 ### 质量检查工具
 - [x] MultiDriverDetector - 多驱动检测
