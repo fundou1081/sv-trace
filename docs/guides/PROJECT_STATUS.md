@@ -1,25 +1,21 @@
 # 项目状态报告
 
-**最后更新**: 2026-05-01
+**最后更新**: 2026-05-15
 
-## 测试覆盖率
+## 测试覆盖率 (2026-05-15)
 
-| 层级 | 测试数 | 通过 | 失败 | 通过率 |
-|------|-------|------|------|--------|
-| **Tier 1** | | | | |
-| SVParser | 100+ | 100+ | 0 | **100%** |
-| DriverTracer | 100+ | 100+ | 0 | **100%** |
-| ConnectionTracer | 50+ | 50+ | 0 | **100%** |
-| **Tier 2** | | | | |
-| ClassExtractor | 20+ | 20+ | 0 | **100%** |
-| ConstraintExtractor | 20+ | 20+ | 0 | **100%** |
-| VCDAnalyzer | 20+ | 20+ | 0 | **100%** |
-| ControlFlowTracer | 20+ | 20+ | 0 | **100%** |
-| datapath | 20+ | 20+ | 0 | **100%** |
-| **Tier 3** | | | | |
-| Linter | 50+ | 50+ | 0 | **100%** |
-| AreaEstimator | 30+ | 30+ | 0 | **100%** |
-| PowerEstimator | 30+ | 30+ | 0 | **100%** |
+| 套件 | 测试数 | 通过 | 状态 |
+|------|--------|------|------|
+| trace/ + tools/ | 229 | 229 | ✅ 100% |
+| test_class.py | 18 | 18 | ✅ 100% |
+| test_targeted.py | 6 | 6 | ✅ 100% |
+| **总计** | **229** | **229** | ✅ **100%, 0 warnings** |
+
+### 修复历史
+- [x] backward compatibility stubs (铁律8)
+- [x] DriverCollector.multi_drivers 属性
+- [x] pytest marker `unsupported` 注册
+- [x] return True/False → assert (铁律13)
 
 ## 开源项目测试结果
 

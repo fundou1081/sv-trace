@@ -1,53 +1,53 @@
 # SV-TRACE 架构文档
 
+> 更新时间: 2026-05-15
+
 ## 1. 模块结构
 
 ```
 sv-trace/
-├── parse/          # SystemVerilog解析器 (pyslang)
-├── trace/         # 静态分析核心模块
-│   ├── driver.py      # 驱动分析
-│   ├── load.py       # 负载分析
-│   ├── dependency.py # 依赖分析
-│   ├── dataflow.py   # 数据流分析
-│   ├── controlflow.py# 控制流分析
-│   ├── bitselect.py  # 位选择分析
-│   ├── timing_*.py  # 时序分析
-│   ├── performance_*.py # 性能分析
-│   ├── area_estimator.py # 面积估算
-│   ├── power_estimator.py # 功耗估算
-│   └── reports/     # 报告生成
-└── debug/
-    └── analyzers/   # 诊断分析工具
-        ├── cdc_analyzer.py
-        ├── coverage_analyzer.py
-        ├── testability_analyzer.py
-        ├── timing_analyzer.py
-        ├── fsm_analyzer.py
-        ├── code_metrics_analyzer.py
-        └── project_analyzer.py
+├── src/                  # 源代码 (3-Pass 架构)
+│   ├── parse/           # pyslang 封装 (SVParser)
+│   ├── scope/           # Pass 1: 作用域体系
+│   ├── extractors/      # Pass 2: 提取器体系
+│   ├── semantic/        # Pass 3: 语义增强层
+│   ├── trace/          # 对外 API 层
+│   │   ├── driver.py   # 驱动分析 (DriverCollector)
+│   │   ├── load.py     # 负载分析 (LoadTracer)
+│   │   ├── dependency.py # 依赖分析
+│   │   ├── dataflow.py # 数据流分析
+│   │   ├── controlflow.py # 控制流分析
+│   │   └── query/      # 查询工具
+│   └── debug/
+│       └── analyzers/   # 诊断分析工具 (FSM, CDC, Coverage...)
+│
+└── tests/               # 测试 (229 tests pass, 0 warnings)
 ```
 
 ## 2. 核心依赖关系
 
-### 2.1 依赖层次
+### 2.1 3-Pass 架构
 
 ```
-parse (pyslang)
-    ↓
-trace (核心分析) ← dependency: driver, load, dataflow, controlflow
-    ↓
-analyzers (诊断工具) ← dependency: trace, parse
+Pass 1: ScopeBuilder (scope/)
+  输入: SyntaxTree → 输出: ScopeTree + SymbolTable
+
+Pass 2: Extractors (extractors/)
+  输入: SyntaxTree + ScopeTree → 输出: SemanticGraph
+
+Pass 3: SemanticEnricher (semantic/)
+  输入: SemanticGraph → 输出: EnrichedSemanticGraph
 ```
 
 ### 2.2 关键模块调用链
 
 | 分析器 | 调用的trace模块 |
 |--------|-------------|
-| CDCAnalyzer | DriverCollector, ControlFlowTracer |
+| CDCAnalyzer | DriverCollector |
 | CoverageAnalyzer | DriverCollector |
 | TestabilityAnalyzer | DriverCollector, LoadTracer |
 | TimingAnalyzer | DriverCollector |
+| FSMAnalyzer | DriverCollector |
 | ProjectAnalyzer | CodeMetricsAnalyzer |
 
 ### 2.3 Trace核心模块

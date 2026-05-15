@@ -1,7 +1,7 @@
 # sv-trace 开发纪律
 
-> 项目状态: 2026-05-03
-> 维护: fsm_analyzer 重构完成
+> 项目状态: 2026-05-15
+> 维护: 3-Pass 架构完成 · 229 tests pass, 0 warnings
 
 ---
 

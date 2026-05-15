@@ -1,50 +1,42 @@
 # SV-TRACE 项目结构
 
+> 更新时间: 2026-05-15
+
 ## 目录结构
 
 ```
 sv-trace/
 ├── src/                    # 核心源代码
-│   ├── parse/             # ✅ 解析器 (302 files) - 基于 pyslang AST
-│   ├── trace/            # 追踪模块 (22 files)
-│   ├── query/           # 查询模块 (13 files)
-│   └── debug/           # 调试模块 (21 files)
+│   ├── parse/             # ✅ pyslang 封装 (SVParser)
+│   ├── scope/             # ✅ Pass 1: 作用域体系
+│   ├── extractors/        # ✅ Pass 2: 提取器体系
+│   ├── semantic/          # ✅ Pass 3: 语义增强层
+│   ├── trace/             # ✅ 对外 API 层
+│   ├── debug/             # ✅ 调试分析器 (已适配 pyslang)
+│   └── verify/            # 验证工具
 │
-├── docs/                  # 文档 (40+ files)
-│   ├── PARSER_SUPPORT.md # ⭐ Parser 支持文档 v1.0
-│   ├── adr/              # 架构决策记录 (28 files)
-│   ├── pyslang-spec/     # pyslang 语法规范
-│   └── *.md              # 各模块文档
+├── tests/                 # 测试 (229 tests pass)
+│   ├── unit/             # 单元测试
+│   ├── trace/            # trace 模块测试
+│   └── tools/            # 工具函数测试
 │
-├── tests/                 # 测试
-│   ├── test_*.py         # 基本测试
-│   ├── edge_cases/       # 边界测试
-│   └── targeted/          # 针对性测试
+├── docs/                  # 文档
+│   ├── guides/           # 指南
+│   ├── core/            # 核心模块文档
+│   ├── adr/             # 架构决策记录
+│   └── reference/        # 参考文档
 │
-└── [项目根目录文件]       # 配置文件
+└── skills/               # Agent Skills
 ```
 
-## 统计
+## 测试状态 (2026-05-15)
 
-| 目录 | 文件数 | 说明 |
+| 套件 | 测试数 | 状态 |
 |------|--------|------|
-| src/parse | **302** | ✅ 基于 pyslang AST 的原子化解析器 |
-| src/trace | 22 | 核心追踪引擎 |
-| src/query | 13 | 查询功能 |
-| src/debug | 21 | 高级分析工具 |
-| docs | 40+ | 文档 |
-| tests | 60+ | 测试用例 |
-
----
-
-## Parser Foundation v1.0 里程碑
-
-```
-✅ 解析器文件: 302 个
-✅ 支持语法: 603 种
-✅ 覆盖率: 112%
-✅ sv-tests 成功率: 100%
-```
+| trace/ + tools/ | 229 | ✅ Pass |
+| test_class.py | 18 | ✅ Pass |
+| test_targeted.py | 6 | ✅ Pass |
+| **总计** | **229** | ✅ **0 warnings** |
 
 ### 设计原则
 

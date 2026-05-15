@@ -15,15 +15,18 @@ make test-e2e        # E2E 测试
 sv-trace/
 ├── src/
 │   ├── sv_manager.py     # 统一入口
-│   ├── trace/          # 核心分析工具 (7模块)
-│   ├── semantic/       # 语义层 (8模块)
-│   ├── query/         # 查询工具 (4个)
-│   ├── parse/         # 解析器封装
-│   └── debug/         # 调试分析器 (29个)
+│   ├── parse/           # pyslang 封装 (SVParser)
+│   ├── scope/           # Pass 1: 作用域体系
+│   ├── extractors/      # Pass 2: 提取器体系
+│   ├── semantic/         # Pass 3: 语义增强层
+│   ├── trace/           # 对外 API 层 (DriverCollector, LoadTracer...)
+│   ├── debug/           # 调试分析器 (FSM, CDC, Coverage...)
+│   ├── verify/          # 验证工具 (Coverage, Constraint...)
+│   └── apps/            # 应用层
 │
 ├── tests/              # 测试 (单元/集成/E2E)
-├── docs/              # 文档
-└── benchmarks/         # 基准测试 (10个)
+├── docs/               # 文档
+└── skills/             # Agent Skills
 ```
 
 ## 📖 核心文档
