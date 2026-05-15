@@ -1,6 +1,6 @@
 # SV-TRACE 开发计划
 
-> 更新时间: 2026-05-15 15:50 GMT+8
+> 更新时间: 2026-05-15 20:55 GMT+8
 
 ## 已完成 ✅
 
@@ -10,6 +10,12 @@
 - [x] Phase 3: debug 模块适配 (ClassExtractor 修复)
 - [x] 铁律3: 不可信则不输出 - 置信度标注
 - [x] 铁律10: 所有 API 返回包含 confidence 字段
+
+### 测试套件 (2026-05-15 更新)
+- [x] 229 tests pass, 0 warnings
+- [x] Backward compatibility stubs 满足铁律8
+- [x] pytest marker `unsupported` 已注册
+- [x] 所有测试使用 `assert` (铁律13)
 
 ### 质量检查工具
 - [x] MultiDriverDetector - 多驱动检测

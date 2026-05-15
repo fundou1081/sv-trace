@@ -1,14 +1,33 @@
 # sv-trace 测试管理方案
 
-> 更新时间: 2026-05-15 15:50 GMT+8
+> 更新时间: 2026-05-15 20:55 GMT+8
 
 ## 当前测试状态
 
 | 测试套件 | 测试数 | 状态 |
 |---------|--------|------|
-| trace/ + tools/ | 183 | ✅ Pass |
+| trace/ + tools/ | 229 | ✅ Pass |
 | test_class.py | 18 | ✅ Pass |
-| **总计** | **201** | ✅ **All Pass** |
+| test_targeted.py | 6 | ✅ Pass |
+| **总计** | **229** | ✅ **All Pass, 0 warnings** |
+
+### 修复历史 (2026-05-15)
+- [x] 添加 backward compatibility stubs (铁律8)
+  - `ParameterResolver`, `ConstraintExtractor`, `AssertionExtractor` (parse/__init__.py)
+  - `LoadTracerRegex` (trace/load.py)
+  - `CoverageType`, `CoverageTarget` (verify/coverage_guide/stimulus_suggester.py)
+  - `FSMAnalysisResult` 添加缺失属性 (state_names, transitions, complexity_obj)
+  - `ConditionCoverageResult` 添加 total_if_count, average_coverage
+  - `CDCAutoReport` 添加 clock_domains, cdc_paths, unprotected_signals
+  - `ResetAnalysisResult` 添加 coverage, warnings
+  - `FanoutAnalyzer` 添加 analyze_signal(), find_high_fanout_signals()
+  - `TimedPathReport` dataclass
+- [x] 修复 `DriverCollector.multi_drivers` 属性
+- [x] 解决 test_controlflow.py / test_dataflow.py 重名冲突 (重命名为 *_tools.py)
+- [x] 将 test_cdc_edge_cases.py 改为 .md (非有效Python)
+- [x] 注册 pytest `unsupported` marker
+- [x] 修复 `return True/False` → `assert` (铁律13)
+- [x] 清理所有 pytest warnings |
 
 ```
 tests/
