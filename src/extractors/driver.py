@@ -21,13 +21,75 @@ except ImportError:
 
 
 class DriverExtractor(Extractor):
-    """驱动提取器 - 时钟域 + 驱动关系"""
+    """驱动提取器 - 时钟域 + 驱动关系
     
+    铁律3: 不可信则不输出 - 遇到不支持的语法时记录并警告
+    """
+    
+    # 显式支持的语法类型 (铁律3: 明确声明)
+    SUPPORTED_KINDS: Set[str] = {
+        'AlwaysFFBlock', 'AlwaysBlock', 'AlwaysCombBlock',
+        'ContinuousAssign',
+        'SequentialBlockStatement',
+        'ConditionalStatement',
+        'ExpressionStatement',
+        'NonblockingAssignmentExpression',
+        'AssignmentExpression',
+        'ConditionalExpression',
+        'ConditionalPredicate',
+        'Identifier', 'IdentifierName',
+    }
+    
+    # 已知但不相关的语法类型 (铁律3: 明确忽略)
+    KNOWN_BUT_IGNORED: Set[str] = {
+        'TokenList', 'SyntaxList', 'SeparatedList',
+        'Plus', 'Minus', 'Multiply', 'Divide', 'Modulo',
+        'OpenParenthesis', 'CloseParenthesis',
+        'OpenBracket', 'CloseBracket',
+        'IntegerLiteral', 'IntegerBase', 'VariableDimension',
+        'RangeDimensionSpecifier', 'SimpleRangeSelect',
+        'TimeUnit', 'DoublePeriod',
+        'AssignKeyword', 'Question', 'Colon', 'At',
+        'And', 'Or', 'Xor', 'Not', 'Tilde',
+        'Ampersand', 'Bar', 'Caret',
+        'Declarator', 'DataDeclaration', 'LogicType', 'LogicKeyword',
+        'ModuleDeclaration', 'ModuleHeader', 'ModuleKeyword',
+        'EndModuleKeyword', 'Semicolon', 'Comma',
+        'IfKeyword', 'ElseKeyword', 'ElseClause',
+        'BeginKeyword', 'EndKeyword',
+        'ConditionalPattern', 'ConditionalPredicate',
+        'IntegerLiteralExpression', 'IntegerVectorExpression',
+        'LessThanEquals', 'Equals', 'AlwaysFFKeyword',
+        'TimingControlStatement', 'EventControlWithExpression',
+        'ParenthesizedEventExpression', 'SignalEventExpression',
+        'PosEdgeKeyword', 'NegEdgeKeyword',
+        'LessThanExpression', 'LessThan', 'GreaterThan', 'GreaterThanEquals',
+        'EqualityExpression', 'NotEquals', 'CaseEqualityExpression', 'CaseInequalityExpression',
+        'LogicalAndExpression', 'LogicalOrExpression', 'LogicalNotExpression',
+        'BinaryAndExpression', 'BinaryOrExpression', 'BinaryXorExpression',
+        'ShiftLeftExpression', 'ShiftRightExpression',
+        'AddExpression', 'SubtractExpression',
+        'MultiplyExpression', 'DivideExpression', 'ModuloExpression',
+        'UnaryPlusExpression', 'UnaryMinusExpression', 'UnaryNotExpression', 'UnaryTildeExpression',
+        'ConcatenationExpression',
+        'GenvarDeclaration', 'GenVarKeyword',
+        'GenerateRegion', 'GenerateKeyword',
+        'LoopGenerate', 'ForKeyword',
+        'GenerateBlock', 'NamedBlockClause',
+        'PortDeclaration', 'ParameterDeclaration',
+        'FunctionDeclaration', 'TaskDeclaration',
+        'ClassDeclaration', 'InterfaceDeclaration',
+        'PackageDeclaration', 'ProgramDeclaration',
+        'CompilationUnit',
+    }
+    
+    # 赋值操作符
     _ASSIGN_OPS: Set[str] = {
         'Equals', 'LessThanEquals',
         'PlusEquals', 'MinusEquals', 'MultiplyEquals',
     }
     
+    # 跳过节点 (保持向后兼容)
     _SKIP_KINDS: Set[str] = {
         'TokenList', 'SyntaxList', 'SeparatedList',
         'Plus', 'Minus', 'Multiply', 'Divide', 'Modulo',
@@ -37,6 +99,10 @@ class DriverExtractor(Extractor):
         'And', 'Or', 'Xor', 'Not', 'Tilde',
         'Ampersand', 'Bar', 'Caret',
     }
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._unsupported_encountered: Set[str] = set()
     
     def extract(self, tree: pyslang.SyntaxTree) -> None:
         def visitor(node):
@@ -53,6 +119,20 @@ class DriverExtractor(Extractor):
         kind = self._get_kind(node)
         if not kind:
             return None
+        
+        kind_name = kind.name if hasattr(kind, 'name') else str(kind)
+        
+        # 铁律3: 未知语法类型 - 记录警告（只警告一次）
+        if kind_name not in self.SUPPORTED_KINDS and kind_name not in self.KNOWN_BUT_IGNORED:
+            if kind_name not in self._unsupported_encountered:
+                if hasattr(self, 'warn_handler') and self.warn_handler:
+                    self.warn_handler.warn_unsupported(
+                        kind_name,
+                        context='DriverExtractor',
+                        suggestion='驱动提取可能不完整',
+                        component='DriverExtractor'
+                    )
+                self._unsupported_encountered.add(kind_name)
         
         # always 块
         if kind in (SyntaxKind.AlwaysFFBlock, SyntaxKind.AlwaysBlock, SyntaxKind.AlwaysCombBlock):

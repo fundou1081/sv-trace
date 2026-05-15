@@ -156,11 +156,12 @@ class Extractor(ABC):
     符合铁律 18: 接收 ScopeTree，使用 pyslang.visit()
     """
     
-    def __init__(self, scope_tree: ScopeTree, symbol_table: SymbolTable, graph: SemanticGraph):
+    def __init__(self, scope_tree: ScopeTree, symbol_table: SymbolTable, graph: SemanticGraph, warn_handler=None):
         self.scope = scope_tree
         self.symbols = symbol_table
         self.graph = graph
         self._current_scope_id: str = ""
+        self.warn_handler = warn_handler  # 统一警告处理器 (铁律3)
     
     @abstractmethod
     def extract(self, tree) -> None:

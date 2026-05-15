@@ -87,7 +87,8 @@ class LoadTracer:
         
         # Pass 2: Extractors
         self._graph = SemanticGraph(self._scope_tree, self._symbol_table)
-        LoadExtractor(self._scope_tree, self._symbol_table, self._graph).extract(tree)
+        extractor = LoadExtractor(self._scope_tree, self._symbol_table, self._graph, warn_handler=self.warn_handler)
+        extractor.extract(tree)
         
         # 聚合到 loads 字典
         self.loads: Dict[str, List[LoadPoint]] = {}

@@ -55,7 +55,8 @@ class DriverCollector:
         
         # Pass 2: Extractors
         self._graph = SemanticGraph(self._scope_tree, self._symbol_table)
-        DriverExtractor(self._scope_tree, self._symbol_table, self._graph).extract(tree)
+        extractor = DriverExtractor(self._scope_tree, self._symbol_table, self._graph, warn_handler=self.warn_handler)
+        extractor.extract(tree)
         
         # 聚合到 drivers 字典
         self.drivers = {}
