@@ -110,11 +110,8 @@ class SemanticGraph:
         if signal not in self.drivers:
             self.drivers[signal] = []
         
-        # 防重
-        for existing in self.drivers[signal]:
-            if existing.driver == driver and existing.kind == kind:
-                return
-        
+        # 允许多驱动: 不做去重，每条驱动关系都保留
+        # 注意: 这意味着同一信号的多个 always_ff 赋值会产生多个 DriverPoint
         self.drivers[signal].append(dp)
         self._all_signals.add(signal)
         self._all_signals.add(driver)

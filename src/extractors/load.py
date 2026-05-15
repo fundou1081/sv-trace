@@ -71,8 +71,55 @@ class LoadExtractor(Extractor):
             return self._process_conditional_statement(node)
         elif kind == 'ExpressionStatement':
             return self._process_expression_statement(node)
+        elif kind == 'AlwaysCombBlock':
+            # 处理 always_comb 块
+            return self._process_always_comb_block(node)
+        elif kind == 'CaseStatement':
+            # 处理 case 语句 - 提取条件中的信号
+            return self._process_case_statement(node)
         
         return None
+    
+    def _process_always_comb_block(self, node) -> pyslang.VisitAction:
+        """处理 always_comb 块"""
+        # 直接遍历子节点查找语句
+        for child in self._iter_children(node):
+            sk = self._get_kind(child)
+            if sk == 'CaseStatement':
+                self._process_case_statement(child)
+            elif sk == 'ExpressionStatement':
+                self._process_expression_statement(child)
+            elif sk == 'ConditionalStatement':
+                self._process_conditional_statement(child)
+            elif sk == 'SequentialBlockStatement':
+                self._process_sequential_block(child)
+        return pyslang.VisitAction.Skip
+    
+    def _process_case_statement(self, node) -> pyslang.VisitAction:
+        """处理 case 语句 - 提取 case 条件中的信号"""
+        # case (sel) - 条件是 OpenParenthesis 后的 IdentifierName
+        for child in self._iter_children(node):
+            if self._get_kind(child) == 'IdentifierName':
+                # 找到 case 条件
+                from scope.utils import extract_identifier as _extract_identifier
+                sig = _extract_identifier(child)
+                if sig:
+                    self.graph.add_load(sig, sig, 'case_condition', 0)
+                break
+        # 处理 case 内部的语句
+        for child in self._iter_children(node):
+            sk = self._get_kind(child)
+            if sk == 'ExpressionStatement':
+                self._process_expression_statement(child)
+            elif sk == 'SequentialBlockStatement':
+                self._process_sequential_block(child)
+            elif sk == 'StandardCaseItem':
+                # 处理 case item
+                for sub in self._iter_children(child):
+                    ssk = self._get_kind(sub)
+                    if ssk == 'ExpressionStatement':
+                        self._process_expression_statement(sub)
+        return pyslang.VisitAction.Skip
     
     def _process_continuous_assign(self, node) -> pyslang.VisitAction:
         """处理连续赋值 assign x = y"""
@@ -114,6 +161,14 @@ class LoadExtractor(Extractor):
                         self._process_expression_statement(sub)
                     elif ssk == 'ConditionalStatement':
                         self._process_conditional_statement(sub)
+            elif sk == 'ConditionalPredicate':
+                # 扫描 if 条件中的信号 (被读取的负载)
+                # 条件表达式中的信号都是被读取的
+                condition_signals = []
+                self._scan_expression(child, [], condition_signals, found_eq=True)
+                # 条件中的信号作为负载添加到图中
+                for sig in condition_signals:
+                    self.graph.add_load(sig, sig, 'condition', 0)
         return pyslang.VisitAction.Skip
     
     def _process_expression_statement(self, node) -> pyslang.VisitAction:
@@ -164,6 +219,12 @@ class LoadExtractor(Extractor):
             for lhs in lhs_list:
                 if lhs:
                     self.graph.add_load(rhs, lhs, context, line)
+        
+        # Handle case where RHS is empty (e.g., arr[idx] = literal)
+        # All LHS signals are still being loaded
+        if not rhs_list and lhs_list:
+            for lhs in lhs_list:
+                self.graph.add_load(lhs, '', context, line)
     
     def _scan_expression(self, node, lhs_list: list, rhs_list: list, found_eq: bool):
         """递归扫描表达式"""

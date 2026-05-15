@@ -86,28 +86,31 @@ class TimingPathTracer:
             for sig, drivers in dc.drivers.items():
                 for drv in drivers:
                     if drv.kind == 'always_ff' and drv.clock:
-                        path = TimingPathResult(
-                            start_register=sig,
-                            end_register="",
-                            clock_domain=drv.clock.strip()
+                        path = TimingPath(
+                            start=drv.signal,
+                            end=drv.signal,
+                            path_type='sequential',
+                            depth=1
                         )
-                        self.paths.append(path)
+                        self.result.paths.append(path)
         
-        # 提取寄存器
-        for reg in self._collector.get_by_type(RegisterItem):
-            if reg.signal_path:
-                self.registers.add(reg.signal_path)
-        
-        # 提取驱动关系
-        for driver in self._collector.get_by_type(NonBlockingAssign):
-            if driver.lhs:
-                if driver.lhs not in self.driver_map:
-                    self.driver_map[driver.lhs] = []
-                # 简化：添加 RHS 源
-                if hasattr(driver, 'rhs'):
-                    for src in driver.rhs:
-                        if src not in self.driver_map[driver.lhs]:
-                            self.driver_map[driver.lhs].append(src)
+        # 只有在使用 semantic 层时才提取寄存器和驱动关系
+        if self.use_semantic and self._collector:
+            # 提取寄存器
+            for reg in self._collector.get_by_type(RegisterItem):
+                if reg.signal_path:
+                    self.registers.add(reg.signal_path)
+            
+            # 提取驱动关系
+            for driver in self._collector.get_by_type(NonBlockingAssign):
+                if driver.lhs:
+                    if driver.lhs not in self.driver_map:
+                        self.driver_map[driver.lhs] = []
+                    # 简化：添加 RHS 源
+                    if hasattr(driver, 'rhs'):
+                        for src in driver.rhs:
+                            if src not in self.driver_map[driver.lhs]:
+                                self.driver_map[driver.lhs].append(src)
         
         # 分析路径
         self._analyze_paths()
