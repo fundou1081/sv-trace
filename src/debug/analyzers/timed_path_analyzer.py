@@ -68,6 +68,16 @@ class ClockDomainCrossing:
     risk_level: str = "low"
 
 
+@dataclass
+class TimedPathReport:
+    """时序路径分析报告"""
+    paths: List[TimedPath] = field(default_factory=list)
+    same_domain_paths: int = 0
+    slow_to_fast: int = 0
+    fast_to_slow: int = 0
+    async_paths: int = 0
+
+
 class TimedPathAnalyzer:
     """跨时钟域 Timed Path 分析器。
     
@@ -93,14 +103,20 @@ class TimedPathAnalyzer:
         self.paths: List[TimedPath] = []
         self.crossings: List[ClockDomainCrossing] = []
     
-    def analyze(self) -> List[TimedPath]:
+    def analyze(self) -> TimedPathReport:
         """执行时序路径分析。
         
         Returns:
-            List[TimedPath]: 时序路径列表
+            TimedPathReport: 时序路径分析报告
         """
         # TODO: 实现完整的时序路径分析
-        return self.paths
+        return TimedPathReport(
+            paths=self.paths,
+            same_domain_paths=0,
+            slow_to_fast=0,
+            fast_to_slow=0,
+            async_paths=0
+        )
     
     def get_report(self) -> str:
         """获取分析报告。

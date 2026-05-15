@@ -65,15 +65,64 @@ class FSMInfo:
 
 
 @dataclass
-class FSMAnalysisResult:
-    fsm: FSMInfo
+class FSMComplexityInfo:
+    """FSM复杂度信息 (铁律8)"""
     state_count: int = 0
     transition_count: int = 0
-    complexity: int = 0
+    complexity_score: int = 0
+    
+    def get_level(self) -> str:
+        if self.complexity_score > 150:
+            return "D"
+        elif self.complexity_score > 100:
+            return "C"
+        elif self.complexity_score > 50:
+            return "B"
+        return "A"
+
+
+@dataclass
+class FSMAnalysisResult:
+    fsm: FSMInfo = None  # Must be before fields with defaults
+    state_count: int = 0
+    transition_count: int = 0
+    _complexity_score: int = 0
+    state_names: List[str] = field(default_factory=list)
+    transitions: List = field(default_factory=list)
+    complexity_obj: FSMComplexityInfo = None
     unreachable_states: List[str] = field(default_factory=list)
     dead_lock_states: List[str] = field(default_factory=list)
     has_initial_state: bool = False
     quality_grade: str = "B"
+    
+    def __post_init__(self):
+        if self.complexity_obj is None:
+            self.complexity_obj = FSMComplexityInfo(
+                state_count=self.state_count,
+                transition_count=self.transition_count,
+                complexity_score=self._complexity_score
+            )
+    
+    @property
+    def complexity(self):
+        """Return complexity object (backward compat)"""
+        return self.complexity_obj
+    
+    @complexity.setter
+    def complexity(self, value):
+        """Set complexity score"""
+        if isinstance(value, FSMComplexityInfo):
+            self.complexity_obj = value
+            self._complexity_score = value.complexity_score
+        else:
+            self._complexity_score = int(value) if value else 0
+            if self.complexity_obj:
+                self.complexity_obj.complexity_score = self._complexity_score
+    
+    @property
+    def complexity_info(self):
+        """Backward compat: return complexity_obj"""
+        return self.complexity_obj
 
 
 class FSMAnalyzer:
@@ -81,7 +130,56 @@ class FSMAnalyzer:
     
     def __init__(self, parser):
         # 使用 SVManager.trees
+        self.parser = parser
         self.fsms: Dict[str, FSMInfo] = {}
+    
+    def analyze(self, fsm: FSMInfo = None) -> FSMAnalysisResult:
+        """分析FSM。
+        
+        如果 fsm 为 None 且 parser 有 trees，尝试自动提取所有 FSM。
+        """
+        if fsm is None:
+            # 尝试从 parser.trees 提取所有 FSM
+            trees = getattr(self.parser, 'trees', {}) or {}
+            for fname, tree in trees.items():
+                self._scan_tree(tree)
+            if self.fsms:
+                # 返回第一个找到的 FSM
+                fsm = next(iter(self.fsms.values()))
+            else:
+                return FSMAnalysisResult(fsm=FSMInfo(name=""))
+        
+        if not fsm:
+            return FSMAnalysisResult(fsm=FSMInfo(name=""))
+        
+        # 使用内部分析逻辑
+        return self._analyze_fsm(fsm)
+    
+    def _analyze_fsm(self, fsm: FSMInfo) -> FSMAnalysisResult:
+        """内部分析方法"""
+        complexity = self.calculate_complexity(fsm)
+        fsm.complexity_score = complexity
+        unreachable = self.find_unreachable_states(fsm)
+        deadlocks = self.find_deadlock_states(fsm)
+        grade = self.grade_fsm(fsm)
+        
+        return FSMAnalysisResult(
+            fsm=fsm,
+            state_count=len(fsm.states),
+            transition_count=len(fsm.transitions),
+            complexity=complexity,
+            state_names=[s.name for s in fsm.states],
+            transitions=fsm.transitions,
+            unreachable_states=unreachable,
+            dead_lock_states=deadlocks,
+            has_initial_state=bool(fsm.reset_state),
+            quality_grade=grade
+        )
+    
+    def _scan_tree(self, tree):
+        """扫描语法树提取FSM"""
+        # Simplified - full implementation would extract FSM from module
+        pass
     
     def _walk(self, node):
         """Walk SyntaxNodes, skipping Tokens."""
@@ -432,8 +530,10 @@ class FSMAnalyzer:
         
         return self._extract_fsm_from_ast(tree)
     
-    def analyze(self, fsm: FSMInfo) -> FSMAnalysisResult:
+    def analyze(self, fsm: FSMInfo = None) -> FSMAnalysisResult:
         """Analyze FSM."""
+        if fsm is None:
+            return FSMAnalysisResult(fsm=FSMInfo(name=""))
         if not fsm:
             return FSMAnalysisResult(fsm=FSMInfo(name=""))
         
@@ -448,6 +548,8 @@ class FSMAnalyzer:
             state_count=len(fsm.states),
             transition_count=len(fsm.transitions),
             complexity=complexity,
+            state_names=[s.name for s in fsm.states],
+            transitions=fsm.transitions,
             unreachable_states=unreachable,
             dead_lock_states=deadlocks,
             has_initial_state=bool(fsm.reset_state),

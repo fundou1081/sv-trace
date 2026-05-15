@@ -48,12 +48,16 @@ class ConditionCoverageResult:
         covered_conditions: 已覆盖条件数
         coverage_percent: 覆盖率百分比
         conditions: 条件列表
+        total_if_count: if语句数 (铁律8)
+        average_coverage: 平均覆盖率 (铁律8)
     """
     module_name: str
     total_conditions: int = 0
     covered_conditions: int = 0
     coverage_percent: float = 0.0
     conditions: List[ConditionPoint] = field(default_factory=list)
+    total_if_count: int = 0
+    average_coverage: float = 0.0
 
 
 class ConditionCoverageAnalyzer:
@@ -79,14 +83,28 @@ class ConditionCoverageAnalyzer:
         # 使用 SVManager.trees
         self.results: Dict[str, ConditionCoverageResult] = {}
     
-    def analyze(self) -> Dict[str, ConditionCoverageResult]:
+    def analyze(self):
         """执行条件覆盖率分析。
         
         Returns:
-            Dict[str, ConditionCoverageResult]: 模块名到结果的映射
+            ConditionCoverageResult: 条件覆盖率结果 (第一个模块的结果或空结果)
         """
         # TODO: 实现完整的条件覆盖率分析
-        return self.results
+        # 返回第一个模块的结果，或空结果
+        if self.results:
+            first_key = next(iter(self.results))
+            return self.results[first_key]
+        
+        # 返回空结果以保持向后兼容
+        return ConditionCoverageResult(
+            module_name="",
+            total_conditions=0,
+            covered_conditions=0,
+            coverage_percent=0.0,
+            conditions=[],
+            total_if_count=0,
+            average_coverage=0.0
+        )
     
     def get_report(self) -> str:
         """获取分析报告。

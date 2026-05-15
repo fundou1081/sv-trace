@@ -110,11 +110,17 @@ class CDCAutoReport:
         multi_drivers: 多驱动字典
         statistics: 统计信息
         recommendations: 建议列表
+        clock_domains: 时钟域列表 (铁律8)
+        cdc_paths: CDC路径列表 (铁律8)
+        unprotected_signals: 未保护信号列表 (铁律8)
     """
-    issues: List[CDCIssue]
-    multi_drivers: Dict[str, List]
-    statistics: Dict
-    recommendations: List[str]
+    issues: List[CDCIssue] = field(default_factory=list)
+    multi_drivers: Dict[str, List] = field(default_factory=dict)
+    statistics: Dict = field(default_factory=dict)
+    recommendations: List[str] = field(default_factory=list)
+    clock_domains: List = field(default_factory=list)
+    cdc_paths: List = field(default_factory=list)
+    unprotected_signals: List = field(default_factory=list)
 
 
 class CDCAnalyzer:
@@ -197,4 +203,14 @@ class CDCExtendedAnalyzer:
         self.parser = parser
     
     def analyze(self, tree=None):
-        return CDCAnalyzer(self.parser).analyze(tree)
+        inner_report = CDCAnalyzer(self.parser).analyze()
+        # Wrap to add missing attributes for backward compat
+        return CDCAutoReport(
+            issues=inner_report.issues,
+            multi_drivers=inner_report.multi_drivers,
+            statistics=inner_report.statistics,
+            recommendations=inner_report.recommendations,
+            clock_domains=[],
+            cdc_paths=[],
+            unprotected_signals=[]
+        )

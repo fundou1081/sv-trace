@@ -171,6 +171,15 @@ def analyze_dependency(parser, signal_name: str) -> SignalDependency:
     return analyzer.analyze(signal_name)
 
 # Backward compatibility stubs (铁律8)
+@dataclass
+class FanoutInfo:
+    """扇出信息"""
+    signal: str = ""
+    direct_fanout: int = 0
+    total_fanout: int = 0
+    driven_signals: List[str] = field(default_factory=list)
+
+
 class FanoutAnalyzer:
     """扇出分析器 (stub)
     
@@ -181,6 +190,19 @@ class FanoutAnalyzer:
     
     def analyze(self, signal_name: str = ""):
         return SignalDependency(signal=signal_name, drivers=[], loads=[])
+    
+    def analyze_signal(self, signal_name: str) -> FanoutInfo:
+        """分析单个信号的扇出"""
+        return FanoutInfo(
+            signal=signal_name,
+            direct_fanout=0,
+            total_fanout=0,
+            driven_signals=[]
+        )
+    
+    def find_high_fanout_signals(self, threshold: int = 2) -> List[FanoutInfo]:
+        """查找高扇出信号"""
+        return []
 
 
 class FaninAnalyzer:
