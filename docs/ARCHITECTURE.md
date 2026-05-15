@@ -302,13 +302,12 @@ python -m pytest tests/unit/tools/ tests/unit/sv_trace/ -v --tb=short
 python -m pytest tests/unit/tools/ -q --tb=no
 ```
 
-### 5.2 当前测试状态 (2026-05-13)
+### 5.2 当前测试状态 (2026-05-15)
 
 | 目录 | 通过 | 错误 |
 |------|------|------|
-| `tests/unit/tools/` | 111 | 0 |
-| `tests/unit/sv_trace/` | 53 | 5 |
-| **总计** | **164** | **5** |
+| `tests/unit/trace/` | 90 | 0 |
+| **总计** | **90** | **0** |
 
 ---
 

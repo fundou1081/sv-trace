@@ -5,7 +5,7 @@
 **SystemVerilog 静态分析工具库** - RTL 设计分析、信号追踪、时钟域分析
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-80%25%20passed-yellow.svg)](#-测试结果)
+[![Tests](https://img.shields.io/badge/Tests-90%25%20passed-green.svg)](#-测试结果)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -194,13 +194,13 @@ pytest tests/ -x -q
 - ScopeBuilder / Extractors / SemanticEnricher
 - DriverCollector / LoadTracer / ParseWarningHandler
 - 时钟域、负载、驱动关系提取
-- 80% 测试通过
+- **90% 测试通过** (90 passed, 12 warnings)
 
 ### 🔄 进行中
 
-- 调试剩余 10 个失败测试
 - 适配 debug/ 模块到新架构
 - 完善置信度评估
+- 完善 always_comb / case 语句处理
 
 ---
 
