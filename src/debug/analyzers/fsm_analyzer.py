@@ -547,3 +547,40 @@ class FSMAnalyzer:
             flag_str = f" [{','.join(flags)}]" if flags else ""
             lines.append(f"  {s.name}{flag_str} (in:{s.in_degree} out:{s.out_degree})")
         return "\n".join(lines)
+
+
+# Backward compatibility stubs (铁律8: 文档与代码同步)
+class SVAGeneratorReport:
+    """SVA生成报告 (stub)"""
+    def __init__(self):
+        self.properties: List = []
+        self.sequences: List = []
+
+
+class SVAGenerator:
+    """SVA属性生成器 (stub)
+    
+    Note: 完整实现需要 IEEE 1800-2017 Section 11.4 序列属性支持
+    """
+    def __init__(self, parser=None):
+        self.parser = parser
+    
+    def generate(self) -> SVAGeneratorReport:
+        """生成SVA属性"""
+        return SVAGeneratorReport()
+
+
+class VerificationPlanGenerator:
+    """验证计划生成器 (stub)
+    
+    Note: 完整实现需要覆盖点生成和测试策略规划
+    """
+    def __init__(self, parser=None):
+        self.parser = parser
+    
+    def generate(self, module_name: str = ""):
+        """生成验证计划"""
+        class Plan:
+            def __init__(self):
+                self.total_tests = 0
+        return Plan()

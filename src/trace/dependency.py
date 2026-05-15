@@ -169,3 +169,27 @@ def analyze_dependency(parser, signal_name: str) -> SignalDependency:
     """便捷函数：分析信号依赖"""
     analyzer = DependencyAnalyzer(parser)
     return analyzer.analyze(signal_name)
+
+# Backward compatibility stubs (铁律8)
+class FanoutAnalyzer:
+    """扇出分析器 (stub)
+    
+    Note: 完整实现需要计算信号的驱动负载数
+    """
+    def __init__(self, parser=None):
+        self.parser = parser
+    
+    def analyze(self, signal_name: str = ""):
+        return SignalDependency(signal=signal_name, drivers=[], loads=[])
+
+
+class FaninAnalyzer:
+    """扇入分析器 (stub)
+    
+    Note: 完整实现需要计算信号的驱动源数
+    """
+    def __init__(self, parser=None):
+        self.parser = parser
+    
+    def analyze(self, signal_name: str = ""):
+        return SignalDependency(signal=signal_name, drivers=[], loads=[])

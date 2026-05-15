@@ -185,3 +185,16 @@ class CDCAnalyzer:
             lines.append(f"  {issue.description}")
         
         return "\n".join(lines)
+
+
+# Backward compatibility stub (铁律8)
+class CDCExtendedAnalyzer:
+    """CDC扩展分析器 (stub)
+    
+    Note: 完整实现需要多时钟域识别和异步接口检测
+    """
+    def __init__(self, parser=None):
+        self.parser = parser
+    
+    def analyze(self, tree=None):
+        return CDCAnalyzer(self.parser).analyze(tree)

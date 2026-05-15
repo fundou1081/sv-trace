@@ -140,3 +140,16 @@ class ResetDomainAnalyzer:
                 lines.append(f"  - {sig}")
         
         return "\n".join(lines)
+
+
+# Backward compatibility stub (铁律8)
+class ResetIntegrityChecker:
+    """复位完整性检查器 (stub)
+    
+    Note: 完整实现需要复位信号一致性检查
+    """
+    def __init__(self, parser=None):
+        self.parser = parser
+    
+    def check(self, tree=None):
+        return ResetAnalysisResult()
