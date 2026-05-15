@@ -47,7 +47,7 @@ def test_basic_verilog_designs():
         except Exception as e:
             results.append({'name': name, 'error': str(e)})
     
-    return results
+    assert len(results) > 0, "Should process at least one design"
 
 
 if __name__ == '__main__':

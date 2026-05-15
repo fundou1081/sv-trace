@@ -25,8 +25,8 @@ def test_always_ff():
     
     print(f'【always_ff 识别】')
     print(f'  always_ff: {len(ct.result.always_ff)}')
-    print(f'  结果: {"✅" if len(ct.result.always_ff) >= 1 else "❌"}')
-    return len(ct.result.always_ff) >= 1
+    print(f'结果: {"✅" if len(ct.result.always_ff) >= 1 else "❌"}')
+    assert len(ct.result.always_ff) >= 1, "always_ff block should be detected"
 
 
 def test_always_comb():
@@ -41,8 +41,8 @@ def test_always_comb():
     
     print(f'【always_comb 识别】')
     print(f'  always_comb: {len(ct.result.always_comb)}')
-    print(f'  结果: ✅')
-    return len(ct.result.always_comb) >= 1
+    print(f'结果: ✅')
+    assert len(ct.result.always_comb) >= 1, "always_comb block should be detected"
 
 
 def test_if_statement():
@@ -60,8 +60,7 @@ def test_if_statement():
     
     print(f'【if 语句】')
     print(f'  if 语句: {len(ct.result.if_statements)}')
-    print(f'  结果: ✅')
-    return True
+    print(f'结果: ✅')
 
 
 def test_case_statement():
@@ -82,8 +81,7 @@ def test_case_statement():
     
     print(f'【case 语句】')
     print(f'  case 语句: {len(ct.result.case_statements)}')
-    print(f'  结果: ✅')
-    return True
+    print(f'结果: ✅')
 
 
 def test_latch_detection():
@@ -99,8 +97,7 @@ def test_latch_detection():
     
     print(f'【latch 检测】')
     print(f'  latch: {ct.has_latch}')
-    print(f'  结果: {"✅" if not ct.has_latch else "⚠️"}')
-    return True
+    print(f'结果: {"✅" if not ct.has_latch else "⚠️"}')
 
 
 def test_real_designs():
@@ -126,24 +123,28 @@ def test_real_designs():
             pass
     
     print(f'  总控制块: {total}')
-    print(f'  结果: ✅')
-    return True
+    print(f'结果: ✅')
 
 
 if __name__ == '__main__':
     print('=== Control Flow 测试 ===\n')
     
     results = []
-    results.append(('always_ff', test_always_ff()))
-    results.append(('always_comb', test_always_comb()))
-    results.append(('if语句', test_if_statement()))
-    results.append(('case语句', test_case_statement()))
-    results.append(('latch检测', test_latch_detection()))
-    results.append(('真实设计', test_real_designs()))
-    
-    print('\n=== 测试汇总 ===')
-    for name, passed in results:
-        print(f'  {name}: {"✅" if passed else "❌"}')
+    for name, test_fn in [
+        ('always_ff', test_always_ff),
+        ('always_comb', test_always_comb),
+        ('if语句', test_if_statement),
+        ('case语句', test_case_statement),
+        ('latch检测', test_latch_detection),
+        ('真实设计', test_real_designs),
+    ]:
+        try:
+            test_fn()
+            print(f'{name}: ✅')
+            results.append((name, True))
+        except AssertionError as e:
+            print(f'{name}: ❌ - {e}')
+            results.append((name, False))
     
     ok = sum(1 for _, p in results if p)
     print(f'\n通过: {ok}/{len(results)}')

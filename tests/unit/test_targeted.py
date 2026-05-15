@@ -63,7 +63,6 @@ def test_fsm_targeted():
     plan = vgen.generate("test_fsm")
     print(f"  生成测试点数: {plan.total_tests}")
     
-    return True
 
 
 def test_cdc_targeted():
@@ -95,7 +94,6 @@ def test_cdc_targeted():
         for path in report.cdc_paths[:5]:
             print(f"  - {path.signal}: {path.source_domain} -> {path.dest_domain} ({path.path_type})")
     
-    return True
 
 
 def test_condition_targeted():
@@ -134,7 +132,6 @@ def test_condition_targeted():
     for pair in cross_pairs[:5]:
         print(f"  {pair[0]} x {pair[1]}")
     
-    return True
 
 
 def test_fanout_targeted():
@@ -166,7 +163,6 @@ def test_fanout_targeted():
     print(f"    total_fanout: {enable_fo.total_fanout}")
     print(f"    驱动信号数: {len(enable_fo.driven_signals)}")
     
-    return True
 
 
 def test_reset_targeted():
@@ -210,7 +206,6 @@ def test_reset_targeted():
         for rec in report.recommendations:
             print(f"  - {rec}")
     
-    return True
 
 
 def test_timed_path_targeted():
@@ -242,7 +237,6 @@ def test_timed_path_targeted():
             print(f"  - {path.source_reg} -> {path.dest_reg} ({path.path_type})")
             print(f"    depth: {path.timing_depth}, logic: {path.logic_depth}")
     
-    return True
 
 
 def run_all_targeted_tests():

@@ -29,8 +29,8 @@ def test_basic_dataflow():
     print(f'【基本数据流】')
     print(f'  寄存器: {dt.register_count}')
     print(f'  线网: {dt.wire_count}')
-    print(f'  结果: {"✅" if dt.register_count >= 2 else "❌"}')
-    return dt.register_count >= 2
+    print(f'结果: {"✅" if dt.register_count >= 2 else "❌"}')
+    assert dt.register_count >= 2, "Should detect at least 2 registers"
 
 
 def test_drivers_loads():
@@ -51,8 +51,7 @@ def test_drivers_loads():
     print(f'【驱动/负载查找】')
     print(f'  r 的驱动: {drivers}')
     print(f'  r 的负载: {loads}')
-    print(f'  结果: ✅')
-    return True
+    print(f'结果: ✅')
 
 
 def test_pipeline():
@@ -75,8 +74,8 @@ def test_pipeline():
     print(f'【流水线】')
     print(f'  寄存器数: {dt.register_count}')
     print(f'  最大深度: {dt.result.max_depth}')
-    print(f'  结果: {"✅" if dt.register_count >= 4 else "❌"}')
-    return dt.register_count >= 4
+    print(f'结果: {"✅" if dt.register_count >= 4 else "❌"}')
+    assert dt.register_count >= 4, "Should detect at least 4 pipeline registers"
 
 
 def test_combinational():
@@ -93,8 +92,8 @@ def test_combinational():
     
     print(f'【组合逻辑】')
     print(f'  线网: {dt.wire_count}')
-    print(f'  结果: {"✅" if dt.wire_count >= 2 else "❌"}')
-    return dt.wire_count >= 2
+    print(f'结果: {"✅" if dt.wire_count >= 2 else "❌"}')
+    assert dt.wire_count >= 2, "Should detect at least 2 wire signals"
 
 
 def test_real_designs():
@@ -125,23 +124,27 @@ def test_real_designs():
     
     print(f'  总寄存器: {total_regs}')
     print(f'  总线网: {total_wires}')
-    print(f'  结果: ✅')
-    return True
+    print(f'结果: ✅')
 
 
 if __name__ == '__main__':
     print('=== DataFlow 测试 ===\n')
     
     results = []
-    results.append(('基本数据流', test_basic_dataflow()))
-    results.append(('驱动/负载', test_drivers_loads()))
-    results.append(('流水线', test_pipeline()))
-    results.append(('组合逻辑', test_combinational()))
-    results.append(('真实设计', test_real_designs()))
-    
-    print('\n=== 测试汇总 ===')
-    for name, passed in results:
-        print(f'  {name}: {"✅" if passed else "❌"}')
+    for name, test_fn in [
+        ('基本数据流', test_basic_dataflow),
+        ('驱动/负载', test_drivers_loads),
+        ('流水线', test_pipeline),
+        ('组合逻辑', test_combinational),
+        ('真实设计', test_real_designs),
+    ]:
+        try:
+            test_fn()
+            print(f'{name}: ✅')
+            results.append((name, True))
+        except AssertionError as e:
+            print(f'{name}: ❌ - {e}')
+            results.append((name, False))
     
     ok = sum(1 for _, p in results if p)
     print(f'\n通过: {ok}/{len(results)}')
