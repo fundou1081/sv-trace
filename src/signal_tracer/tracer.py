@@ -1231,12 +1231,43 @@ class SignalTracer:
                                     if left_val and right_val:
                                         return f'{base_name}.{member_name}[{left_val}:{right_val}]'
                                 return f'{base_name}.{member_name}'
+                # M4.1: 嵌套 HierarchicalValue (modport 访问), e.g. m.data[3:0]
+                if value_kind == 'HierarchicalValue':
+                    val_sym = getattr(value, 'symbol', None)
+                    if val_sym:
+                        internal = getattr(val_sym, 'internalSymbol', None)
+                        if internal:
+                            base_name = getattr(internal, 'name', '') or ''
+                        else:
+                            base_name = getattr(val_sym, 'name', '') or ''
+                        left = getattr(expr, 'left', None)
+                        right = getattr(expr, 'right', None)
+                        if left and right:
+                            left_val = getattr(left, 'name', None) or self._get_selector_name(left)
+                            right_val = getattr(right, 'name', None) or self._get_selector_name(right)
+                            if left_val and right_val:
+                                return f'{base_name}[{left_val}:{right_val}]'
+                        return base_name
         elif kind == 'NamedValue':
             # Simple variable like data
             symbol = getattr(expr, 'symbol', None)
             if symbol:
                 return getattr(symbol, 'name', '') or ''
-        
+
+        elif kind == 'HierarchicalValue':
+            # M4.1: Interface modport access, e.g. m.valid (modport master)
+            # pyslang 语义层把 m.valid 折成为 ModportPortSymbol
+            # .symbol.internalSymbol 是 interface 内的原始 VariableSymbol
+            # .symbol.internalSymbol.name 是底层信号名 (例如 'valid')
+            # .symbol.hierarchicalPath 是带 modport 的完整路径 (e.g. 'top.bus.master.valid')
+            # 我们返回底层信号名, 让 trace('valid') 能定位
+            sym = getattr(expr, 'symbol', None)
+            if sym:
+                internal = getattr(sym, 'internalSymbol', None)
+                if internal:
+                    return getattr(internal, 'name', '') or ''
+                return getattr(sym, 'name', '') or ''
+
         return ""
     
     def _get_selector_name(self, expr) -> str:
@@ -1251,9 +1282,21 @@ class SignalTracer:
             if symbol:
                 return getattr(symbol, 'name', '') or ''
         elif kind == 'IntegerLiteral':
-            literal = getattr(expr, 'literal', None)
-            if literal:
-                return getattr(literal, 'valueText', '') or ''
+            # 之前用 .literal.valueText, 但 pyslang IntegerLiteral 是直接有 .value
+            # 例: a[3:0] 的 left=3, right=0
+            # 优先级: 1. syntax 文本  2. .value 数字  3. .constant
+            syn = getattr(expr, 'syntax', None)
+            if syn:
+                syn_text = str(syn).strip()
+                if syn_text:
+                    return syn_text
+            value = getattr(expr, 'value', None)
+            if value is not None:
+                # SVInt 有 toString 或 .value
+                return str(value) if not hasattr(value, 'value') else str(value.value)
+            constant = getattr(expr, 'constant', None)
+            if constant is not None:
+                return str(constant)
         elif kind == 'UnbasedUnsizedIntegerLiteral':
             # Unsized literal like '0, '1, 'x, 'z (常用于 cast 如 8'(expr))
             value = getattr(expr, 'value', None)
@@ -1389,7 +1432,19 @@ class SignalTracer:
                     value_info = self._get_rhs_info_semantic(value)
                     base_name = value_info['text']
                     signals.extend(value_info['signals'])
-            
+                elif value_kind == 'HierarchicalValue':
+                    # M4.1: modport 访问 + bit select, e.g. m.data[3:0]
+                    val_sym = getattr(value, 'symbol', None)
+                    if val_sym:
+                        hpath = getattr(val_sym, 'hierarchicalPath', '') or ''
+                        if not hpath:
+                            internal = getattr(val_sym, 'internalSymbol', None)
+                            if internal:
+                                hpath = getattr(internal, 'hierarchicalPath', '') or ''
+                        if hpath:
+                            base_name = hpath
+                            signals.append(hpath)
+
             # Get range info [left:right]
             left_val = getattr(expr, 'left', None)
             right_val = getattr(expr, 'right', None)
@@ -1552,6 +1607,29 @@ class SignalTracer:
                 'text': full_text,
                 'signals': value_info['signals'],  # 基础信号是 load, field 本身不是变量
             }
+
+        elif kind == 'HierarchicalValue':
+            # M4.1: Interface modport 访问, e.g. m.valid, s.data[7:0]
+            # pyslang 把 m.valid 折成 ModportPortSymbol:
+            #   .symbol.name = 'valid' (接口内的原始信号名)
+            #   .symbol.hierarchicalPath = 'top.bus.master.valid' (带 modport)
+            #   .symbol.internalSymbol = VariableSymbol (接口内变量)
+            # 我们返回: text=完整路径, signals=[完整路径]
+            # 这样 trace('top.bus.valid') 能查, trace('valid') 也能查 (trace 做后缀匹配)
+            sym = getattr(expr, 'symbol', None)
+            if sym:
+                hpath = getattr(sym, 'hierarchicalPath', '') or ''
+                if not hpath:
+                    # 退化到 internalSymbol
+                    internal = getattr(sym, 'internalSymbol', None)
+                    if internal:
+                        hpath = getattr(internal, 'hierarchicalPath', '') or ''
+                name = getattr(sym, 'name', '') or ''
+                if hpath:
+                    return {'text': hpath, 'signals': [hpath]}
+                if name:
+                    return {'text': name, 'signals': [name]}
+            return {'text': '', 'signals': []}
 
         elif kind == 'Replication':
             # M4: {count{expr}} — 拼接复制

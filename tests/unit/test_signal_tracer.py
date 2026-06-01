@@ -1323,3 +1323,192 @@ class TestAdditionalExpressions:
         assert 'BufferAw' in d.source_expr
         # signal 应是 reg2hw
         assert 'reg2hw' in d.source_signals
+
+
+# ---------- M4.1: Interface / Modport 支持 ----------
+
+class TestInterfaceModport:
+    """M4.1: Interface/Modport 信号追踪
+
+    SV interface + modport 是工业代码常用模式 (bus 协议, clock_rst 等):
+      interface bus_if; logic valid; ... modport master(output valid); endinterface
+      module master_unit(bus_if.master m); always_comb m.valid = 1; endmodule
+      module top; bus_if bus(); master_unit u_m (.m(bus)); endmodule
+
+    pyslang 把 m.valid 折成 HierarchicalValueExpression (kind=HierarchicalValue)
+    .symbol 是 ModportPortSymbol, .internalSymbol 是 interface 内的原始 VariableSymbol
+    """
+
+    def test_modport_lhs_in_always_comb(self):
+        """m.valid = 1'b1 (LHS) — always_comb 组合赋值"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer()
+        t.add_file('bus.sv', '''
+        interface bus_if;
+            logic valid;
+            modport master(output valid);
+        endinterface
+        module master_unit(bus_if.master m);
+            always_comb m.valid = 1'b1;
+        endmodule
+        module top;
+            bus_if bus();
+            master_unit u_m (.m(bus));
+        endmodule
+        ''')
+        t.build()
+        r = t.trace('valid')
+        assert len(r.drivers) == 1, f"valid 应有 1 个 driver, 实际 {len(r.drivers)}"
+        d = r.drivers[0]
+        # signal name 应该是 'valid' (interface 内变量名), 不是 'm.valid'
+        assert d.signal_name == 'valid', f"signal_name={d.signal_name!r}, 应是 'valid'"
+        # 路径应在 master_unit 内
+        assert d.hierarchical_path == 'top.u_m', f"hpath={d.hierarchical_path!r}"
+        # text 是 1'b1
+        assert d.source_expr == "1'b1", f"source_expr={d.source_expr!r}"
+
+    def test_modport_lhs_in_always_ff(self):
+        """m.valid <= 1'b1 (非阻塞赋值)"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer()
+        t.add_file('bus.sv', '''
+        interface bus_if;
+            logic valid;
+            logic [7:0] data;
+            modport master(output valid, output data);
+        endinterface
+        module master_unit(bus_if.master m);
+            logic clk;
+            always_ff @(posedge clk) begin
+                m.valid <= 1'b1;
+                m.data  <= 8'hAB;
+            end
+        endmodule
+        module top;
+            bus_if bus();
+            master_unit u_m (.m(bus));
+        endmodule
+        ''')
+        t.build()
+        # valid
+        r1 = t.trace('valid')
+        assert len(r1.drivers) == 1
+        assert r1.drivers[0].source_expr == "1'b1"
+        assert r1.drivers[0].clock == 'clk'
+        # data
+        r2 = t.trace('data')
+        assert len(r2.drivers) == 1
+        assert r2.drivers[0].source_expr == "8'hAB"
+
+    def test_modport_master_and_slave_distinct(self):
+        """master 驱动 valid, slave 驱动 ready (不同 modport 访问不同信号)"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer()
+        t.add_file('bus.sv', '''
+        interface bus_if;
+            logic valid;
+            logic ready;
+            modport master(output valid, input ready);
+            modport slave(input valid, output ready);
+        endinterface
+        module master_unit(bus_if.master m);
+            always_comb m.valid = 1'b1;
+        endmodule
+        module slave_unit(bus_if.slave s);
+            always_comb s.ready = 1'b1;
+        endmodule
+        module top;
+            bus_if bus();
+            master_unit u_m (.m(bus));
+            slave_unit u_s (.s(bus));
+        endmodule
+        ''')
+        t.build()
+        # valid 只能由 master 驱动
+        r_v = t.trace('valid')
+        assert len(r_v.drivers) == 1
+        assert r_v.drivers[0].hierarchical_path == 'top.u_m'
+        # ready 只能由 slave 驱动
+        r_r = t.trace('ready')
+        assert len(r_r.drivers) == 1
+        assert r_r.drivers[0].hierarchical_path == 'top.u_s'
+
+    def test_modport_rhs_uses_full_hpath(self):
+        """RHS 读 m.valid 时, text 应包含完整 hpath 'top.bus.valid' 或 'top.bus.master.valid'"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer()
+        t.add_file('bus.sv', '''
+        interface bus_if;
+            logic valid;
+            modport master(output valid);
+        endinterface
+        module reader(bus_if.master m);
+            logic [7:0] captured;
+            always_comb captured = {7'b0, m.valid};  // 读 m.valid
+        endmodule
+        module top;
+            bus_if bus();
+            reader u_r (.m(bus));
+        endmodule
+        ''')
+        t.build()
+        # captured 应有 driver, source_expr 含 m.valid
+        r = t.trace('captured')
+        assert len(r.drivers) >= 1
+        # 任意 driver 的 source_expr 应包含 valid 或 m.valid
+        all_text = ' '.join(d.source_expr for d in r.drivers)
+        assert 'valid' in all_text, f"应包含 valid: {all_text!r}"
+
+    def test_modport_hierarchical_path_resolution(self):
+        """ModportPortSymbol.hierarchicalPath 形如 'top.bus.master.valid'"""
+        # 验证 pyslang 内部模型 (sanity check)
+        from signal_tracer import SignalTracer
+        t = SignalTracer()
+        t.add_file('bus.sv', '''
+        interface bus_if;
+            logic valid;
+            modport master(output valid);
+        endinterface
+        module master_unit(bus_if.master m);
+            always_comb m.valid = 1'b1;
+        endmodule
+        module top;
+            bus_if bus();
+            master_unit u_m (.m(bus));
+        endmodule
+        ''')
+        t.build()
+        # 找 scope 中包含 'm.valid'
+        scopes = [s for s in t._scopes if 'm.valid' in (s.text or '')]
+        assert len(scopes) == 1, f"应有 1 个 scope 含 m.valid: {[s.text[:30] for s in scopes]}"
+        scope = scopes[0]
+        assert scope.kind.name == 'ALWAYS_COMB'
+        assert scope.instance_path == 'top.u_m'
+
+    def test_modport_array_member(self):
+        """m.data[3:0] — modport 访问 + 位选"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer()
+        t.add_file('bus.sv', '''
+        interface bus_if;
+            logic [7:0] data;
+            modport master(output data);
+        endinterface
+        module master_unit(bus_if.master m);
+            always_comb m.data[3:0] = 4'hA;
+            always_comb m.data[7:4] = 4'hB;
+        endmodule
+        module top;
+            bus_if bus();
+            master_unit u_m (.m(bus));
+        endmodule
+        ''')
+        t.build()
+        # data[3:0]
+        r_lo = t.trace('data[3:0]')
+        assert len(r_lo.drivers) == 1
+        assert r_lo.drivers[0].source_expr == "4'hA"
+        # data[7:4]
+        r_hi = t.trace('data[7:4]')
+        assert len(r_hi.drivers) == 1
+        assert r_hi.drivers[0].source_expr == "4'hB"
