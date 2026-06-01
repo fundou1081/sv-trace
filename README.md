@@ -171,10 +171,10 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **55/55 通过** |
+| 公开 API 测试 | **68/68 通过** |
 | Benchmark 覆盖 | 11/11 (0 warning, 0 exception) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
-| 真实项目 | 未验证 (M4 待做) |
+| 真实项目验证 | ✅ OpenTitan 6 模块 (uart/spi_device/dma/i2c/aes/hmac) 0 warning 0 empty |
 | 版本 | alpha |
 
 跑测试：
@@ -182,6 +182,34 @@ result = t.trace("signal_name")  # TraceSummary
 ```bash
 python -m pytest tests/unit/test_signal_tracer.py -v
 ```
+
+## 真实项目验证 (M4)
+
+在 OpenTitan 上验证, 全部 6 模块 **0 warning + 0 empty driver**:
+
+| 模块 | .sv 文件数 | drivers | 空 expr | 备注 |
+|------|-----------|---------|---------|------|
+| uart | 6 | 418 | 0% | 起始验证模块 |
+| spi_device | 19 | 3,229 | 0% | 涵盖 Streaming concat (`{<<8{...}}`) |
+| dma | 4 | 401 | 0% | 涵盖 `inside` 集合成员判断 |
+| i2c | 10 | 1,235 | 0% | |
+| aes | 40 | 24,065 | 0% | 大型模块, 涵盖 StructuredAssignmentPattern |
+| hmac | 4 | 870 | 0% | 涵盖 `assert property` (SVA) 跳过 |
+
+**M4 能力覆盖的 SV 语法**:
+
+- 表达式: `MemberAccess` / `RangeSelect` / `ElementSelect` / `BinaryOp` / `UnaryOp` / `ConditionalOp` / `CastExpression` / `Call` / `Replication` / `Concatenation` / `Streaming` (`{<<8{x}}` / `{>>8{x}}`) / `Inside` / `UnbasedUnsizedIntegerLiteral` (`'0` / `'1`) / `StructuredAssignmentPattern` / `SimpleAssignmentPattern` / `LValueReference` / `DataType`
+- 嵌套: 任意深度 MemberAccess (e.g. `reg2hw.ctrl.tx.q`) + 跨 RangeSelect (`reg2hw.val[BufferAw:0]`)
+- 跨文件: 多 .sv 编译为同一 Compilation, 跨模块引用 + 层次路径 (`uart.uart_core.tx_enable`)
+- 跨文件行号: `pyslang SourceManager.getLineNumber()` 走 SourceLocation.buffer 精准算行
+- 跨文件 file path: 每个 ScopeInfo.file_path 走 SourceManager.getFileName() 拿到正确文件名
+- SVA 跳过: `ConcurrentAssertionStatement` (assert property) 不产生 driver/load trace
+
+**未支持 (边缘场景)**:
+
+- 复杂 type system (interface/modport) — port_resolver 独立模块已实现语法层
+- Clocking block / Property/Sequence 内部
+- System task ($cast, $readmemh) 中的信号
 
 ## 项目结构
 
@@ -191,13 +219,13 @@ sv-trace/
 │   ├── __init__.py
 │   ├── sv_manager.py                  # SV 文件加载、源码定位
 │   └── signal_tracer/                 # 核心
-│       ├── models.py                  # TraceResult / TraceSummary / ContextBundle
+│       ├── models.py                  # TraceResult / TraceSummary / ContextBundle / ScopeInfo
 │       ├── tracer.py                  # SignalTracer: 语义层 driver/load
 │       ├── port_resolver.py           # PortResolver: 语法层端口连接
 │       └── signal_tracer_app.py       # SignalTracerApp: 单文件跨模块（兼容）
 ├── benchmarks/                        # 12 个 SV fixture (基础 always/case/FSM/...)
 ├── tests/
-│   ├── unit/test_signal_tracer.py     # 55 个公开 API 测试
+│   ├── unit/test_signal_tracer.py     # 68 个公开 API 测试
 │   ├── fixtures/m3_hierarchical/      # 3 文件 / 3 层 instance fixture
 │   │   ├── top.sv
 │   │   ├── mid.sv
@@ -221,7 +249,7 @@ sv-trace/
 - ✅ **M1.5** 多驱动检测 / clock-reset 提取 / driver_chain 递归（20/20）
 - ✅ **M2** 上下文召回（line 准确性 + ContextBundle 数据结构，13/13）
 - ✅ **M3** 跨文件支持 + 层次路径追踪（9/9）
-- 📋 **M4** 真实项目验证（OpenTitan, XiangShan）
+- ✅ **M4** 真实项目验证（OpenTitan 6 模块, 0 warning/0 empty, 30,218 drivers 总计）
 - 📋 **M5** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。
