@@ -350,3 +350,120 @@ class TestMultiDriver:
         t2 = SignalTracer(code2, 'm2.sv').build()
         r2 = t2.trace('x')
         assert r2.is_multi_driver() is False
+
+
+# ---------- M1.5: clock/reset 提取 ----------
+
+class TestClockResetExtraction:
+    """M1.5 任务 2: 从 always_ff timing 表达式提取 clock/reset 字段"""
+
+    def test_posedge_only(self):
+        """@(posedge clk) → clock='clk', reset=''"""
+        code = '''
+        module m;
+            logic clk, q, d;
+            always_ff @(posedge clk) q <= d;
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        assert len(r.drivers) == 1
+        d = r.drivers[0]
+        assert d.clock == 'clk', f"expected clock='clk', got '{d.clock}'"
+        assert d.reset == '', f"expected reset='', got '{d.reset}'"
+
+    def test_posedge_clk_or_negedge_rst_n(self):
+        """@(posedge clk or negedge rst_n) → clock='clk', reset='rst_n'"""
+        code = '''
+        module m;
+            logic clk, rst_n, q, d;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) q <= 0;
+                else q <= d;
+            end
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        assert len(r.drivers) == 2
+        for d in r.drivers:
+            assert d.clock == 'clk', f"expected clock='clk', got '{d.clock}'"
+            assert d.reset == 'rst_n', f"expected reset='rst_n', got '{d.reset}'"
+
+    def test_posedge_arst_n_naming_heuristic(self):
+        """@(posedge clk or posedge arst_n) → reset='arst_n' (命名启发式)"""
+        code = '''
+        module m;
+            logic clk, arst_n, q, d;
+            always_ff @(posedge clk or posedge arst_n) begin
+                if (arst_n) q <= 0;
+                else q <= d;
+            end
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        for d in r.drivers:
+            assert d.clock == 'clk', f"expected clock='clk', got '{d.clock}'"
+            assert d.reset == 'arst_n', f"expected reset='arst_n' (命名启发式), got '{d.reset}'"
+
+    def test_negedge_only_naming(self):
+        """@(negedge rst_n) → reset='rst_n' (negedge 也判定 reset)"""
+        code = '''
+        module m;
+            logic rst_n, q;
+            always_ff @(negedge rst_n) q <= 0;
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        for d in r.drivers:
+            assert d.reset == 'rst_n', f"expected reset='rst_n' (negedge 启发式), got '{d.reset}'"
+            assert d.clock == '', f"expected clock='', got '{d.clock}'"
+
+    def test_multi_clock_first_wins(self):
+        """@(posedge clk1, posedge clk2) → clock='clk1' (取第一个)"""
+        code = '''
+        module m;
+            logic clk1, clk2, q, d;
+            always_ff @(posedge clk1, posedge clk2) q <= d;
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        for d in r.drivers:
+            assert d.clock == 'clk1', f"expected clock='clk1' (first wins), got '{d.clock}'"
+
+    def test_always_comb_no_clock(self):
+        """always_comb 没有 timing control → clock='' reset=''"""
+        code = '''
+        module m;
+            logic a, b;
+            always_comb a = b;
+        endmodule
+        '''
+        r = trace_signal('a', code, 'm.sv')
+        for d in r.drivers:
+            assert d.clock == '', f"expected clock='', got '{d.clock}'"
+            assert d.reset == '', f"expected reset='', got '{d.reset}'"
+
+    def test_continuous_assign_no_clock(self):
+        """continuous assign 没有 scope clock/reset → 都空"""
+        code = '''
+        module m;
+            logic a, b;
+            assign a = b;
+        endmodule
+        '''
+        r = trace_signal('a', code, 'm.sv')
+        for d in r.drivers:
+            assert d.clock == '', f"expected clock='', got '{d.clock}'"
+            assert d.reset == '', f"expected reset='', got '{d.reset}'"
+
+    def test_clock_domains_api(self):
+        """get_clock_domains() 返回该信号涉及的所有时钟"""
+        code = '''
+        module m;
+            logic clk, rst_n, q1, q2, d;
+            always_ff @(posedge clk or negedge rst_n) q1 <= d;
+            always_ff @(posedge clk or negedge rst_n) q2 <= d;
+        endmodule
+        '''
+        r = trace_signal('q1', code, 'm.sv')
+        domains = r.get_clock_domains()
+        assert domains == ['clk'], f"expected ['clk'], got {domains}"

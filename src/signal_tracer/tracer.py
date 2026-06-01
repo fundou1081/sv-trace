@@ -208,73 +208,6 @@ def _reconstruct_node_text(node) -> str:
     return ""
 
 
-def _extract_clock_from_event(node) -> str:
-    """从 EventControlWithExpression 提取时钟"""
-    expr = getattr(node, 'expr', None)
-    if not expr:
-        return ""
-    return _extract_clock_from_event_expr(expr)
-
-
-def _extract_clock_from_event_expr(expr) -> str:
-    """从事件表达式提取时钟"""
-    kn = expr.kind.name if hasattr(expr.kind, 'name') else str(expr.kind)
-    
-    if kn == 'SignalEventExpression':
-        for child in expr:
-            ckn = child.kind.name if hasattr(child.kind, 'name') else str(child.kind)
-            if ckn == 'IdentifierName':
-                ident = getattr(child, 'identifier', None)
-                if ident:
-                    return getattr(ident, 'valueText', '') or ''
-    
-    elif kn == 'ParenthesizedEventExpression':
-        for child in expr:
-            sub_kn = child.kind.name if hasattr(child.kind, 'name') else str(child.kind)
-            if sub_kn in ('BinaryEventExpression', 'SignalEventExpression'):
-                result = _extract_clock_from_event_expr(child)
-                if result:
-                    return result
-    
-    elif kn == 'BinaryEventExpression':
-        for child in expr:
-            result = _extract_clock_from_event_expr(child)
-            if result and 'rst' not in result.lower():
-                return result
-    
-    return ""
-
-
-def _extract_reset_from_event(node) -> str:
-    """从 EventControlWithExpression 提取复位"""
-    expr = getattr(node, 'expr', None)
-    if not expr:
-        return ""
-    return _extract_reset_from_event_expr(expr)
-
-
-def _extract_reset_from_event_expr(expr) -> str:
-    """从事件表达式提取复位"""
-    kn = expr.kind.name if hasattr(expr.kind, 'name') else str(expr.kind)
-    
-    if kn == 'SignalEventExpression':
-        for child in expr:
-            ckn = child.kind.name if hasattr(child.kind, 'name') else str(child.kind)
-            if ckn == 'IdentifierName':
-                ident = getattr(child, 'identifier', None)
-                if ident:
-                    name = getattr(ident, 'valueText', '') or ''
-                    if 'rst' in name.lower():
-                        return name
-    
-    elif kn == 'BinaryEventExpression':
-        for child in expr:
-            result = _extract_reset_from_event_expr(child)
-            if result:
-                return result
-    
-    return ""
-
 
 class SignalTracer:
     """信号追踪器
@@ -445,11 +378,11 @@ class SignalTracer:
         # Get hierarchical path
         hpath = getattr(block, 'hierarchicalPath', None)
         block_name = str(hpath) if hpath else 'unknown'
-        
+
         # Get procedure kind
         proc_kind = getattr(block, 'procedureKind', None)
         kind_name = str(proc_kind).split('.')[-1] if proc_kind else 'Unknown'
-        
+
         # Map to ScopeKind
         if 'AlwaysFF' in kind_name:
             scope_kind = ScopeKind.ALWAYS_FF
@@ -459,21 +392,24 @@ class SignalTracer:
             scope_kind = ScopeKind.ALWAYS_LATCH
         else:
             scope_kind = ScopeKind.ALWAYS_FF
-        
+
         # Get location info (SourceLocation has offset, not line)
         loc = getattr(block, 'location', None)
         if loc and hasattr(loc, 'offset'):
             line = self._sv_code[:loc.offset].count('\n') + 1 if loc.offset > 0 else 1
         else:
             line = 1
-        
+
         # Get syntax and line info
         syn = getattr(block, 'syntax', None)
         if syn:
             syn_text = str(syn).replace('\n', ' ')
         else:
             syn_text = ''
-        
+
+        # 提取 clock / reset (仅 always_ff 才有, always_comb/latch 没有 timing control)
+        clock_name, reset_name = self._extract_clock_reset(block)
+
         # Create scope info
         scope = ScopeInfo(
             kind=scope_kind,
@@ -484,13 +420,99 @@ class SignalTracer:
             text=syn_text,
             offset_start=0,
             offset_end=0,
-            clock='',
-            reset='',
+            clock=clock_name,
+            reset=reset_name,
         )
         self._scopes.append(scope)
-        
+
         # Process assignments inside the procedural block
         self._process_block_body(block, scope)
+
+    def _extract_clock_reset(self, block) -> Tuple[str, str]:
+        """从 always_ff/always_latch 的 timing 表达式提取 clock 和 reset 名称
+
+        原理: pyslang 语义 AST 里, ProceduralBlock.body 是 TimedStatement,
+        TimedStatement.timing 可能是:
+        - SignalEventControl: 单事件 (always @(posedge clk))
+        - EventListControl: 多事件 (always @(posedge clk or negedge rst_n))
+        每个 SignalEventControl 有 .edge (PosEdge/NegEdge) 和 .expr (信号名)
+
+        判定 clock vs reset (按优先级):
+        1. 命名启发式: 含 'rst' / 'reset' / 'arst' / 'srst' / 'por' → reset
+        2. edge 方向: negedge → reset 倾向; posedge → clock 倾向
+        3. 多 posedge: 全是 clock (如 @(posedge clk1, posedge clk2))
+        4. 启发式都失败: 归 clock
+
+        Returns:
+            (clock_name, reset_name) — 任一为空字符串表示未识别
+        """
+        clock = ''
+        reset = ''
+
+        body = getattr(block, 'body', None)
+        if body is None or type(body).__name__ != 'TimedStatement':
+            return clock, reset
+
+        timing = getattr(body, 'timing', None)
+        if timing is None:
+            return clock, reset
+
+        # 收集所有 events
+        events = []
+        if type(timing).__name__ == 'EventListControl':
+            events = list(getattr(timing, 'events', []) or [])
+        elif type(timing).__name__ == 'SignalEventControl':
+            events = [timing]
+        else:
+            return clock, reset
+
+        for ev in events:
+            if type(ev).__name__ != 'SignalEventControl':
+                continue
+
+            # 提取信号名
+            expr = getattr(ev, 'expr', None)
+            sig_name = ''
+            if expr is not None:
+                sym = getattr(expr, 'symbol', None)
+                if sym:
+                    sig_name = getattr(sym, 'name', '') or ''
+            if not sig_name:
+                continue
+
+            # 判定 clock vs reset
+            is_reset = self._is_reset_signal(sig_name, ev)
+            if is_reset:
+                if not reset:
+                    reset = sig_name
+            else:
+                if not clock:
+                    clock = sig_name
+                # else: 多 posedge 都被记为 clock, 但只保留第一个 (TODO M3 多 clock)
+
+        return clock, reset
+
+    def _is_reset_signal(self, sig_name: str, event) -> bool:
+        """判断一个 event 信号是否是 reset
+
+        优先级:
+        1. 命名匹配 (强信号, 几乎必定 reset): rst/reset/arst/srst/por/clr/clear
+        2. edge 是 negedge 且没匹配 reset 命名 → 倾向 reset
+        3. 否则: 不算 reset
+        """
+        name_lower = sig_name.lower()
+        # 命名启发式
+        reset_keywords = ('rst', 'reset', 'arst', 'srst', 'por', 'clr', 'clear', 'rstn', 'rst_n')
+        for kw in reset_keywords:
+            if kw in name_lower:
+                return True
+
+        # 边缘启发式: negedge 倾向 reset
+        edge = getattr(event, 'edge', None)
+        if edge is not None and 'NegEdge' in str(edge):
+            return True
+
+        return False
 
     def _process_block_body(self, block, scope):
         """从语义化的 ProceduralBlockSymbol 提取赋值和条件
@@ -750,8 +772,8 @@ class SignalTracer:
                     scope_text=scope.text,
                     scope_offset_start=scope.offset_start,
                     scope_offset_end=scope.offset_end,
-                    clock='',
-                    reset='',
+                    clock=scope.clock,
+                    reset=scope.reset,
                     hierarchical_path=scope.instance_path,
                     condition_stack=list(condition_stack),
                 )
@@ -816,8 +838,8 @@ class SignalTracer:
                             scope_text=scope.text,
                             scope_offset_start=scope.offset_start,
                             scope_offset_end=scope.offset_end,
-                            clock='',
-                            reset='',
+                            clock=scope.clock,
+                            reset=scope.reset,
                             hierarchical_path=scope.instance_path,
                             condition_stack=list(condition_stack),
                         )
@@ -879,8 +901,8 @@ class SignalTracer:
                     scope_text=scope.text,
                     scope_offset_start=scope.offset_start,
                     scope_offset_end=scope.offset_end,
-                    clock='',
-                    reset='',
+                    clock=scope.clock,
+                    reset=scope.reset,
                     hierarchical_path=scope.instance_path,
                     condition_stack=list(condition_stack),
                 )
@@ -917,8 +939,8 @@ class SignalTracer:
             scope_text=scope.text,
             scope_offset_start=scope.offset_start,
             scope_offset_end=scope.offset_end,
-            clock='',
-            reset='',
+            clock=scope.clock,
+            reset=scope.reset,
             hierarchical_path=scope.instance_path,
             condition_stack=list(condition_stack),
         )
@@ -953,8 +975,8 @@ class SignalTracer:
                     scope_text=scope.text,
                     scope_offset_start=scope.offset_start,
                     scope_offset_end=scope.offset_end,
-                    clock='',
-                    reset='',
+                    clock=scope.clock,
+                    reset=scope.reset,
                     hierarchical_path=scope.instance_path,
                     condition_stack=list(condition_stack),
                 )
@@ -1291,257 +1313,7 @@ class SignalTracer:
             import sys
             print(f"WARNING: Unknown expression kind in _get_rhs_info_semantic: {kind} ({type(expr).__name__})", file=sys.stderr)
             return {'text': '', 'signals': []}
-    
-    def _traverse(self, node, parent_scope: ScopeInfo = None, in_scope: bool = False):
-        """遍历树，同时收集 scope、driver、load"""
-        kn = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
-        
-        current_scope = parent_scope
-        new_in_scope = in_scope
-        
-        if kn == 'AlwaysFFBlock':
-            scope = self._extract_scope_info(node, ScopeKind.ALWAYS_FF)
-            scope.parent_name = parent_scope.name if parent_scope else ""
-            self._scopes.append(scope)
-            current_scope = scope
-            new_in_scope = True
-        
-        elif kn == 'AlwaysCombBlock':
-            scope = self._extract_scope_info(node, ScopeKind.ALWAYS_COMB)
-            scope.parent_name = parent_scope.name if parent_scope else ""
-            self._scopes.append(scope)
-            current_scope = scope
-            new_in_scope = True
-        
-        elif kn == 'AlwaysLatchBlock':
-            scope = self._extract_scope_info(node, ScopeKind.ALWAYS_LATCH)
-            scope.parent_name = parent_scope.name if parent_scope else ""
-            self._scopes.append(scope)
-            current_scope = scope
-            new_in_scope = True
-        
-        elif kn == 'ContinuousAssign':
-            scope = self._extract_scope_info(node, ScopeKind.CONTINUOUS_ASSIGN)
-            scope.parent_name = parent_scope.name if parent_scope else ""
-            self._scopes.append(scope)
-            current_scope = scope
-            new_in_scope = True
-        
-        if new_in_scope and current_scope is not None:
-            if kn == 'NonblockingAssignmentExpression':
-                self._process_assignment(node, current_scope, TraceType.DRIVER)
-            elif kn == 'BlockingAssignmentExpression':
-                self._process_assignment(node, current_scope, TraceType.DRIVER)
-            elif kn == 'AssignmentExpression':
-                self._process_assignment(node, current_scope, TraceType.DRIVER)
-            
-            # Process if/while conditions as loads
-            elif kn == 'ConditionalStatement':
-                self._process_condition(node, current_scope)
-        
-        try:
-            for child in node:
-                self._traverse(child, current_scope, new_in_scope)
-        except:
-            pass
-    
-    def _extract_scope_info(self, node, kind: ScopeKind) -> ScopeInfo:
-        """提取 scope 信息"""
-        start, end = _get_source_range(node)
-        text = _get_text_from_range(self._sv_code, start, end)
-        
-        line_start = _get_line_from_offset(self._sv_code, start)
-        line_end = _get_line_from_offset(self._sv_code, end)
-        
-        clock = ""
-        reset = ""
-        if kind == ScopeKind.ALWAYS_FF:
-            clock, reset = self._extract_clock_reset(node)
-        
-        name = f"{kind.value}_{len([s for s in self._scopes if s.kind == kind])}"
-        
-        return ScopeInfo(
-            kind=kind,
-            name=name,
-            line_start=line_start,
-            line_end=line_end,
-            text=text,
-            offset_start=start,
-            offset_end=end,
-            clock=clock,
-            reset=reset,
-        )
-    
-    def _extract_clock_reset(self, node) -> Tuple[str, str]:
-        """从 always_ff 块提取时钟和复位"""
-        clock = ""
-        reset = ""
-        
-        for child in node:
-            ckn = child.kind.name if hasattr(child.kind, 'name') else str(child.kind)
-            if ckn == 'TimingControlStatement':
-                for tc in child:
-                    tckn = tc.kind.name if hasattr(tc.kind, 'name') else str(tc.kind)
-                    if tckn == 'EventControlWithExpression':
-                        clock = _extract_clock_from_event(tc)
-                        reset = _extract_reset_from_event(tc)
-                        break
-                break
-        
-        return clock, reset
-    
-    def _process_assignment(self, node, scope: ScopeInfo, trace_type: TraceType):
-        """处理赋值表达式"""
-        left = getattr(node, 'left', None)
-        right = getattr(node, 'right', None)
-        
-        if left is None or right is None:
-            return
-        
-        lhs_name = _get_lhs_name(left)
-        if not lhs_name:
-            return
-        
-        rhs_ids = _extract_identifiers(right)
-        rhs_start, rhs_end = _get_source_range(right)
-        rhs_text = _get_text_from_range(self._sv_code, rhs_start, rhs_end)
-        
-        # Fallback: use reconstruction for known problematic node types
-        # IntegerVectorExpression often has broken sourceRange
-        rhs_kind = right.kind.name if hasattr(right.kind, 'name') else str(right.kind)
-        if rhs_kind == 'IntegerVectorExpression' and len(rhs_text) < 5:
-            reconstructed = _reconstruct_node_text(right)
-            if reconstructed:
-                rhs_text = reconstructed
-        
-        start, end = _get_source_range(node)
-        line = _get_line_from_offset(self._sv_code, start)
-        
-        trace = TraceResult(
-            trace_type=TraceType.DRIVER,
-            signal_name=lhs_name,
-            source_expr=rhs_text,
-            source_signals=rhs_ids,
-            file=self._file_path,
-            line=line,
-            char_offset=0,
-            scope_kind=scope.kind,
-            scope_line_start=scope.line_start,
-            scope_line_end=scope.line_end,
-            scope_text=scope.text,
-            scope_offset_start=start,
-            scope_offset_end=end,
-            clock='',
-            reset='',
-            hierarchical_path=scope.instance_path,
-        )
-        if lhs_name not in self._drivers:
-            self._drivers[lhs_name] = []
-        self._drivers[lhs_name].append(trace)
-        
-        for rhs_sig in rhs_ids:
-            if rhs_sig != lhs_name:
-                if rhs_sig not in self._loads:
-                    self._loads[rhs_sig] = []
-                load_trace = TraceResult(
-                    trace_type=TraceType.LOAD,
-                    signal_name=rhs_sig,
-                    source_expr=lhs_name,
-                    source_signals=[lhs_name],
-                    file=self._file_path,
-                    line=line,
-                    char_offset=0,
-                    scope_kind=scope.kind,
-                    scope_line_start=scope.line_start,
-                    scope_line_end=scope.line_end,
-                    scope_text=scope.text,
-                    scope_offset_start=start,
-                    scope_offset_end=end,
-                    clock='',
-                    reset='',
-                    hierarchical_path=scope.instance_path,
-                )
-                self._loads[rhs_sig].append(load_trace)
-    
-    def _process_condition(self, node, scope: ScopeInfo):
-        """处理条件语句 (if/while)，追踪条件中的信号读取"""
-        kn = node.kind.name if hasattr(node.kind, 'name') else str(node.kind)
-        if kn != 'ConditionalStatement':
-            return
-        
-        # Get condition (ConditionalPredicate via predicate attr)
-        predicate = getattr(node, 'predicate', None)
-        if predicate is None:
-            return
-        
-        # Extract identifiers from condition using _extract_identifiers
-        cond_ids = _extract_identifiers(predicate)
-        if not cond_ids:
-            return
-        
-        # Compute condition text and position
-        # Strategy: use statement's line number to find the actual if line
-        cond_text = ''
-        cond_line = 0
-        cond_start = 0
-        cond_end = 0
-        
-        # Get line number from statement child (most reliable)
-        statement = getattr(node, 'statement', None)
-        if statement and statement.sourceRange:
-            # Get line from statement position and subtract 1 (if condition is on previous line)
-            stmt_sr = statement.sourceRange
-            stmt_line = _get_line_from_offset(self._sv_code, stmt_sr.start.offset)
-            
-            # The if condition is typically on the line before statement
-            # But for 'else if', it might be on the same line
-            # Find the actual if/else if line
-            lines = self._sv_code.split('\n')
-            
-            # Search backward from statement to find the if/else if line
-            search_start = stmt_sr.start.offset - 200  # search up to 200 chars back
-            if search_start < 0:
-                search_start = 0
-            search_text = self._sv_code[search_start:stmt_sr.start.offset]
-            
-            # Find the LAST 'if' or 'else if' before the statement
-            # This handles 'else if' correctly - we want the one closest to statement
-            import re
-            matches = list(re.finditer(r'\b(?:else\s+)?if\s*\(([^)]+)\)', search_text))
-            if matches:
-                # Use the last match (closest to statement)
-                m = matches[-1]
-                cond_start = search_start + m.start()
-                cond_end = search_start + m.end()
-                cond_text = m.group(1)  # Just the condition inside parentheses
-                cond_line = _get_line_from_offset(self._sv_code, cond_start)
-        
-        # For each identifier in condition, record as a load
-        for sig in cond_ids:
-            if sig not in self._loads:
-                self._loads[sig] = []
-            
-            load_trace = TraceResult(
-                trace_type=TraceType.LOAD,
-                signal_name=sig,
-                source_expr=source_expr,
-                source_signals=[source_expr],
-                file=self._file_path,
-                line=scope.line_start,
-                char_offset=0,
-                scope_kind=scope.kind,
-                scope_line_start=scope.line_start,
-                scope_line_end=scope.line_end,
-                scope_text=scope.text,
-                scope_offset_start=scope.offset_start,
-                scope_offset_end=scope.offset_end,
-                clock='',
-                reset='',
-                hierarchical_path=scope.instance_path,
-            )
-            self._loads[sig].append(load_trace)
 
-    
     def _enrich_port_info(self, trace_result: TraceResult):
         """根据 hierarchical_path 设置端口信息"""
         # Construct full path: instance_path.signal_name
