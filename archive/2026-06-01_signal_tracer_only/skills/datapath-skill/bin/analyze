@@ -1,0 +1,13 @@
+#!/bin/bash
+cd $(dirname $0)/../..
+python3 -c "
+import sys; sys.path.insert(0, 'src')
+from parse import SVParser
+from trace.data_path import analyze_data_path
+
+file = sys.argv[1] if len(sys.argv) > 1 else 'design.sv'
+parser = SVParser()
+parser.parse_file(file)
+analyzer = analyze_data_path(parser)
+print(analyzer.get_report())
+" "$@"
