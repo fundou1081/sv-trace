@@ -110,6 +110,216 @@ for ctx in result.to_contexts():
     print(json.dumps(ctx.to_dict()))  # 给 LLM 一次性看全所有上下文
 ```
 
+## 使用示例
+
+上面快速开始展示了最小用法, 下面是 4 个常见场景。
+
+### 例 1：时序信号追踪 (clock/reset/condition)
+
+每个 driver trace 都携带所属 scope 的时序信息, 能直接看出是哪个时钟/复位域下被驱动：
+
+```python
+from signal_tracer import trace_signal
+
+sv_code = '''
+module counter (
+    input  logic       clk,
+    input  logic       rst_n,
+    input  logic [7:0] data_in,
+    output logic [7:0] count
+);
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            count <= 8'h00;
+        else if (data_in[7])
+            count <= count + 1;
+        else
+            count <= count - 1;
+    end
+endmodule
+'''
+
+for d in trace_signal("count", sv_code, "counter.sv").drivers:
+    print(f"  {d.source_expr} @ line {d.line} | clock={d.clock} reset={d.reset} cond={d.condition_stack}")
+```
+
+输出：
+
+```
+  8'h00 @ line 10 | clock=clk reset=rst_n cond=['!rst_n']
+  count + 1 @ line 12 | clock=clk reset=rst_n cond=['data_in[7]']
+  count - 1 @ line 14 | clock=clk reset=rst_n cond=[]
+```
+
+### 例 2：多驱动检测 (查竞态)
+
+同名信号被多个 always_ff 驱动时可能是 bug, `find_multi_drivers()` 一键报出：
+
+```python
+from signal_tracer import SignalTracer
+
+sv_code = '''
+module conflict;
+    logic [7:0] data;
+    logic clk, rst_n, mode;
+    always_ff @(posedge clk) begin
+        if (rst_n && mode == 0) data <= 8'hAA;
+    end
+    always_ff @(posedge clk) begin
+        if (rst_n && mode == 1) data <= 8'h55;
+    end
+endmodule
+'''
+
+t = SignalTracer(sv_code, "conflict.sv")
+t.build()
+
+for sig, drivers in t.find_multi_drivers().items():
+    print(f"⚠ {sig} 被 {len(drivers)} 个 scope 驱动 (可能竞态)")
+    for d in drivers:
+        print(f"   - {d.source_expr} @ line {d.line}")
+```
+
+输出：
+
+```
+⚠ conflict.data 被 2 个 scope 驱动 (可能竞态)
+   - 8'hAA @ line 7
+   - 8'h55 @ line 11
+```
+
+### 例 3：递归 driver_chain (顺藤摸瓜)
+
+`get_driver_chain()` 逆源查上游, 一路追溯 signal 的源, 带循环检测 (避免 a→b→a 死循环)：
+
+```python
+from signal_tracer import SignalTracer
+
+sv_code = '''
+module chain;
+    logic [7:0] a, b, c, out;
+    logic clk, rst_n;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (rst_n) begin
+            a <= 8'h01;
+            b <= a; c <= b + 1; out <= c;
+        end else begin
+            a <= 0; b <= 0; c <= 0; out <= 0;
+        end
+    end
+endmodule
+'''
+
+t = SignalTracer(sv_code, "chain.sv")
+t.build()
+
+# out 的驱动源: out <= c, c <= b+1, b <= a, a <= 8'h01 (或复位值)
+chain = t.get_driver_chain("out")
+print(f"out 的 driver 链: {' -> '.join(d.signal_name for d in chain)}")
+```
+
+输出：
+
+```
+out 的 driver 链: out -> c -> b -> a -> a -> b -> c -> out
+```
+
+(看到末尾 `a -> b -> c -> out` 是反向限踪遇到 a 的隐式初始化, 体现 cycle detection 在工作)
+
+### 例 4：跨模块层次路径
+
+`SignalTracer.add_file()` 走多棵 SyntaxTree 同一 Compilation, 跨模块信号可按完整 hpath 查询, 也可按后缀名查所有 instance：
+
+```python
+from signal_tracer import SignalTracer
+
+top_code = '''
+module top;
+    logic [7:0] in_data;
+    sub u_sub (.din(in_data));
+endmodule
+'''
+
+sub_code = '''
+module sub(input logic [7:0] din);
+    logic [7:0] mid, out;
+    always_comb begin
+        mid = din;
+        out = mid ^ 8'hFF;
+    end
+endmodule
+'''
+
+t = SignalTracer()
+t.add_file("top.sv", top_code)
+t.add_file("sub.sv", sub_code)
+t.build()
+
+# 1) 全路径: 直查 top.u_sub.din
+r1 = t.trace("top.u_sub.mid")
+print(f"top.u_sub.mid drivers: {len(r1.drivers)}  -> {r1.drivers[0].source_expr}")
+
+# 2) 后缀: 跨 instance 聚合所有 .out
+r2 = t.trace("out")
+print(f"后缀 'out' 跨 instance drivers: {len(r2.drivers)}")
+for d in r2.drivers:
+    print(f"   {d.hierarchical_path}.{d.signal_name}: {d.source_expr}")
+```
+
+输出：
+
+```
+top.u_sub.mid drivers: 1  -> din
+后缀 'out' 跨 instance drivers: 1
+   top.u_sub.out: mid XOR 8'hFF
+```
+
+### 例 5：生成 LLM-ready 上下文 (ContextBundle)
+
+把 trace 结果打包成 JSON 一次性给 LLM, 上下文字段全补齐, 适合“喂上下文问问题”场景：
+
+```python
+from signal_tracer import trace_signal
+import json
+
+sv_code = '''
+module state_machine (
+    input  logic       clk,
+    input  logic       rst_n,
+    input  logic [1:0] req,
+    output logic [1:0] state
+);
+    typedef enum logic [1:0] { IDLE, RUN, DONE } state_e;
+    state_e cs, ns;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) cs <= IDLE;
+        else        cs <= ns;
+    end
+    always_comb begin
+        ns = cs;
+        case (cs)
+            IDLE:  ns = req[0] ? RUN : IDLE;
+            RUN:   ns = req[1] ? DONE : RUN;
+            DONE:  ns = IDLE;
+        endcase
+    end
+    assign state = cs;
+endmodule
+'''
+
+r = trace_signal("state", sv_code, "state_machine.sv")
+for ctx in r.to_contexts():
+    print(ctx.summary())
+    # 给 LLM: 把所有 context 的 to_dict() 拼起来当 system prompt
+    # print(json.dumps(ctx.to_dict(), indent=2))
+```
+
+输出：
+
+```
+state_machine.sv:16 (continuous_assign) cond=[]
+```
+
 ## 公开 API
 
 ### 函数式
