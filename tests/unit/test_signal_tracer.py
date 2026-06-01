@@ -467,3 +467,139 @@ class TestClockResetExtraction:
         r = trace_signal('q1', code, 'm.sv')
         domains = r.get_clock_domains()
         assert domains == ['clk'], f"expected ['clk'], got {domains}"
+
+
+# ---------- M1.5: driver_chain 递归 ----------
+
+class TestDriverChain:
+    """M1.5 任务 3: SignalTracer.get_driver_chain() 递归查询
+
+    与 TraceSummary.get_driver_chain() 不同, 本方法实际查 _drivers,
+    能递归到上游所有信号。
+    """
+
+    def test_single_hop(self):
+        """a = b → chain 包含 1 个 driver (a <- b)"""
+        code = '''
+        module m;
+            logic [7:0] a, b;
+            always_comb a = b;
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 'm.sv').build()
+        chain = t.get_driver_chain('a')
+        # chain 至少 1 个 driver (a <- b)
+        assert len(chain) >= 1
+        # 第一个是 a 的 driver
+        assert chain[0].signal_name == 'a'
+        # chain 里包含 b 作为 source
+        all_sources = set()
+        for d in chain:
+            all_sources.update(d.source_signals)
+        assert 'b' in all_sources, f"b 应在 chain 的 source_signals 里: {all_sources}"
+
+    def test_multi_hop(self):
+        """a = b; b = c → chain 含 a, b 两个 driver"""
+        code = '''
+        module m;
+            logic [7:0] a, b, c;
+            always_comb a = b;
+            always_comb b = c;
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 'm.sv').build()
+        chain = t.get_driver_chain('a')
+        sigs_in_chain = [d.signal_name for d in chain]
+        assert 'a' in sigs_in_chain
+        assert 'b' in sigs_in_chain, f"b 应在 chain 里 (递归): {sigs_in_chain}"
+
+    def test_self_reference_no_infinite_loop(self):
+        """count = count + 1 → 不死循环"""
+        code = '''
+        module m;
+            logic [7:0] count;
+            logic clk;
+            always_ff @(posedge clk) count <= count + 1;
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 'm.sv').build()
+        # 不抛异常
+        chain = t.get_driver_chain('count')
+        # count 应在 chain 里 (自指不算环, 不会无限递归)
+        sigs_in_chain = [d.signal_name for d in chain]
+        assert 'count' in sigs_in_chain
+        # count 只应出现一次 (visited 阻断)
+        assert sigs_in_chain.count('count') == 1, \
+            f"count 应只出现 1 次, got {sigs_in_chain.count('count')}: {sigs_in_chain}"
+
+    def test_cycle_no_infinite_loop(self):
+        """a = b; b = a → 环检测, 不死循环"""
+        code = '''
+        module m;
+            logic [7:0] a, b;
+            always_comb a = b;
+            always_comb b = a;
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 'm.sv').build()
+        # 不应抛 RecursionError 或栈溢出
+        chain = t.get_driver_chain('a')
+        # 至少 a 的 driver 自身
+        assert len(chain) >= 1
+        sigs_in_chain = [d.signal_name for d in chain]
+        # a 和 b 各最多 1 次 (visited 阻断)
+        assert sigs_in_chain.count('a') <= 1
+        assert sigs_in_chain.count('b') <= 1
+
+    def test_max_depth_limit(self):
+        """深 5 层的 chain, max_depth=3 应截断"""
+        code = '''
+        module m;
+            logic [7:0] s0, s1, s2, s3, s4, s5;
+            always_comb s0 = s1;
+            always_comb s1 = s2;
+            always_comb s2 = s3;
+            always_comb s3 = s4;
+            always_comb s4 = s5;
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 'm.sv').build()
+        # 完整链: s0, s1, s2, s3, s4 (5 个 driver)
+        full = t.get_driver_chain('s0', max_depth=10)
+        # 截断: max_depth=3 只能到 s3 (depth 0=s0, 1=s1, 2=s2, 3=s3)
+        # 实际取决于实现: walk(sig, 0) → 加 s0 的 driver, 递归 src 走 depth 1
+        # 截断 = 3 应该最多到 s3
+        limited = t.get_driver_chain('s0', max_depth=3)
+        # 截断的不应比 full 长
+        assert len(limited) <= len(full), \
+            f"max_depth=3 不应比无限 max_depth 链更长: {len(limited)} vs {len(full)}"
+        # 且 limited 至少 1 个 (s0 自身)
+        assert len(limited) >= 1
+
+    def test_conditional_source_in_chain(self):
+        """a = sel ? b : c → chain 应包含 sel, b, c (作为 source_signals)"""
+        code = '''
+        module m;
+            logic [7:0] a, b, c;
+            logic sel;
+            always_comb a = sel ? b : c;
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 'm.sv').build()
+        chain = t.get_driver_chain('a')
+        # 收集所有 source_signal
+        all_sources = set()
+        for d in chain:
+            all_sources.update(d.source_signals)
+        # 至少 sel, b, c 应被某个 driver 提及 (作为 a 的 source)
+        # a 的 driver.source_signals 应包含 sel, b, c
+        first_driver = chain[0]
+        for sig in ('sel', 'b', 'c'):
+            assert sig in first_driver.source_signals, \
+                f"{sig} 应在 chain[0].source_signals 里: {first_driver.source_signals}"

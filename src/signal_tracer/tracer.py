@@ -1474,6 +1474,73 @@ class SignalTracer:
         drivers = self._drivers.get(signal_name, [])
         return len({d.scope_text for d in drivers if d.scope_text})
 
+    def get_driver_chain(
+        self, signal_name: str, max_depth: int = 10
+    ) -> List[TraceResult]:
+        """递归查询信号的完整驱动链 (从 output 追溯到 input)
+
+        与 TraceSummary.get_driver_chain() 不同:
+        - TraceSummary 版: 只看直接 driver 的 source_signals
+        - 本方法: 实际查 _drivers[candidate], 递归所有上游
+
+        例如:
+            always_comb b = a + 1;
+            always_ff @(posedge clk) c <= b;
+        调 get_driver_chain('c') 返回 [DriverTrace(c<=b), DriverTrace(b<=a+1)]
+
+        循环依赖 (a = b; b = a) 会自动检测, 不死循环。
+
+        Args:
+            signal_name: 起始信号
+            max_depth: 最大递归深度 (防复杂网状电路)
+
+        Returns:
+            List[TraceResult], 顺序是 从信号本身向其上游
+        """
+        if not self._built:
+            self.build()
+
+        chain: List[TraceResult] = []
+        visited: Set[str] = set()
+
+        def walk(sig: str, depth: int):
+            if depth > max_depth or sig in visited:
+                return
+            visited.add(sig)
+
+            # 当前 sig 的所有 driver
+            drivers = self._drivers.get(sig, [])
+            for d in drivers:
+                chain.append(d)
+                # 下一跳: d.source_signals 中的所有信号名
+                for src in d.source_signals:
+                    if src and self._is_real_signal(src):
+                        walk(src, depth + 1)
+
+        walk(signal_name, 0)
+        return chain
+
+    def _is_real_signal(self, name: str) -> bool:
+        """判断 name 是否是真实信号名 (不是字面常量 / 关键字)
+
+        过滤:
+        - 数字字面量: 0, 1, 8'h00
+        - 关键字: '0', '1', 'x', 'z'
+        - 空字符串
+        """
+        if not name:
+            return False
+        # 数字字面量
+        if name[0].isdigit():
+            return False
+        # SystemVerilog literal 前缀
+        if name.startswith("'") or name in ('0', '1', 'x', 'z', 'X', 'Z'):
+            return False
+        # 表达式
+        if any(op in name for op in ('+', '-', '*', '/', '&', '|', '^', '~', '?', ':', '<', '>')):
+            return False
+        return True
+
 
 class SignalTracerFromFile(SignalTracer):
     """从文件加载的信号追踪器"""
