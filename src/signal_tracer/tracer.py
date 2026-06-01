@@ -327,7 +327,17 @@ class SignalTracer:
         assign_expr = getattr(sym, 'assignment', None)
         if assign_expr is None:
             return
-        
+
+        # M4 防御: pyslang 可能返回 InvalidExpression (例如 reg block 类型不在编译单元中)
+        # 这种情况 fallback 到语法层解析, 不让整个 build 崩
+        expr_type = type(assign_expr).__name__
+        if expr_type == 'InvalidExpression':
+            # Fallback: 从 syntax 恢复 lhs/rhs
+            syn = getattr(sym, 'syntax', None)
+            if syn:
+                self._process_syntax_for_assignment(syn, None)
+            return
+
         # Get left (target) and right (source) from semantic expressions
         lhs_name = self._get_lhs_name_semantic(assign_expr.left)
         rhs_info = self._get_rhs_info_semantic(assign_expr.right)
@@ -1165,7 +1175,17 @@ class SignalTracer:
             literal = getattr(expr, 'literal', None)
             if literal:
                 return getattr(literal, 'valueText', '') or ''
-        
+        elif kind == 'UnbasedUnsizedIntegerLiteral':
+            # Unsized literal like '0, '1, 'x, 'z (常用于 cast 如 8'(expr))
+            value = getattr(expr, 'value', None)
+            if value is not None:
+                # 拼回 '0 / '1 / 'x / 'z 形式
+                return "'" + str(value).lower()
+            # fallback
+            literal = getattr(expr, 'literal', None)
+            if literal:
+                return getattr(literal, 'valueText', '') or "'0"
+
         return ""
     
     def _get_rhs_info_semantic(self, expr) -> Dict:
@@ -1423,14 +1443,66 @@ class SignalTracer:
             operand = getattr(expr, 'operand', None)
             op = getattr(expr, 'op', None)
             op_text = str(op).split('.')[-1] if op else ''
-            
+
             operand_info = self._get_rhs_info_semantic(operand) if operand else {'text': '', 'signals': []}
-            
+
             return {
                 'text': f"{op_text}{operand_info['text']}",
                 'signals': operand_info['signals']
             }
-        
+
+        elif kind == 'MemberAccess':
+            # M4: struct/类 成员访问, e.g. r.q, blk.ctrl.tx.q, reg2hw.ctrl.tx.q
+            # .value 是父表达式 (NamedValue 或嵌套 MemberAccess)
+            # .member 是 FieldSymbol, 取 .name 拿字段名
+            value = getattr(expr, 'value', None)
+            member = getattr(expr, 'member', None)
+            member_name = ''
+            if member is not None:
+                member_name = getattr(member, 'name', '') or str(member)
+            value_info = self._get_rhs_info_semantic(value) if value else {'text': '', 'signals': []}
+            base_text = value_info['text'] or (getattr(value, 'symbol', None) and getattr(value.symbol, 'name', '') or '')
+            full_text = f"{base_text}.{member_name}" if base_text else member_name
+            return {
+                'text': full_text,
+                'signals': value_info['signals'],  # 基础信号是 load, field 本身不是变量
+            }
+
+        elif kind == 'Replication':
+            # M4: {count{expr}} — 拼接复制
+            # 例: {8{1'b1}} -> "8'11111111" 文本
+            # .count 是次数 (IntegerLiteral)
+            # .concat 内部是 ConcatenationExpression (M4 也顺手处理)
+            count = getattr(expr, 'count', None)
+            concat = getattr(expr, 'concat', None)
+            # 复用 _get_rhs_info_semantic 拿 concat 内部的信号
+            concat_info = self._get_rhs_info_semantic(concat) if concat else {'text': '', 'signals': []}
+            # count 文本 (IntegerLiteral 直接取 value)
+            count_val = ''
+            if count is not None:
+                count_lit = getattr(count, 'literal', None) or getattr(count, 'value', None)
+                if count_lit is not None:
+                    count_val = str(getattr(count_lit, 'valueText', count_lit))
+                else:
+                    count_val = str(count)
+            full_text = f"{{{count_val}{{{concat_info['text']}}}}}"
+            return {
+                'text': full_text,
+                'signals': concat_info['signals'],
+            }
+
+        elif kind == 'UnbasedUnsizedIntegerLiteral':
+            # M4: unsized literal like '0, '1, 'x, 'z (常用于 cast)
+            value = getattr(expr, 'value', None)
+            text = ''
+            if value is not None:
+                text = "'" + str(value).lower()
+            elif getattr(expr, 'literal', None) is not None:
+                text = "'" + str(getattr(expr.literal, 'valueText', '0'))
+            else:
+                text = "'0"
+            return {'text': text, 'signals': []}
+
         else:
             # 防御性检查: 未知类型，记录并返回空
             import sys
