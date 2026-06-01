@@ -381,7 +381,7 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **68/68 通过** (1.83s) |
+| 公开 API 测试 | **74/74 通过** (1.98s) |
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
@@ -396,7 +396,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 
 ## 测试覆盖 (M0–M4)
 
-主测试 `tests/unit/test_signal_tracer.py` 包含 **15 个 TestClass, 68 个测试**：
+主测试 `tests/unit/test_signal_tracer.py` 包含 **16 个 TestClass, 74 个测试**：
 
 | 阶段 | TestClass | 测试数 | 覆盖点 |
 |------|-----------|--------|--------|
@@ -406,6 +406,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M2 | `TestContextAccuracy`, `TestContextBundle` | — | line/scope_text 准确性, ContextBundle frozen dataclass |
 | M3 | `TestMultiFile` | — | 多文件 build, 层次路径 (`top.u_mid.u_leaf`), 后缀匹配 |
 | M4 | `TestExpressionCoverage`, `TestContinuousAssignRobustness`, `TestMultiFileLineFallback`, `TestScopeFilePath`, `TestAdditionalExpressions` | +5 | 17 种 SV 表达式, InvalidExpression 防御, 跨文件行号 (SourceManager), TraceResult.file 精确, 嵌套 MemberAccess+RangeSelect |
+| M4.1 | `TestInterfaceModport` | +6 | Interface/Modport 信号追踪 (HierarchicalValue), 跨 modport 读写, m.data[3:0] 位选 |
 
 各阶段演进：
 
@@ -416,7 +417,8 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M1.5 | 20 | 46 |
 | M2 | 13 | 59 |
 | M3 | 9 | 68 |
-| M4 | 5 | (overlap, 主文件还是 68) |
+| M4 | 5 | 73 |
+| M4.1 | 6 | (主测试 74) |
 
 详见 [tests/README.md](tests/README.md) 和 [TEST_PLAN.md](TEST_PLAN.md)。
 
@@ -435,7 +437,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 
 **M4 能力覆盖的 SV 语法**:
 
-- 表达式: `MemberAccess` / `RangeSelect` / `ElementSelect` / `BinaryOp` / `UnaryOp` / `ConditionalOp` / `CastExpression` / `Call` / `Replication` / `Concatenation` / `Streaming` (`{<<8{x}}` / `{>>8{x}}`) / `Inside` / `UnbasedUnsizedIntegerLiteral` (`'0` / `'1`) / `StructuredAssignmentPattern` / `SimpleAssignmentPattern` / `LValueReference` / `DataType`
+- 表达式: `MemberAccess` / `RangeSelect` / `ElementSelect` / `BinaryOp` / `UnaryOp` / `ConditionalOp` / `CastExpression` / `Call` / `Replication` / `Concatenation` / `Streaming` (`{<<8{x}}` / `{>>8{x}}`) / `Inside` / `UnbasedUnsizedIntegerLiteral` (`'0` / `'1`) / `StructuredAssignmentPattern` / `SimpleAssignmentPattern` / `LValueReference` / `DataType` / **`HierarchicalValue` (Interface/Modport 访问, M4.1)**
 - 嵌套: 任意深度 MemberAccess (e.g. `reg2hw.ctrl.tx.q`) + 跨 RangeSelect (`reg2hw.val[BufferAw:0]`)
 - 跨文件: 多 .sv 编译为同一 Compilation, 跨模块引用 + 层次路径 (`uart.uart_core.tx_enable`)
 - 跨文件行号: `pyslang SourceManager.getLineNumber()` 走 SourceLocation.buffer 精准算行
@@ -444,7 +446,8 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 
 **未支持 (边缘场景)**:
 
-- 复杂 type system (interface/modport) — port_resolver 独立模块已实现语法层
+- ~~复杂 type system (interface/modport)~~ — **M4.1 已支持** (HierarchicalValueExpression 完整追踪, 跨 master/slave modport 都可, 含 m.data[3:0] 位选)
+- modport direction (input/output) 区分 driver/load — 尚未实现 (现在 input 和 output 都被当 driver, 可能误报多驱动)
 - Clocking block / Property/Sequence 内部
 - System task ($cast, $readmemh) 中的信号
 
@@ -475,6 +478,7 @@ sv-trace/
 ├── STRUCTURE.md                       # 详细架构 / API 字段表
 ├── TODO.md                            # 路线图
 ├── TEST_PLAN.md                       # 测试计划
+├── SKILL.md                           # Agent 集成 (供 AI agent 调用)
 ├── pyproject.toml
 └── pytest.ini
 ```
@@ -487,6 +491,7 @@ sv-trace/
 - ✅ **M2** 上下文召回（line 准确性 + ContextBundle 数据结构，13/13）
 - ✅ **M3** 跨文件支持 + 层次路径追踪（9/9）
 - ✅ **M4** 真实项目验证（OpenTitan 6 模块, 0 warning/0 empty, 30,218 drivers 总计）
+- ✅ **M4.1** Interface/Modport 信号追踪（HierarchicalValue 完整覆盖, 6 个新测试）
 - 📋 **M5** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。
@@ -509,6 +514,7 @@ sv-trace/
 - [STRUCTURE.md](STRUCTURE.md) — 详细架构 / API 字段表 / 数据流图
 - [TODO.md](TODO.md) — 路线图 / 不做的功能 / 历史
 - [TEST_PLAN.md](TEST_PLAN.md) — 测试计划 / 状态
+- [SKILL.md](SKILL.md) — Agent 集成指南 (供 AI agent 调用)
 - [tests/README.md](tests/README.md) — 测试总览
 
 ## License
