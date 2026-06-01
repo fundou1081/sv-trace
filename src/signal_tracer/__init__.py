@@ -29,6 +29,7 @@ from signal_tracer.models import (
     ScopeInfo,
     SignalInfo,
     TraceSummary,
+    ContextBundle,
 )
 from signal_tracer.tracer import (
     SignalTracer,
@@ -47,6 +48,7 @@ __all__ = [
     'ScopeInfo',
     'SignalInfo',
     'TraceSummary',
+    'ContextBundle',
     # 核心类
     'SignalTracer',
     'SignalTracerFromFile',

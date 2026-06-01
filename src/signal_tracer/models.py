@@ -4,7 +4,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from enum import Enum
 
 
@@ -67,6 +67,34 @@ class TraceResult:
     def __repr__(self) -> str:
         direction = "<=" if self.trace_type == TraceType.DRIVER else "->"
         return f"TraceResult({self.signal_name} {direction} {self.source_expr!r}@{self.line})"
+
+    def to_context(self) -> 'ContextBundle':
+        """把自己打包成 ContextBundle
+
+        用于 agent 一次性拿到 trace 的所有上下文 (file/line/scope/clock/reset/cond_stack/port)。
+        返回的 ContextBundle 是 frozen 的, 可以安全地传给 LLM 或序列化。
+
+        Returns:
+            ContextBundle 实例
+        """
+        from signal_tracer.models import ContextBundle
+        return ContextBundle(
+            file=self.file,
+            line=self.line,
+            char_offset=self.char_offset,
+            scope_text=self.scope_text,
+            scope_line_start=self.scope_line_start,
+            scope_line_end=self.scope_line_end,
+            scope_kind=self.scope_kind.value if self.scope_kind else '',
+            clock=self.clock,
+            reset=self.reset,
+            condition=self.condition,
+            condition_stack=tuple(self.condition_stack),
+            is_port=self.is_port,
+            port_direction=self.port_direction,
+            hierarchical_path=self.hierarchical_path,
+            confidence=self.confidence,
+        )
 
 
 @dataclass
@@ -153,6 +181,17 @@ class TraceSummary:
             if d.scope_text and d.scope_text not in seen:
                 seen.append(d.scope_text)
         return seen
+
+    def to_contexts(self) -> List['ContextBundle']:
+        """把这次 trace 的所有 driver 打包为 ContextBundle 列表
+
+        agent 拿到一个 List[ContextBundle] 可以一次性看到所有 driver 上下文,
+        不必自己遍历 drivers 列表逐个 to_context()。
+
+        Returns:
+            List[ContextBundle], 顺序与 self.drivers 一致
+        """
+        return [d.to_context() for d in self.drivers]
     
     def get_driver_chain(self, max_depth: int = 10) -> List[str]:
         """获取驱动链 (从输入到输出)"""
@@ -174,3 +213,81 @@ class TraceSummary:
         
         build_chain(self.signal_name, 0)
         return chain
+
+
+@dataclass(frozen=True)
+class ContextBundle:
+    """不可变的"上下文包" — 把一次 trace 的所有上下文信息打包
+
+    设计动机:
+    agent 拿到一条 trace 时, 需要同时知道: 在哪个文件哪一行, 周围整个 scope 的源码是什么,
+    在什么 clock/reset 下, 嵌套在什么 if 条件里, 是 port 吗, 通过哪个 port 跨模块连过来...
+    这些信息散在 TraceResult 的 10+ 个字段里, agent 自己拼装很烦。
+
+    ContextBundle 把它们打包成一个 frozen dataclass, 可以一次性传给 LLM,
+    也可以作为 dict / JSON 序列化。
+
+    frozen=True 保证 immutable, 适合做 dict key 或 hash。
+    """
+
+    # 位置信息
+    file: str
+    line: int
+    char_offset: int
+
+    # Scope 信息
+    scope_text: str
+    scope_line_start: int
+    scope_line_end: int
+    scope_kind: str  # ScopeKind.value (e.g. 'always_ff'), str 便于序列化
+
+    # 时钟/复位
+    clock: str
+    reset: str
+
+    # 条件栈
+    condition: str
+    condition_stack: Tuple[str, ...]
+
+    # 端口信息
+    is_port: bool
+    port_direction: str
+    hierarchical_path: str
+
+    # 元数据
+    confidence: str
+
+    def to_dict(self) -> dict:
+        """转为 dict 便于 JSON 序列化"""
+        return {
+            'file': self.file,
+            'line': self.line,
+            'char_offset': self.char_offset,
+            'scope_text': self.scope_text,
+            'scope_line_start': self.scope_line_start,
+            'scope_line_end': self.scope_line_end,
+            'scope_kind': self.scope_kind,
+            'clock': self.clock,
+            'reset': self.reset,
+            'condition': self.condition,
+            'condition_stack': list(self.condition_stack),
+            'is_port': self.is_port,
+            'port_direction': self.port_direction,
+            'hierarchical_path': self.hierarchical_path,
+            'confidence': self.confidence,
+        }
+
+    def summary(self) -> str:
+        """生成一行可读摘要, 适合 LLM 看
+
+        例: '01.sv:10 (always_ff) clk=clk, reset=rst_n, cond=[!rst_n]'
+        """
+        parts = [f'{self.file}:{self.line}']
+        parts.append(f'({self.scope_kind})')
+        if self.clock:
+            parts.append(f'clock={self.clock}')
+        if self.reset:
+            parts.append(f'reset={self.reset}')
+        if self.condition_stack:
+            parts.append(f'cond={list(self.condition_stack)}')
+        return ' '.join(parts)
