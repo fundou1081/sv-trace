@@ -374,6 +374,8 @@ class SignalTracer:
         # Create scope info for continuous assign
         # M3: continuous assign 的 hpath 就是其所在 module 的 hpath (如 'top' 或 'top.u_sub')
         assign_hpath = getattr(sym, 'hierarchicalPath', '') or ''
+        # M4: 从 SourceLocation 取实际文件名 (代替 self._file_path)
+        assign_file = self._get_file_from_location(sym.location)
         scope = ScopeInfo(
             kind=ScopeKind.CONTINUOUS_ASSIGN,
             name=assign_hpath or 'assign',
@@ -385,6 +387,7 @@ class SignalTracer:
             offset_end=0,
             clock='',
             reset='',
+            file_path=assign_file,
         )
         self._scopes.append(scope)
 
@@ -397,7 +400,7 @@ class SignalTracer:
             signal_name=lhs_name,
             source_expr=rhs_info['text'],
             source_signals=rhs_info['signals'],
-            file=self._file_path,
+            file=scope.file_path,
             line=line,
             char_offset=0,
             scope_kind=ScopeKind.CONTINUOUS_ASSIGN,
@@ -430,7 +433,7 @@ class SignalTracer:
                     signal_name=sig,
                     source_expr=lhs_name,
                     source_signals=[lhs_name],
-                    file=self._file_path,
+                    file=scope.file_path,
                     line=line,
                     char_offset=0,
                     scope_kind=ScopeKind.CONTINUOUS_ASSIGN,
@@ -496,6 +499,8 @@ class SignalTracer:
         clock_name, reset_name = self._extract_clock_reset(block)
 
         # Create scope info
+        # M4: 从 block.location 取实际文件
+        block_file = self._get_file_from_location(block.location)
         scope = ScopeInfo(
             kind=scope_kind,
             name=block_name,
@@ -507,6 +512,7 @@ class SignalTracer:
             offset_end=0,
             clock=clock_name,
             reset=reset_name,
+            file_path=block_file,
         )
         self._scopes.append(scope)
 
@@ -712,6 +718,10 @@ class SignalTracer:
             return
         if node_type in ('ReturnStatement', 'BreakStatement', 'ContinueStatement'):
             return
+        # M4: 状态断言 (assert property) - SV断言, 不产生 driver/load trace
+        # (assertion 内的信号在 SVA 内部使用, 不是赋值的 source)
+        if node_type == 'ConcurrentAssertionStatement':
+            return
 
         # ---- 真正未知的才打 WARNING ----
         import sys
@@ -781,7 +791,7 @@ class SignalTracer:
                 signal_name=lhs_name,
                 source_expr=assign_syntax,
                 source_signals=[rhs_name] if rhs_name else [],
-                file=self._file_path,
+                file=scope.file_path,
                 line=scope.line_start,
                 char_offset=0,
                 scope_kind=scope.kind,
@@ -807,7 +817,7 @@ class SignalTracer:
                     signal_name=rhs_name,
                     source_expr=lhs_name,
                     source_signals=[lhs_name],
-                    file=self._file_path,
+                    file=scope.file_path,
                     line=scope.line_start,
                     char_offset=0,
                     scope_kind=scope.kind,
@@ -848,7 +858,7 @@ class SignalTracer:
                     signal_name=sig,
                     source_expr=f"case({rhs_info['text']})",
                     source_signals=[rhs_info['text']],
-                    file=self._file_path,
+                    file=scope.file_path,
                     line=scope.line_start,
                     char_offset=0,
                     scope_kind=scope.kind,
@@ -914,7 +924,7 @@ class SignalTracer:
                             signal_name=sig,
                             source_expr=cond_text,
                             source_signals=rhs_info['signals'],
-                            file=self._file_path,
+                            file=scope.file_path,
                             line=scope.line_start,
                             char_offset=0,
                             scope_kind=scope.kind,
@@ -977,7 +987,7 @@ class SignalTracer:
                     signal_name=sig,
                     source_expr=f"{call_name}({rhs_info['text']})" if call_name else rhs_info['text'],
                     source_signals=rhs_info['signals'],
-                    file=self._file_path,
+                    file=scope.file_path,
                     line=scope.line_start,
                     char_offset=0,
                     scope_kind=scope.kind,
@@ -1021,7 +1031,7 @@ class SignalTracer:
             signal_name=lhs_name,
             source_expr=rhs_info['text'],
             source_signals=rhs_info['signals'],
-            file=self._file_path,
+            file=scope.file_path,
             line=actual_line,
             char_offset=actual_offset,
             scope_kind=scope.kind,
@@ -1063,7 +1073,7 @@ class SignalTracer:
                     signal_name=sig,
                     source_expr=lhs_name,
                     source_signals=[lhs_name],
-                    file=self._file_path,
+                    file=scope.file_path,
                     line=actual_line,
                     char_offset=actual_offset,
                     scope_kind=scope.kind,
@@ -1113,6 +1123,23 @@ class SignalTracer:
             return self._source_manager.getLineNumber(source_loc)
         except Exception:
             return 0
+
+    def _get_file_from_location(self, source_loc) -> str:
+        """M4: 用 pyslang SourceManager 跨文件获得文件名
+
+        之前 bug: TraceResult.file 总是指向第一个添加的文件 (spid_csb_sync.sv 等)
+        原因: self._file_path 只在第一个文件 add_file 时被设
+        修复: 从 SourceLocation 拿到 buffer 交给 SourceManager 查文件名
+
+        Returns:
+            文件路径, 如果无法计算返回 self._file_path (fallback)
+        """
+        if source_loc is None or self._source_manager is None:
+            return self._file_path
+        try:
+            return self._source_manager.getFileName(source_loc)
+        except Exception:
+            return self._file_path
 
     def _get_expr_location(self, expr, scope) -> Tuple[int, int]:
         """获取表达式的精确位置 (行号, 字符偏移)
@@ -1182,6 +1209,28 @@ class SignalTracer:
                         if left_val and right_val:
                             return f'{name}[{left_val}:{right_val}]'
                     return name
+                # M4: 嵌套 MemberAccess, e.g. reg2hw.val[BufferAw:0]
+                # value 有 .member 字段
+                value_kind = str(value.kind).split('.')[-1]
+                if value_kind == 'MemberAccess':
+                    member = getattr(value, 'member', None)
+                    if member:
+                        member_name = getattr(member, 'name', '') or ''
+                        # 拿 base (.value 的 .symbol.name)
+                        base_value = getattr(value, 'value', None)
+                        if base_value:
+                            base_sym = getattr(base_value, 'symbol', None)
+                            if base_sym:
+                                base_name = getattr(base_sym, 'name', '') or ''
+                                # 拿范围
+                                left = getattr(expr, 'left', None)
+                                right = getattr(expr, 'right', None)
+                                if left and right:
+                                    left_val = getattr(left, 'name', None) or self._get_selector_name(left)
+                                    right_val = getattr(right, 'name', None) or self._get_selector_name(right)
+                                    if left_val and right_val:
+                                        return f'{base_name}.{member_name}[{left_val}:{right_val}]'
+                                return f'{base_name}.{member_name}'
         elif kind == 'NamedValue':
             # Simple variable like data
             symbol = getattr(expr, 'symbol', None)
@@ -1334,6 +1383,12 @@ class SignalTracer:
                     if value_symbol:
                         base_name = getattr(value_symbol, 'name', '') or ''
                         signals.append(base_name)
+                elif value_kind == 'MemberAccess':
+                    # 嵌套: e.g. reg2hw.val[BufferAw:0]
+                    # 递归拿整个 member chain 的 text 和 signals
+                    value_info = self._get_rhs_info_semantic(value)
+                    base_name = value_info['text']
+                    signals.extend(value_info['signals'])
             
             # Get range info [left:right]
             left_val = getattr(expr, 'left', None)
@@ -1601,6 +1656,62 @@ class SignalTracer:
             if value:
                 return self._get_rhs_info_semantic(value)
             return {'text': '', 'signals': []}
+
+        elif kind == 'Streaming':
+            # M4: SV streaming concatenation, e.g. {<<8{val}}
+            # .sliceSize: int (8 in <<8)
+            # .streams: [StreamExpression, ...] — each has .operand
+            # .bitstreamWidth: int
+            slice_size = getattr(expr, 'sliceSize', 0)
+            streams = getattr(expr, 'streams', [])
+            parts = []
+            signals = []
+            for stream in streams:
+                stream_operand = getattr(stream, 'operand', None)
+                if stream_operand:
+                    info = self._get_rhs_info_semantic(stream_operand)
+                    parts.append(info['text'])
+                    signals.extend(info['signals'])
+            if not parts:
+                return {'text': '', 'signals': []}
+            # text: {<<8{operand}}
+            inner = '{' + ', '.join(parts) + '}' if len(parts) > 1 else parts[0]
+            return {
+                'text': f"{{{'<<' if slice_size else '>>'}{slice_size}{{{inner}}}}}",
+                'signals': list(set(signals))
+            }
+
+        elif kind == 'Inside':
+            # M4: SV inside operator, e.g. (a inside {b, c, [1:5]})
+            # .left: 主表达式
+            # .rangeList: [expr, ...] — 集合成员
+            left_expr = getattr(expr, 'left', None)
+            range_list = getattr(expr, 'rangeList', [])
+            signals = []
+            parts = []
+            if left_expr:
+                left_info = self._get_rhs_info_semantic(left_expr)
+                signals.extend(left_info['signals'])
+                parts.append(left_info['text'])
+            for r in range_list:
+                info = self._get_rhs_info_semantic(r) if r else {'text': '?', 'signals': []}
+                parts.append(info['text'])
+                signals.extend(info['signals'])
+            if len(parts) >= 2:
+                return {
+                    'text': f"({parts[0]} inside {{{', '.join(parts[1:])}}})",
+                    'signals': list(set(signals))
+                }
+            return {'text': f"inside {{{', '.join(parts[1:])}}}", 'signals': list(set(signals))}
+
+        elif kind == 'DataType':
+            # M4: DataTypeExpression - 类型作为表达式 (罕见, 通常在 cast 上下文)
+            # e.g. type'(val) 或 某些 SVA 上下文
+            # 没有子表达式可追踪, 退到 syntax text
+            syn = getattr(expr, 'syntax', None)
+            if syn:
+                return {'text': str(syn).strip(), 'signals': []}
+            return {'text': '<type>', 'signals': []}
 
         else:
             # 防御性检查: 未知类型，记录并返回空

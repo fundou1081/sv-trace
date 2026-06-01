@@ -123,6 +123,7 @@ class ScopeInfo:
     offset_end: int = 0
     clock: str = ""
     reset: str = ""
+    file_path: str = ""               # M4: 跨文件, scope 实际所在文件 (pyslang SourceManager 解析)
 
 
 @dataclass

@@ -1210,3 +1210,116 @@ class TestMultiFileLineFallback:
         for d in r.drivers:
             assert 1 <= d.line <= 200, \
                 f"tx_enable driver line={d.line} 看起来是垃圾值"
+
+
+# ---------- M4: file path & additional expression types ----------
+
+class TestScopeFilePath:
+    """M4: TraceResult.file 应正确指向 driver 实际所在文件 (pyslang SourceManager)"""
+
+    def test_multifile_file_precise(self):
+        """多文件 mode: driver file 应是 driver 实际所在文件, 不是第一个 add_file 的"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer()
+        # 第一个文件: 简单 module
+        t.add_file('first.sv', '''
+        module first;
+            logic [7:0] q;
+            logic clk, rst_n;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) q <= 0;
+                else       q <= 1;
+            end
+        endmodule
+        ''')
+        # 第二个文件: 连续赋值
+        t.add_file('second.sv', '''
+        module second;
+            logic [7:0] q;
+            assign q = 8'hAB;
+        endmodule
+        ''')
+        t.build()
+        r = t.trace('second.q')
+        assert len(r.drivers) >= 1
+        for d in r.drivers:
+            assert d.file == 'second.sv', \
+                f"second.q driver 应在 second.sv, 实际: {d.file}"
+
+    def test_scope_carries_filepath(self):
+        """ScopeInfo.file_path 也应被填 (向后兼容)"""
+        from signal_tracer import SignalTracer, ScopeInfo
+        t = SignalTracer()
+        t.add_file('only.sv', '''
+        module only;
+            logic [7:0] q;
+            assign q = 0;
+        endmodule
+        ''')
+        t.build()
+        # 找 scope
+        assert any(s.file_path == 'only.sv' for s in t._scopes), \
+            f"应至少有一个 scope 的 file_path='only.sv': {[s.file_path for s in t._scopes]}"
+
+
+class TestAdditionalExpressions:
+    """M4: Streaming / Inside / DataType 表达式处理"""
+
+    def test_streaming_concat(self):
+        """{<<8{val}} 流连接"""
+        from signal_tracer import trace_signal
+        code = '''
+        module m;
+            logic [7:0] a, b;
+            assign a = {<<8{b}};
+        endmodule
+        '''
+        r = trace_signal('a', code, 'm.sv')
+        assert len(r.drivers) == 1
+        d = r.drivers[0]
+        assert '<<8' in d.source_expr or 'b' in d.source_expr, \
+            f"streaming 应包含 b: {d.source_expr!r}"
+        assert 'b' in d.source_signals, f"应追踪 b 信号: {d.source_signals}"
+
+    def test_inside_operator(self):
+        """a inside {b, c} 集合成员判断"""
+        from signal_tracer import trace_signal
+        code = '''
+        module m;
+            logic [3:0] a, b, c;
+            logic out;
+            assign out = a inside {b, c, 4'h5};
+        endmodule
+        '''
+        r = trace_signal('out', code, 'm.sv')
+        assert len(r.drivers) == 1
+        d = r.drivers[0]
+        # text 应包含 inside 和被检查的信号
+        assert 'inside' in d.source_expr
+        assert 'a' in d.source_signals
+        assert 'b' in d.source_signals
+        assert 'c' in d.source_signals
+
+    def test_member_access_with_range_select(self):
+        """reg2hw.val[BufferAw:0] 嵌套 MemberAccess + RangeSelect"""
+        from signal_tracer import trace_signal
+        code = '''
+        module m;
+            localparam int BufferAw = 5;
+            typedef struct { logic [31:0] val; } reg_block_t;
+            reg_block_t reg2hw;
+            logic [BufferAw:0] readbuf_threshold;
+            assign readbuf_threshold = reg2hw.val[BufferAw:0];
+        endmodule
+        '''
+        r = trace_signal('readbuf_threshold', code, 'm.sv')
+        assert len(r.drivers) == 1
+        d = r.drivers[0]
+        # 不应空
+        assert d.source_expr, f"source_expr 不应空: {d.source_expr!r}"
+        # text 应包含 reg2hw.val 和 BufferAw
+        assert 'reg2hw' in d.source_expr
+        assert 'val' in d.source_expr
+        assert 'BufferAw' in d.source_expr
+        # signal 应是 reg2hw
+        assert 'reg2hw' in d.source_signals
