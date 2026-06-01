@@ -4,7 +4,7 @@
 
 ## 状态
 
-**主测试 68/68 全部通过。** 另 2 个旧架构测试文件 (依赖已删除的 `trace.DriverTracer` / `debug.*` 模块) 现为 fail, 需移动到 `_legacy/`。
+**主测试 68/68 全部通过。** 2 个旧架构测试文件 (8 fail) 已迁移到 `tests/_legacy/`, 迁后 `pytest tests/` 干净通过。
 
 ```
 $ python -m pytest tests/unit/test_signal_tracer.py -v
@@ -31,22 +31,22 @@ $ python -m pytest tests/unit/test_signal_tracer.py -v
   - TestScopeFilePath (M4) — TraceResult.file 精确
   - TestAdditionalExpressions (M4) — Streaming/Inside/MemberAccess+RangeSelect 嵌套
 
-## 旧架构测试 (需归档)
+## 已迁移 _legacy
 
-| 文件 | 状态 | 原因 |
-|------|------|------|
-| `tests/unit/test_real_projects.py` | 2 fail / 2 pass | 引用已删除的 `trace.DriverTracer` / `debug.constraint_parser_v2` |
-| `tests/unit/sv_trace/test_all_tiers_extended.py` | 6 fail / 1 pass | 引用已删除的 `trace.*` 全套模块 (7 个 tier) |
+| 文件 | 原状态 | 迁移后位置 |
+|------|--------|-----------|
+| `tests/unit/test_real_projects.py` | 2 fail / 2 pass | → `tests/_legacy/unit/test_real_projects.py` |
+| `tests/unit/sv_trace/test_all_tiers_extended.py` | 6 fail / 1 pass | → `tests/_legacy/unit/test_all_tiers_extended.py` |
 
-这 2 个文件共 472 行, 依赖 M3 重构前被删的模块, 应当移动到 `tests/_legacy/` (非阻塞, 不影响主测试通过率)。
+迁移原因: 两个文件都引用 M3 重构前已删除的 `trace.DriverTracer` / `debug.constraint_parser_v2` 等旧架构模块。迁移后 `pytest tests/` 主测试 68/68 干净通过。
 
 ## 目录说明
 
 | 路径 | 内容 | 是否维护 |
 |------|------|---------|
 | `tests/unit/test_signal_tracer.py` | 68 个测试 (M0–M4) | ✅ 维护 |
-| `tests/unit/test_real_projects.py` | 11 个 test (旧架构 fail) | 📦 备迁移 _legacy |
-| `tests/unit/sv_trace/test_all_tiers_extended.py` | 7 个 test (旧架构 fail) | 📦 备迁移 _legacy |
+| `tests/_legacy/unit/test_real_projects.py` | 11 个 test (8 fail, 已迁移) | 🗄️ 归档 |
+| `tests/_legacy/unit/test_all_tiers_extended.py` | 7 个 test (已迁移) | 🗄️ 归档 |
 | `tests/targeted/` | 40 个 .sv fixture | 📦 保留 |
 | `tests/unit/trace/sv_cases/` | 50+ 个 .sv fixture | 📦 保留 |
 | `tests/advanced/test.sv` | 1 个 .sv | 📦 保留 |
@@ -67,5 +67,5 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 # 跑所有 (包括旧架构失败)
 python -m pytest tests/ --ignore=tests/_legacy --ignore=tests/archive --ignore=tests/debug
 
-# 跑所有 (含 _legacy)
+# 跑所有 (含 _legacy, 8 fail)
 python -m pytest tests/

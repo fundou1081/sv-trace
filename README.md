@@ -385,7 +385,7 @@ result = t.trace("signal_name")  # TraceSummary
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
-| 旧架构测试 | 2 个文件 (8 fail) 待迁移 `_legacy/`, 不影响主测试 |
+| 旧架构测试 | 已迁移 `tests/_legacy/`, 主测试 68/68 干净通过 |
 | 版本 | alpha |
 
 跑测试：

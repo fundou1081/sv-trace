@@ -13,7 +13,7 @@
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | 真实项目验证 | OpenTitan 6 模块 (30,218 drivers 总计, 0 warning, 0 empty) |
 | 归档测试 | 167 个失效 .py → `tests/_legacy/` |
-| 旧架构测试 (需迁移) | 2 个文件, 8 fail / 3 pass |
+| 旧架构测试 (已迁移) | 2 个文件 → `tests/_legacy/unit/`, 8 fail / 3 pass |
 
 ## 现状详细
 
@@ -30,14 +30,14 @@ $ python -m pytest tests/unit/test_signal_tracer.py -v
 - M3: TestMultiFile
 - M4: TestExpressionCoverage, TestContinuousAssignRobustness, TestMultiFileLineFallback, TestScopeFilePath, TestAdditionalExpressions
 
-### 旧架构测试 (待迁移 _legacy)
+### 旧架构测试 (已迁移 _legacy)
 
 ```
-$ python -m pytest tests/unit/test_real_projects.py tests/unit/sv_trace/test_all_tiers_extended.py
+$ python -m pytest tests/_legacy/unit/test_real_projects.py tests/_legacy/unit/test_all_tiers_extended.py
 2 failed, 2 passed, 1 warning
 ```
 
-失败原因: 引用已删除的 M0 架构模块 (`trace.DriverTracer`, `debug.constraint_parser_v2`)。**不影响主测试**。建议下一步迁移到 `tests/_legacy/`。
+失败原因: 引用已删除的 M0 架构模块 (`trace.DriverTracer`, `debug.constraint_parser_v2`)。已迁移到 `tests/_legacy/unit/`, **主测试不受影响**。
 
 ## 已完成各阶段
 
