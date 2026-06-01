@@ -303,21 +303,27 @@ class SignalTracer:
             line = self._sv_code[:loc.offset].count('\n') + 1 if loc.offset > 0 else 1
         else:
             line = 1
-        
-        # Get syntax and line info
+
+        # Get syntax and line info (M2: 多行保留, 精确 line_end)
         syn = getattr(sym, 'syntax', None)
-        if syn:
-            syn_text = str(syn).replace('\n', ' ')
-        else:
-            syn_text = ''
-        
+        syn_text = ''
+        line_end = line
+        if syn and hasattr(syn, 'sourceRange') and syn.sourceRange:
+            sr = syn.sourceRange
+            syn_text = str(syn).strip()
+            end_offset = sr.end.offset
+            if end_offset > 0 and end_offset <= len(self._sv_code):
+                line_end = self._sv_code[:end_offset].count('\n') + 1
+        elif syn:
+            syn_text = str(syn).strip()
+
         # Create scope info for continuous assign
         scope = ScopeInfo(
             kind=ScopeKind.CONTINUOUS_ASSIGN,
             name=getattr(sym, 'hierarchicalPath', '') or 'assign',
             instance_path='',
             line_start=line,
-            line_end=line,
+            line_end=line_end,
             text=syn_text,
             offset_start=0,
             offset_end=0,
@@ -325,7 +331,7 @@ class SignalTracer:
             reset='',
         )
         self._scopes.append(scope)
-        
+
         # Create driver trace
         trace = TraceResult(
             trace_type=TraceType.DRIVER,
@@ -337,7 +343,7 @@ class SignalTracer:
             char_offset=0,
             scope_kind=ScopeKind.CONTINUOUS_ASSIGN,
             scope_line_start=line,
-            scope_line_end=line,
+            scope_line_end=line_end,
             scope_text=syn_text,
             scope_offset_start=0,
             scope_offset_end=0,
@@ -396,16 +402,26 @@ class SignalTracer:
         # Get location info (SourceLocation has offset, not line)
         loc = getattr(block, 'location', None)
         if loc and hasattr(loc, 'offset'):
-            line = self._sv_code[:loc.offset].count('\n') + 1 if loc.offset > 0 else 1
+            line_start = self._sv_code[:loc.offset].count('\n') + 1 if loc.offset > 0 else 1
         else:
-            line = 1
+            line_start = 1
 
-        # Get syntax and line info
+        # Get syntax and line info (M2: 多行保留, 精确 end line)
         syn = getattr(block, 'syntax', None)
-        if syn:
-            syn_text = str(syn).replace('\n', ' ')
-        else:
-            syn_text = ''
+        syn_text = ''
+        line_end = line_start
+        if syn and hasattr(syn, 'sourceRange') and syn.sourceRange:
+            sr = syn.sourceRange
+            # 保留多行 (不 replace('\n', ' '))
+            syn_text = str(syn)
+            # 去首尾空白
+            syn_text = syn_text.strip()
+            # 计算 end line
+            end_offset = sr.end.offset
+            if end_offset > 0 and end_offset <= len(self._sv_code):
+                line_end = self._sv_code[:end_offset].count('\n') + 1
+        elif syn:
+            syn_text = str(syn).strip()
 
         # 提取 clock / reset (仅 always_ff 才有, always_comb/latch 没有 timing control)
         clock_name, reset_name = self._extract_clock_reset(block)
@@ -415,8 +431,8 @@ class SignalTracer:
             kind=scope_kind,
             name=block_name,
             instance_path=block_name,
-            line_start=line,
-            line_end=line,
+            line_start=line_start,
+            line_end=line_end,
             text=syn_text,
             offset_start=0,
             offset_end=0,
@@ -924,6 +940,9 @@ class SignalTracer:
 
         rhs_info = self._get_rhs_info_semantic(expr.right) if hasattr(expr, 'right') else {'text': '', 'signals': []}
 
+        # M2: 获取实际赋值表达式的行号 (不是 scope 起始行)
+        actual_line, actual_offset = self._get_expr_location(expr, scope)
+
         # Create trace for driver
         trace = TraceResult(
             trace_type=TraceType.DRIVER,
@@ -931,8 +950,8 @@ class SignalTracer:
             source_expr=rhs_info['text'],
             source_signals=rhs_info['signals'],
             file=self._file_path,
-            line=scope.line_start,
-            char_offset=0,
+            line=actual_line,
+            char_offset=actual_offset,
             scope_kind=scope.kind,
             scope_line_start=scope.line_start,
             scope_line_end=scope.line_end,
@@ -967,8 +986,8 @@ class SignalTracer:
                     source_expr=lhs_name,
                     source_signals=[lhs_name],
                     file=self._file_path,
-                    line=scope.line_start,
-                    char_offset=0,
+                    line=actual_line,
+                    char_offset=actual_offset,
                     scope_kind=scope.kind,
                     scope_line_start=scope.line_start,
                     scope_line_end=scope.line_end,
@@ -981,6 +1000,34 @@ class SignalTracer:
                     condition_stack=list(condition_stack),
                 )
                 self._loads[sig].append(load_trace)
+
+    def _get_expr_location(self, expr, scope) -> Tuple[int, int]:
+        """获取表达式的精确位置 (行号, 字符偏移)
+
+        M2: 返回 AssignmentExpression 的真实位置, 不是 scope 起始位置。
+        多个 fallback:
+        1. expr.sourceRange (pyslang 语义层提供)
+        2. expr.syntax.sourceRange (语法层 fallback)
+        3. scope.line_start (最后 fallback)
+
+        Returns:
+            (line, char_offset) — 都是 1-indexed (line) / 0-indexed (char_offset)
+        """
+        # Try semantic layer first
+        sr = getattr(expr, 'sourceRange', None)
+        if sr is None:
+            # Try syntax layer
+            syn = getattr(expr, 'syntax', None)
+            if syn:
+                sr = getattr(syn, 'sourceRange', None)
+
+        if sr:
+            offset = sr.start.offset
+            if offset > 0 and offset <= len(self._sv_code):
+                line = self._sv_code[:offset].count('\n') + 1
+                return line, offset
+        # Fallback to scope
+        return scope.line_start, 0
 
     def _get_lhs_name_semantic(self, expr) -> str:
         """从语义表达式获取左值名称"""

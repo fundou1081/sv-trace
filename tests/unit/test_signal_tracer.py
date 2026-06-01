@@ -603,3 +603,99 @@ class TestDriverChain:
         for sig in ('sel', 'b', 'c'):
             assert sig in first_driver.source_signals, \
                 f"{sig} 应在 chain[0].source_signals 里: {first_driver.source_signals}"
+
+
+# ---------- M2: 上下文召回做厚 ----------
+
+class TestContextAccuracy:
+    """M2 任务 1: 修复 line / scope_line_end / scope_text 准确性"""
+
+    def test_line_is_actual_assignment_not_scope_start(self):
+        """line 应该是实际赋值表达式所在行, 不是 always_ff 起始行"""
+        code = '''
+        module m;
+            logic clk, rst_n, q, d;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n)
+                    q <= 8'h0;
+                else
+                    q <= d;
+            end
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        # 期望: 2 个 driver, line 应该是 6 和 8 (不是 4)
+        assert len(r.drivers) == 2
+        lines = sorted(d.line for d in r.drivers)
+        # line 6 是 "q <= 8'h0;" 所在行, line 8 是 "q <= d;"
+        assert lines[0] >= 6, f"第一个 driver 的行号应 >= 6 (实际赋值行), got {lines[0]}"
+        assert lines[0] != 4, f"line 不应是 scope 起始行 4, got {lines[0]}"
+
+    def test_scope_line_end_is_actual_end(self):
+        """scope_line_end 应该是 always 块结束行, 不是起始行"""
+        code = '''
+        module m;
+            logic clk, rst_n, q, d;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n)
+                    q <= 8'h0;
+                else
+                    q <= d;
+            end
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        for d in r.drivers:
+            # scope 起始行 < scope 结束行
+            assert d.scope_line_start < d.scope_line_end, \
+                f"scope_line_start {d.scope_line_start} 应 < scope_line_end {d.scope_line_end}"
+            # 结束行应在 10 左右 (end 在 line 10)
+            assert d.scope_line_end >= 9, \
+                f"scope_line_end 应 >= 9, got {d.scope_line_end}"
+
+    def test_scope_text_is_multiline(self):
+        """scope_text 应保留多行 (含 \\n), 不是单行空格连接"""
+        code = '''
+        module m;
+            logic clk, rst_n, q, d;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n)
+                    q <= 8'h0;
+                else
+                    q <= d;
+            end
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        for d in r.drivers:
+            assert '\n' in d.scope_text, \
+                f"scope_text 应含换行符 (多行), got: {d.scope_text[:80]!r}"
+            # 且应能看到 'always_ff' 和 'end'
+            assert 'always_ff' in d.scope_text
+            assert 'end' in d.scope_text
+
+    def test_scope_text_no_trailing_whitespace(self):
+        """scope_text 不应有前导/尾部多余空白"""
+        code = '''
+        module m;
+            logic a, b;
+            always_comb a = b;
+        endmodule
+        '''
+        r = trace_signal('a', code, 'm.sv')
+        for d in r.drivers:
+            assert d.scope_text == d.scope_text.strip(), \
+                f"scope_text 应已被 strip, got: {d.scope_text!r}"
+
+    def test_char_offset_populated(self):
+        """char_offset 应该是表达式的字符偏移, 不再是 0"""
+        code = '''
+        module m;
+            logic a, b;
+            always_comb a = b;
+        endmodule
+        '''
+        r = trace_signal('a', code, 'm.sv')
+        for d in r.drivers:
+            assert d.char_offset > 0, \
+                f"char_offset 应 > 0 (实际偏移), got {d.char_offset}"
