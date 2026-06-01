@@ -1666,6 +1666,42 @@ class SignalTracer:
             self.build()
         return [LoadTrace(**l.__dict__) for l in self._loads.get(signal_name, [])]
 
+    def find_multi_drivers(self) -> Dict[str, List[TraceResult]]:
+        """找出所有被多个 scope 驱动的信号 (>= 2 个不同 scope)
+
+        在 always 风格的 RTL 里，同一信号被 >= 2 个不同 scope 驱动通常是 bug
+        (例如两个 always_ff 都写 count，或 always_ff + assign 同时写)。
+
+        去重规则：按 scope_text 去重。同一 always 块内的 if/else 多分支
+        算 1 个 driver（它们实际是同一块代码在不同条件下的输出）。
+
+        Returns:
+            Dict[信号名, List[TraceResult]]，只含 >= 2 个 scope 的信号
+        """
+        if not self._built:
+            self.build()
+
+        result: Dict[str, List[TraceResult]] = {}
+        for sig_name, drivers in self._drivers.items():
+            # 收集所有不同的 scope_text
+            unique_scopes = set()
+            for d in drivers:
+                if d.scope_text:
+                    unique_scopes.add(d.scope_text)
+            if len(unique_scopes) >= 2:
+                result[sig_name] = drivers
+        return result
+
+    def get_driver_count(self, signal_name: str) -> int:
+        """返回驱动某信号的不同 scope 数
+
+        便捷方法，等价于 len({d.scope_text for d in self._drivers[signal_name] if d.scope_text})
+        """
+        if not self._built:
+            self.build()
+        drivers = self._drivers.get(signal_name, [])
+        return len({d.scope_text for d in drivers if d.scope_text})
+
 
 class SignalTracerFromFile(SignalTracer):
     """从文件加载的信号追踪器"""

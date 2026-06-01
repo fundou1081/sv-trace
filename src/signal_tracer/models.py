@@ -126,6 +126,33 @@ class TraceSummary:
             if d.clock:
                 clocks.add(d.clock)
         return sorted(clocks)
+
+    def is_multi_driver(self) -> bool:
+        """判断该信号是否被多个不同 scope 驱动 (≥2)
+
+        多驱动在 always 风格的 RTL 里通常是 bug (多 driver race),
+        在 agent 视角是重要检查点。
+
+        同一 always 块内的 if/else 多分支算 1 个 driver (按 scope_text 去重),
+        因为它们实际是同一块代码在不同条件下的输出。
+
+        Returns:
+            True: >= 2 个不同 scope 驱动该信号
+            False: 0 或 1 个 scope 驱动
+        """
+        unique_scopes = {d.scope_text for d in self.drivers if d.scope_text}
+        return len(unique_scopes) >= 2
+
+    def get_driver_scopes(self) -> List[str]:
+        """返回驱动该信号的所有不同 scope 源码 (去重)
+
+        供 agent 快速查看所有驱动源。同一 scope 多个分支只返回一次。
+        """
+        seen = []
+        for d in self.drivers:
+            if d.scope_text and d.scope_text not in seen:
+                seen.append(d.scope_text)
+        return seen
     
     def get_driver_chain(self, max_depth: int = 10) -> List[str]:
         """获取驱动链 (从输入到输出)"""

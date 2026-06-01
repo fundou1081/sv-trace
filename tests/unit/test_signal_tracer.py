@@ -224,3 +224,129 @@ class TestTraceResultFields:
         from signal_tracer import ScopeKind
         assert any(d.scope_kind == ScopeKind.CONTINUOUS_ASSIGN for d in r.drivers), \
             f"应有 CONTINUOUS_ASSIGN 类型的 driver: {[d.scope_kind for d in r.drivers]}"
+
+
+# ---------- M1.5: 多驱动检测 ----------
+
+class TestMultiDriver:
+    """M1.5 任务 1: 多驱动信号检测
+
+    find_multi_drivers() / is_multi_driver() / get_driver_count()
+    """
+
+    def test_single_driver_not_multi(self):
+        """单 driver 信号不会被报告为多驱动"""
+        code = '''
+        module m;
+            logic [7:0] q;
+            logic clk, rst_n;
+            logic [7:0] d;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) q <= 8'h0;
+                else q <= d;
+            end
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 't.sv').build()
+        multi = t.find_multi_drivers()
+        assert 'q' not in multi, f"q 只有 1 个 always_ff 驱动, 不应报告: {list(multi.keys())}"
+
+    def test_two_always_blocks_multi_driver(self):
+        """两个 always 块写同一信号 -> 是多驱动"""
+        code = '''
+        module m;
+            logic [7:0] count;
+            logic clk1, clk2, rst_n;
+            logic en;
+            always_ff @(posedge clk1 or negedge rst_n) begin
+                if (en) count <= count + 1;
+            end
+            always_ff @(posedge clk2 or negedge rst_n) begin
+                if (!en) count <= 0;
+            end
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 't.sv').build()
+        multi = t.find_multi_drivers()
+        assert 'count' in multi, f"count 被 2 个 always_ff 驱动, 应在 multi 里: {list(multi.keys())}"
+        assert len(multi['count']) >= 2
+
+    def test_always_and_assign_multi_driver(self):
+        """always + assign 写同一信号 -> 是多驱动 (典型 bug)"""
+        code = '''
+        module m;
+            logic [7:0] x;
+            logic [7:0] a, b, sel;
+            assign x = sel ? a : b;
+            always_comb x = 0;  // 覆盖 assign (多 driver bug)
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 't.sv').build()
+        multi = t.find_multi_drivers()
+        assert 'x' in multi, f"x 被 assign + always_comb 写, 应在 multi 里"
+
+    def test_if_else_in_same_always_not_multi(self):
+        """同一 always 块内的 if/else 多分支不视为多驱动"""
+        code = '''
+        module m;
+            logic [7:0] q;
+            logic clk, rst_n;
+            logic [7:0] d;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n)
+                    q <= 8'h0;
+                else
+                    q <= d;
+            end
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 't.sv').build()
+        multi = t.find_multi_drivers()
+        assert 'q' not in multi, f"if/else 同一 scope 算 1 个, 不应报告: {list(multi.keys())}"
+
+    def test_get_driver_count(self):
+        """get_driver_count 返回不同 scope 数"""
+        code = '''
+        module m;
+            logic [7:0] x;
+            logic a, b, c;
+            assign x = a;
+            assign x = b;  // second assign
+            assign x = c;  // third
+        endmodule
+        '''
+        from signal_tracer import SignalTracer
+        t = SignalTracer(code, 't.sv').build()
+        cnt = t.get_driver_count('x')
+        assert cnt == 3, f"3 个 assign 算 3 个 scope, got {cnt}"
+
+    def test_is_multi_driver_method(self):
+        """TraceSummary.is_multi_driver() 与 find_multi_drivers() 一致"""
+        from signal_tracer import SignalTracer
+        # Case 1: 多驱动
+        code1 = '''
+        module m;
+            logic x;
+            logic a, b, c1, c2, r;
+            always_ff @(posedge c1 or negedge r) x <= a;
+            always_ff @(posedge c2 or negedge r) x <= b;
+        endmodule
+        '''
+        t1 = SignalTracer(code1, 'm1.sv').build()
+        r1 = t1.trace('x')
+        assert r1.is_multi_driver() is True
+        # Case 2: 单驱动
+        code2 = '''
+        module m;
+            logic x;
+            logic a, c, r;
+            always_ff @(posedge c or negedge r) x <= a;
+        endmodule
+        '''
+        t2 = SignalTracer(code2, 'm2.sv').build()
+        r2 = t2.trace('x')
+        assert r2.is_multi_driver() is False
