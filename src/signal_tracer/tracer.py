@@ -227,6 +227,7 @@ class SignalTracer:
         self._scopes: List[ScopeInfo] = []
         self._port_info: Dict[str, str] = {}  # hpath -> direction ('in', 'out', 'inout')
         self._port_resolver: PortResolver = None  # 端口连接解析器
+        self._source_manager = None  # M4: pyslang SourceManager (跨文件精确行号)
         self._built = False
         if sv_code or file_path:
             self.add_file(file_path, sv_code)
@@ -275,6 +276,9 @@ class SignalTracer:
             tree = pyslang.SyntaxTree.fromText(sv_code, file_path or '')
             comp.addSyntaxTree(tree)
         comp.freeze()
+
+        # M4: 保存 SourceManager, 后续所有行号计算都走它 (跨文件精确)
+        self._source_manager = comp.sourceManager
 
         # Get elaborated root and traverse all semantic symbols
         root = comp.getRoot()
@@ -345,10 +349,12 @@ class SignalTracer:
         if not lhs_name:
             return
         
-        # Get location info (SourceLocation has offset, not line)
+        # Get location info (M4: 跨文件精确, 走 SourceManager)
         loc = getattr(sym, 'location', None)
-        if loc and hasattr(loc, 'offset'):
-            line = self._sv_code[:loc.offset].count('\n') + 1 if loc.offset > 0 else 1
+        if loc is not None:
+            line = self._offset_to_line(loc)
+            if line == 0:
+                line = 1
         else:
             line = 1
 
@@ -460,10 +466,12 @@ class SignalTracer:
         else:
             scope_kind = ScopeKind.ALWAYS_FF
 
-        # Get location info (SourceLocation has offset, not line)
+        # Get location info (M4: 跨文件精确, 走 SourceManager)
         loc = getattr(block, 'location', None)
-        if loc and hasattr(loc, 'offset'):
-            line_start = self._sv_code[:loc.offset].count('\n') + 1 if loc.offset > 0 else 1
+        if loc is not None:
+            line_start = self._offset_to_line(loc)
+            if line_start == 0:
+                line_start = 1
         else:
             line_start = 1
 
@@ -1087,13 +1095,34 @@ class SignalTracer:
             return prefix
         return f"{prefix}.{signal_name}"
 
+    def _offset_to_line(self, source_loc) -> int:
+        """M4: 用 pyslang SourceManager 跨文件精确算行号
+
+        之前问题: self._sv_code 只存第一个文件, 用 count('\n') 算的
+        行号在多文件下完全错 (pyslang 的 offset 是 per-file 的)。
+
+        Solution: pyslang SourceManager.getLineNumber(SourceLocation) 能
+        跨文件 (看 SourceLocation.buffer) 正确算行号。
+
+        Returns:
+            1-indexed 行号, 如果无法计算返回 0
+        """
+        if source_loc is None or self._source_manager is None:
+            return 0
+        try:
+            return self._source_manager.getLineNumber(source_loc)
+        except Exception:
+            return 0
+
     def _get_expr_location(self, expr, scope) -> Tuple[int, int]:
         """获取表达式的精确位置 (行号, 字符偏移)
 
         M2: 返回 AssignmentExpression 的真实位置, 不是 scope 起始位置。
+        M4: 跨文件精确 — 走 pyslang SourceManager (不看 self._sv_code)。
+
         多个 fallback:
-        1. expr.sourceRange (pyslang 语义层提供)
-        2. expr.syntax.sourceRange (语法层 fallback)
+        1. expr.sourceRange + SourceManager → 跨文件精确行号
+        2. expr.syntax.sourceRange + SourceManager
         3. scope.line_start (最后 fallback)
 
         Returns:
@@ -1109,9 +1138,10 @@ class SignalTracer:
 
         if sr:
             offset = sr.start.offset
-            if offset > 0 and offset <= len(self._sv_code):
-                line = self._sv_code[:offset].count('\n') + 1
-                return line, offset
+            if offset > 0:
+                line = self._offset_to_line(sr.start)
+                if line > 0:
+                    return line, offset
         # Fallback to scope
         return scope.line_start, 0
 
