@@ -171,10 +171,11 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **68/68 通过** |
-| Benchmark 覆盖 | 11/11 (0 warning, 0 exception) |
+| 公开 API 测试 | **68/68 通过** (1.83s) |
+| 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
-| 真实项目验证 | ✅ OpenTitan 6 模块 (uart/spi_device/dma/i2c/aes/hmac) 0 warning 0 empty |
+| Benchmark | 11/11 (0 warning, 0 exception) |
+| 旧架构测试 | 2 个文件 (8 fail) 待迁移 `_legacy/`, 不影响主测试 |
 | 版本 | alpha |
 
 跑测试：
@@ -182,6 +183,32 @@ result = t.trace("signal_name")  # TraceSummary
 ```bash
 python -m pytest tests/unit/test_signal_tracer.py -v
 ```
+
+## 测试覆盖 (M0–M4)
+
+主测试 `tests/unit/test_signal_tracer.py` 包含 **15 个 TestClass, 68 个测试**：
+
+| 阶段 | TestClass | 测试数 | 覆盖点 |
+|------|-----------|--------|--------|
+| M0 | `TestBasic`, `TestControlFlow`, `TestArrays`, `TestNoCrashes` | — | 基础 always_ff/comb/latch, if/else/case 条件, 1D/2D 数组 |
+| M1 | `TestTraceResultFields` | — | 完整 TraceResult 字段填充 |
+| M1.5 | `TestMultiDriver`, `TestClockResetExtraction`, `TestDriverChain` | — | 多驱动检测, clock/reset 提取, driver_chain 递归 (cycle detection) |
+| M2 | `TestContextAccuracy`, `TestContextBundle` | — | line/scope_text 准确性, ContextBundle frozen dataclass |
+| M3 | `TestMultiFile` | — | 多文件 build, 层次路径 (`top.u_mid.u_leaf`), 后缀匹配 |
+| M4 | `TestExpressionCoverage`, `TestContinuousAssignRobustness`, `TestMultiFileLineFallback`, `TestScopeFilePath`, `TestAdditionalExpressions` | +5 | 17 种 SV 表达式, InvalidExpression 防御, 跨文件行号 (SourceManager), TraceResult.file 精确, 嵌套 MemberAccess+RangeSelect |
+
+各阶段演进：
+
+| 阶段 | 新增测试 | 累计 |
+|------|---------|------|
+| M0 | 13 | 13 |
+| M1 | 13 | 26 |
+| M1.5 | 20 | 46 |
+| M2 | 13 | 59 |
+| M3 | 9 | 68 |
+| M4 | 5 | (overlap, 主文件还是 68) |
+
+详见 [tests/README.md](tests/README.md) 和 [TEST_PLAN.md](TEST_PLAN.md)。
 
 ## 真实项目验证 (M4)
 
