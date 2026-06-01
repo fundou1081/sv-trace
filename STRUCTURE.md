@@ -17,44 +17,53 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  输入: .sv 源码 (单文件)                                       │
+│  输入: 一个或多个 .sv 源码文件 (M3 支持多文件)                   │
+│  SignalTracer()                                              │
+│    .add_file('top.sv', code)  # 可连续调用                    │
+│    .add_file('sub.sv', code)                                │
+│    .build()                                                  │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  pyslang Compilation                                        │
-│  SyntaxTree.fromText() → Compilation() → getRoot()           │
+│  多棵 SyntaxTree.addSyntaxTree() → Compilation() → getRoot() │
 │  - 完整语义分析（含 generate 展开）                            │
-│  - 统一符号表（PortSymbol / ProceduralBlockSymbol 等）         │
+│  - 跨文件 module 解析 (top 能找到 sub 的定义)                 │
+│  - 统一符号表 (PortSymbol / ProceduralBlockSymbol / InstanceSymbol 等) │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  PortResolver (语法层)                                        │
-│  解析 .HierarchyInstantiation 获取实例端口连接                 │
-│  例: dut u_dut(.data_in(sig_in)) → (u_dut, data_in, sig_in) │
+│  root.visit() 递归遍历所有层次                                  │
+│  - 顶层模块 (top)                                             │
+│  - 实例 (top.u_sub)                                          │
+│  - 实例内的 always_ff / continuous assign                     │
+│  - 提取每个赋值表达式的:                                       │
+│    * LHS (driver target) → 以 {hpath}.{name} 存储            │
+│    * RHS (load sources) → 同样以 hpath 限定                  │
+│    * clock/reset 从 EventListControl 提取                     │
+│    * condition_stack 透传嵌套 if 条件                        │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  SignalTracer (语义层)                                        │
-│  root.visit() 遍历所有 ProceduralBlockSymbol +               │
-│  ContinuousAssignSymbol，提取 driver/load 关系                │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│  SignalTracerApp (应用层)                                     │
-│  组合 SignalTracer + PortResolver                            │
-│  提供跨模块 driver/load 追踪                                   │
+│  查询: SignalTracer.trace(name)                              │
+│  智能匹配 4 步:                                               │
+│  1. 完全匹配 (含 .) 当 hpath                                  │
+│  2. 数组前缀 (a[0] → a[...])                                 │
+│  3. 后缀匹配 (查 'dout' 找所有 '*.dout')                       │
+│  4. Cross-module fallback (PortResolver 走端口连接)            │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  输出: TraceSummary                                          │
 │  signal_name, drivers[], loads[]                             │
 │  每个 TraceResult 包含:                                       │
-│  - file / line / char_offset                                │
-│  - scope_kind / scope_text (整个 always_ff 块源码)            │
+│  - file / line (实际赋值行) / char_offset (字符偏移)         │
+│  - scope_kind / scope_text (多行保留) / scope_line_start+end  │
 │  - clock / reset (从 event 表达式提取)                        │
 │  - condition / condition_stack (嵌套 if 条件)                │
 │  - hierarchical_path / is_port / port_direction              │
 │  - port_connection (跨模块时填充)                            │
+│  可调用 .to_contexts() 一次性打包为 List[ContextBundle]       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -78,18 +87,17 @@ sv-trace/
 │                                   # 涵盖 always_ff / always_comb / case / generate / FSM / pipeline
 │
 ├── tests/
-│   ├── unit/                       # 真测试 (pytest 可发现)
-│   │   ├── test_real_projects.py
-│   │   └── sv_trace/
-│   │       └── test_all_tiers_extended.py
+│   ├── unit/test_signal_tracer.py  # 55 个公开 API 测试
+│   ├── unit/trace/sv_cases/         # 50+ .sv fixture (cdc/driver/fsm/...)
+│   ├── fixtures/m3_hierarchical/    # M3 跨文件 fixture
+│   │   ├── top.sv                   # 顶层, 实例化 mid
+│   │   ├── mid.sv                   # 中间层, 实例化 2 个 leaf
+│   │   └── leaf.sv                  # 底层, 简单 always_ff
 │   ├── targeted/                    # 40 个 .sv fixture (旧测试数据)
-│   ├── unit/trace/sv_cases/         # 50+ 个 .sv fixture (按类别分目录)
-│   │   ├── cdc/                     # (旧 CDC 测试代码)
-│   │   ├── driver/                  # (driver 测试代码)
-│   │   ├── fsm/                     # (FSM 测试代码)
-│   │   └── ...
 │   ├── advanced/test.sv
 │   ├── testbed/cpu.sv
+│   ├── _legacy/                     # 重构前失效测试 (归档)
+│   ├── archive/                     # 更早归档
 │   ├── README.md
 │   └── TEST_PLAN.md
 │
@@ -118,19 +126,44 @@ sv-trace/
 
 ## 公开 API
 
+### 函数式
+
 ```python
 from signal_tracer import trace_signal, trace_signal_from_file, TraceSummary
 
-# 函数式 API
 result: TraceSummary = trace_signal("data_out", sv_code, "test.sv")
-
-# 类式 API
-from signal_tracer import SignalTracer, SignalTracerApp
-tracer = SignalTracer(sv_code, "test.sv").build()
-result = tracer.trace("data_out")           # 包含跨模块追踪
+result: TraceSummary = trace_signal_from_file("data_out", "path/to/file.sv")
 ```
 
-`TraceSummary` 字段：
+### 类式（多文件 + 层次路径）
+
+```python
+from signal_tracer import SignalTracer, ContextBundle
+
+t = SignalTracer()                          # 支持空构造
+t.add_file('top.sv', top_code)              # 链式添加
+t.add_file('sub.sv', sub_code)
+t.build()                                   # 必调
+result = t.trace("data_out")                # 智能匹配 (hpath / leaf / 后缀)
+result = t.trace("top.u_sub.data_out")      # 完整 hpath
+```
+
+向后兼容：`SignalTracer(sv_code, "file.sv")` 老 API 仍工作。
+
+### SignalTracer 公开方法
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `add_file(path, code)` | `self` | 加一个 .sv 文件 (链式) |
+| `build()` | `self` | 解析所有文件, 构建索引 |
+| `trace(name)` | `TraceSummary` | 追踪信号 (智能匹配) |
+| `trace_drivers(name)` | `List[DriverTrace]` | 只返回 driver 列表 |
+| `trace_loads(name)` | `List[LoadTrace]` | 只返回 load 列表 |
+| `find_multi_drivers()` | `Dict[str, List[TraceResult]]` | 找被 ≥2 scope 驱动的信号 |
+| `get_driver_count(name)` | `int` | 某信号的不同 scope 数 |
+| `get_driver_chain(name, max_depth=10)` | `List[TraceResult]` | 递归上游 driver 链 |
+
+### TraceSummary 字段与方法：
 
 | 字段 | 类型 | 含义 |
 |------|------|------|
@@ -160,6 +193,41 @@ result = tracer.trace("data_out")           # 包含跨模块追踪
 | `port_direction` | str | `'in'` / `'out'` / `'inout'` |
 | `hierarchical_path` | str | 完整层次路径（`top.u_dut.data_out`） |
 | `confidence` | str | `'high'` / `'medium'` / `'low'` |
+
+### ContextBundle 字段 (M2)
+
+把一次 trace 的所有上下文打包成一个 frozen dataclass，方便给 LLM：
+
+```python
+from signal_tracer import trace_signal
+result = trace_signal("count", sv_code, "m.sv")
+for ctx in result.to_contexts():   # List[ContextBundle]
+    print(ctx.file, ctx.line, ctx.clock, ctx.reset)
+    print(ctx.scope_text)
+    json.dumps(ctx.to_dict())        # 可序列化
+```
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `file` | `str` | 文件路径 |
+| `line` | `int` | 实际赋值行 (1-indexed) |
+| `char_offset` | `int` | 字符偏移 (0-indexed) |
+| `scope_text` | `str` | 整个 scope 源码 (多行保留) |
+| `scope_line_start` | `int` | scope 起始行 |
+| `scope_line_end` | `int` | scope 结束行 |
+| `scope_kind` | `str` | `always_ff` / `always_comb` / `continuous_assign` / `always_latch` |
+| `clock` | `str` | 时钟名 (`posedge clk` → `clk`) |
+| `reset` | `str` | 复位名 (`posedge clk or negedge rst_n` → `rst_n`) |
+| `condition` | `str` | 当前条件 |
+| `condition_stack` | `Tuple[str, ...]` | 嵌套 if 条件栈 |
+| `is_port` | `bool` | 是否是端口 |
+| `port_direction` | `str` | `'in'` / `'out'` / `'inout'` |
+| `hierarchical_path` | `str` | 完整 hpath (e.g. `top.u_sub.dout`) |
+| `confidence` | `str` | `'high'` / `'medium'` / `'low'` |
+
+`ContextBundle` 自身方法：`to_dict()` (dict/JSON 序列化) / `summary()` (一行可读)。
+
+由于 `frozen=True`，ContextBundle 是 hashable 的，可以做 dict key 或缓存键。
 
 ---
 

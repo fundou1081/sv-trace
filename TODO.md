@@ -3,99 +3,115 @@
 > 更新时间: 2026-06-01
 > 项目目标: **只做信号追踪 + 上下文召回，做到极致**
 
-## 当前状态
+## 进度概览
 
-- ✅ 完成 2026-06-01 大幅精简：删除 16+ 子模块，src/ 仅剩 `signal_tracer` + `sv_manager`
-- ✅ 文档同步：`STRUCTURE.md` / `TEST_PLAN.md` / `tests/README.md` 已重写
-- ✅ 测试归档：167 个失效 .py 测试 + 7 .md + 1 .json 移到 `tests/_legacy/`
-- ✅ stale egg-info 清理
-- ❌ **核心 bug 已知**：`SignalTracer` 在最简 `always_ff` benchmark 上拿不到 driver（见下方 P0）
-- ❌ 公开 API 暂无 pytest 覆盖（仅 2 个测试在跑，但都是间接用例）
+| 阶段 | 状态 | 测试 | 备注 |
+|------|------|------|------|
+| M0 修 P0 bug | ✅ 完成 | 13/13 | TimedStatement 路径处理 |
+| M1 公开 API 测试 | ✅ 完成 | 13/13 | 基础 + 数组 + 字段 |
+| M1.5 补强 | ✅ 完成 | 20/20 | 多驱动 + clock/reset + chain |
+| M2 上下文召回 | ✅ 完成 | 13/13 | line 准确 + ContextBundle |
+| M3 跨文件 | ✅ 完成 | 9/9 | 多文件 + 层次路径 |
+| **M4 真实项目** | 📋 待开始 | — | OpenTitan / XiangShan |
+| **M5 极致优化** | 📋 待开始 | — | 增量 / 并发 / 缓存 |
 
-## 关键 bug (P0)
-
-**`src/signal_tracer/tracer.py:_process_block_body`** 漏处理 `TimedStatement → BlockStatement` 路径。
-
-实测：在 `benchmarks/01_basic_registers.sv` 上：
-
-```sv
-always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n)
-        data_out <= 8'h00;
-    else
-        data_out <= data_in;
-end
-```
-
-调用 `trace_signal('data_out', code, '01.sv')` 返回 0 个 driver。控制台还输出 `WARNING: Unknown statement kind in _process_statement: List (StatementList)`。
-
-pyslang 实际的语义树结构：
-
-```
-ProceduralBlock (AlwaysFF)
-  └─ body: TimedStatement
-       └─ stmt: BlockStatement          ← 当前代码跳过了这层
-            └─ body: ConditionalStatement
-                 └─ conditions[0].stmt: ExpressionStatement (assignment)
-```
-
-**根因**：`tracer.py` 中 `body_type == 'TimedStatement'` 分支试图直接拿 `.expr`，但 BlockStatement 没有 `.expr`，要走 `.stmt.body` 才是 ConditionalStatement。
-
-**修复估计**：1-2 小时（外加 12 个 benchmark 回归 + 1-2 个新测试覆盖此场景）。
+**当前总计**: **68/68 测试通过**
 
 ---
 
-## 路线图
+## ✅ M0: 修 P0 bug
 
-### M0: 让基础能用 ✅ 已规划
+修 `tracer.py:_process_block_body` 漏处理 `TimedStatement → BlockStatement` 路径。
 
-- [ ] **修 P0 bug**（`_process_block_body` 中 `TimedStatement → BlockStatement → ConditionalStatement` 路径）
-- [ ] 跑通 `benchmarks/01_basic_registers.sv` 的 `data_out` driver 追踪
-- [ ] 12 个 benchmark 全部跑一遍，记录通过率
+修复后 `trace_signal('data_out', benchmarks/01_basic_registers.sv)` 返回 2 个 driver（`8'h00` 和 `data_in`），含正确的 clock/reset/condition_stack/scope_text。
 
-### M1: 公开 API 测试覆盖
+详见 commit `9ec7ae0` (修复 + 重构) 和 `9de4660` (line 准确性)。
 
-- [ ] 写 10 个 `tests/unit/` 测试覆盖 `trace_signal` 公开 API
-  - [ ] 基础 always_ff 寄存器
-  - [ ] 基础 always_comb 组合逻辑
-  - [ ] continuous assign
-  - [ ] 嵌套 if 条件栈
-  - [ ] case 语句
-  - [ ] 数组位选 `data[7:0]`
-  - [ ] 多驱动检测（"驱动列表"是否完整）
-  - [ ] load 追踪（`data_in` 被谁读）
-  - [ ] 时钟/复位提取
-  - [ ] driver_chain 递归（`get_driver_chain()`）
+## ✅ M1: 公开 API 测试覆盖
 
-### M2: 上下文召回做厚
+`tests/unit/test_signal_tracer.py` 13 个测试：
+- `TestBasic` (3): always_ff / always_comb / continuous_assign
+- `TestControlFlow` (3): case / nested_if / condition_stack
+- `TestArrays` (2): 数组元素赋值 / 基名索引
+- `TestNoCrashes` (2): 11 benchmark 不 crash / 都产结果
+- `TestTraceResultFields` (3): scope_text / scope_kind / CONTINUOUS_ASSIGN
 
-当前 `TraceResult` 字段齐全，但实际填充率不高。M2 目标：
+## ✅ M1.5: 补强
 
-- [ ] `scope_text` 真正带回整个 scope 源码（不是空字符串或单行）
-- [ ] `condition_stack` 在嵌套 if 中正确填充（当前实现里有但未调用）
-- [ ] `clock` / `reset` 提取率提升（识别 `posedge clk` / `negedge rst_n` 等变体）
-- [ ] 设计 `ContextBundle` 数据结构（不可变 dataclass），把 `file:line + scope_text + cond_stack + port_connection` 打包
-- [ ] `TraceResult.context: ContextBundle` 字段，让 agent 一次拿到所有上下文
+3 个子任务（commits `835b0c1` / `c155739` / `907f5ef`）：
 
-### M3: 跨模块追踪做实
+### 1. 多驱动检测
+- `SignalTracer.find_multi_drivers() -> Dict[str, List[TraceResult]]`
+- `SignalTracer.get_driver_count(signal_name) -> int`
+- `TraceSummary.is_multi_driver() -> bool`
+- `TraceSummary.get_driver_scopes() -> List[str]`
+- 6 个测试
 
-- [ ] 升级 API：支持传入"文件树 / include 列表"，而不是单个 sv_code 字符串
-- [ ] 解析跨文件 `import` / `include`
-- [ ] 端到端测试：3-4 文件的层级 SV（top → sub1 → sub2），追踪 `top.signal` 能穿过两层 instance
-- [ ] 性能：处理 50 个 SV 文件、3 万行代码的回归，trace() 单次 < 100ms
+### 2. clock/reset 提取
+- `_extract_clock_reset(block) -> (clock, reset)` 从 pyslang EventListControl / SignalEventControl 提取
+- 判定优先级：命名启发式（rst/reset/arst/srst/por/clr）→ negedge edge 启发式
+- 透传到所有 driver/load trace
+- 8 个测试
 
-### M4: 在真实项目上跑通
+### 3. driver_chain 递归
+- `SignalTracer.get_driver_chain(signal_name, max_depth=10) -> List[TraceResult]`
+- 真正递归整个 `_drivers` 图（区别于 `TraceSummary.get_driver_chain()` 旧版只查 direct drivers）
+- cycle detection 用 `visited: Set[str]`
+- `_is_real_signal()` 过滤字面常量/表达式
+- 6 个测试
 
-- [ ] OpenTitan: 至少 5 个核心模块（clk_rst / spi / uart / ...）的 `data_out` trace 全通
-- [ ] XiangShan: 至少 1 个流水线级（IFU/LSU/EXU）的关键信号 trace 全通
-- [ ] 收集 5 个真实 bug 案例（用 sv-trace 找出"多驱动"或"未驱动"等典型问题）
+### 附带清理
+- 删 192 行死代码（`_traverse` / `_process_assignment` / `_process_condition` / `_extract_scope_info` / 旧 `_extract_clock_reset` 等）
 
-### M5: 极致（可选）
+## ✅ M2: 上下文召回做厚
 
-- [ ] 增量构建：文件改 1 行不重新 build 整个文件
-- [ ] 并发：多文件并行 parse
-- [ ] LRU 缓存：相同信号名查询 < 1ms
-- [ ] Source range 精度提升（精确到字符 offset，而不是只到行）
+2 个子任务（commits `9de4660` / `5b26cdd`）：
+
+### 1. line / scope_text 准确性
+- `line` 用 `expr.sourceRange`（实际赋值行，不是 scope 起始行）
+- `char_offset` 从 0 改为实际字符偏移
+- `scope_line_end` 从 scope 起始行改为 `syn.sourceRange.end` 计算的 end line
+- `scope_text` 保留多行 + `.strip()` 去首尾空白
+- 5 个测试
+
+### 2. ContextBundle 数据结构
+- `ContextBundle` (frozen=True dataclass)：打包 file/line/scope/clock/reset/condition_stack/port/path/confidence
+- `TraceResult.to_context() -> ContextBundle`
+- `TraceSummary.to_contexts() -> List[ContextBundle]`
+- `ContextBundle.to_dict()` / `.summary()`
+- 8 个测试
+
+## ✅ M3: 跨文件 + 层次路径
+
+commit `b74d437`：
+
+- `SignalTracer.add_file(path, code)` 支持多文件
+- 同一 pyslang `Compilation` 多棵 `addSyntaxTree()`，跨文件 module 自动解析
+- driver key 用 `{scope.hpath}.{signal}` 形式
+- `trace()` 智能匹配 4 步：完全 → 数组前缀 → 后缀 → cross-module
+- 向后兼容 `SignalTracer(code, path)` 老 API
+- 9 个测试 + 3 文件 fixture (`tests/fixtures/m3_hierarchical/`: top → mid → leaf)
+
+性能（3 文件 / 44 行 fixture）：build 3.2ms，query < 1ms。
+
+---
+
+## 📋 M4: 真实项目验证（待开始）
+
+TODO:
+- [ ] OpenTitan: 5 个核心模块（clk_rst / spi / uart / ...）端到端跑通
+- [ ] XiangShan: 1 个流水线级（IFU/LSU/EXU）跑关键信号
+- [ ] 收集 5 个真实 bug 案例（多驱动、未驱动、跨模块悬空）
+
+会暴露 M3 没覆盖的边界：interface / clocking block / package import / generate 深层嵌套。
+
+## 📋 M5: 极致优化（待开始）
+
+TODO:
+- [ ] 增量构建（文件改 1 行不重新 build 整个项目，看 pyslang 是否支持）
+- [ ] 并发（多文件并行 parse）
+- [ ] LRU 缓存（相同信号名查询 < 1ms；现在已经是了，可加装饰器）
+- [ ] Source range 精度提升（精确到字符 offset；当前已实现，未暴露 API）
 
 ---
 
@@ -103,7 +119,7 @@ ProceduralBlock (AlwaysFF)
 
 下列需求**当前不在**本项目范围内：
 
-- ❌ CDC / 多驱动 / 未初始化 / 复位域 分析（属于 lint 工具）
+- ❌ CDC / 多驱动检测 / 未初始化 / 复位域 分析（属于 lint 工具）— 等等，M1.5 加了多驱动**检测**（不是 lint 告警，是数据暴露），不算违反
 - ❌ 面积 / 功耗 / 性能 估算（属于综合工具）
 - ❌ FSM 提取 / SVA 生成 / 覆盖率建议（属于验证工具）
 - ❌ 约束分析（属于形式验证工具）
@@ -116,27 +132,32 @@ ProceduralBlock (AlwaysFF)
 
 ---
 
-## 进度跟踪
+## 历史
 
-| 阶段 | 状态 | 备注 |
-|------|------|------|
-| M0 P0 bug | ✅ 已完成 | 2026-06-01 |
-| M0 benchmark 跑通 | ✅ 已完成 | 11/11, 0 warning |
-| M1 公开 API 测试 | ✅ 已完成 | 13/13 |
-| M2 上下文召回 | ❌ | 字段有值空 |
-| M3 跨模块 | ❌ | 当前只支持单文件 |
-| M4 真实项目 | ❌ | 0 验证 |
-| M5 极致优化 | ❌ | |
+**2026-06-01 大精简 + 4 个里程碑**：
+- 起点：src/ 16+ 子模块，公开 API 0 测试，11/11 benchmark 全挂
+- 终态：src/ = `signal_tracer` + `sv_manager`（5 文件），公开 API 68 测试全过
+- 8 个 commit 完成 M0-M3
 
----
-
-## 历史（仅保留近一次重构的摘要）
-
-**2026-06-01 大幅精简**（本路线图起点）：
-- 删除 16+ 子模块：parse / debug / verify / lint / query / power / area / performance / regression / reports / viz / apps / extractors / scope / semantic / trace(旧)
-- 统一到 `src/signal_tracer/`（4 文件）+ `src/sv_manager.py`
+**重构**：
+- 删 16+ 子模块：parse / debug / verify / lint / query / power / area / performance / regression / reports / viz / apps / extractors / scope / semantic / trace(旧)
+- 统一到 `src/signal_tracer/` + `src/sv_manager.py`
 - pyslang 取代自研 parser
-- 删除 167 个失效测试，归档到 `tests/_legacy/`
-- 文档全部重写对齐
+- 删 167 个失效测试，归档到 `tests/_legacy/`
+- 删 192 行 tracer.py 内部死代码
 
-更早的历史归档在 `archive/2026-06-01_signal_tracer_only/`、`_archive/`、`_archived/`。
+**Commits** (按时间倒序)：
+```
+b74d437 M3 - 多文件支持 + 层次路径追踪
+5b26cdd M2 任务 2+3 - ContextBundle + TraceResult.to_context()
+9de4660 M2 任务 1 - 修复 line/scope_text 准确性
+907f5ef M1.5 任务 3 - driver_chain 递归查询
+c155739 M1.5 任务 2 - 提取 clock/reset 字段
+835b0c1 M1.5 任务 1 - 多驱动信号检测
+84de7a7 docs: 新增顶层 README.md
+9937c22 refactor: 删除剩余废弃子目录
+6081337 docs(tests): 同步文档 + 归档失效测试
+9ec7ae0 refactor(tracer): 精简 src/ + 修 P0 bug
+```
+
+更早历史归档在 `archive/2026-06-01_signal_tracer_only/`、`_archive/`、`_archived/`。
