@@ -1533,6 +1533,75 @@ class SignalTracer:
                 text = "'0"
             return {'text': text, 'signals': []}
 
+        elif kind == 'StructuredAssignmentPattern':
+            # M4: SV struct initialization/assignment pattern
+            # e.g. my_struct_t'{a: val_a, b: val_b}
+            # memberSetters: [MemberSetter{expr, member}, ...]
+            # elements: [expr, ...] — 按顺序对应字段
+            member_setters = getattr(expr, 'memberSetters', [])
+            elements = getattr(expr, 'elements', [])
+            parts = []
+            signals = []
+            if member_setters:
+                for ms in member_setters:
+                    ms_expr = getattr(ms, 'expr', None)
+                    ms_member = getattr(ms, 'member', None)
+                    member_name = getattr(ms_member, 'name', '') or ''
+                    if ms_expr:
+                        info = self._get_rhs_info_semantic(ms_expr)
+                        parts.append(f"{member_name}: {info['text']}")
+                        signals.extend(info['signals'])
+                    else:
+                        parts.append(f"{member_name}: ?")
+            elif elements:
+                for el in elements:
+                    info = self._get_rhs_info_semantic(el) if el else {'text': '?', 'signals': []}
+                    parts.append(info['text'])
+                    signals.extend(info['signals'])
+            else:
+                parts = ['?']
+            return {
+                'text': "'{" + ', '.join(parts) + '}' if parts else "'?",
+                'signals': list(set(signals))
+            }
+
+        elif kind == 'SimpleAssignmentPattern':
+            # M4: 单字段 struct literal, e.g. my_t'{a: val}
+            # 与 StructuredAssignmentPattern 相同结构 (memberSetters/elements)
+            member_setters = getattr(expr, 'memberSetters', [])
+            elements = getattr(expr, 'elements', [])
+            parts = []
+            signals = []
+            if member_setters:
+                for ms in member_setters:
+                    ms_expr = getattr(ms, 'expr', None)
+                    ms_member = getattr(ms, 'member', None)
+                    member_name = getattr(ms_member, 'name', '') or ''
+                    if ms_expr:
+                        info = self._get_rhs_info_semantic(ms_expr)
+                        parts.append(f"{member_name}: {info['text']}")
+                        signals.extend(info['signals'])
+                    else:
+                        parts.append(f"{member_name}: ?")
+            elif elements:
+                for el in elements:
+                    info = self._get_rhs_info_semantic(el) if el else {'text': '?', 'signals': []}
+                    parts.append(info['text'])
+                    signals.extend(info['signals'])
+            return {
+                'text': "'{" + ', '.join(parts) + '}' if parts else "'?",
+                'signals': list(set(signals))
+            }
+
+
+        elif kind == 'LValueReference':
+            # M4: LValue 在 RHS 中的引用 (少见)
+            # 直接递归 .value
+            value = getattr(expr, 'value', None)
+            if value:
+                return self._get_rhs_info_semantic(value)
+            return {'text': '', 'signals': []}
+
         else:
             # 防御性检查: 未知类型，记录并返回空
             import sys
