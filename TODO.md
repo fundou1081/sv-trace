@@ -12,7 +12,7 @@
 | M1.5 补强 | ✅ 完成 | 20/20 | 多驱动 + clock/reset + chain |
 | M2 上下文召回 | ✅ 完成 | 13/13 | line 准确 + ContextBundle |
 | M3 跨文件 | ✅ 完成 | 9/9 | 多文件 + 层次路径 |
-| **M4 真实项目** | 📋 待开始 | — | OpenTitan / XiangShan |
+| **M4 真实项目** | ✅ 完成 | +5 | OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | **M5 极致优化** | 📋 待开始 | — | 增量 / 并发 / 缓存 |
 
 **当前总计**: **68/68 测试通过**

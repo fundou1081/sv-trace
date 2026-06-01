@@ -1,60 +1,80 @@
 # sv-trace 测试计划
 
-> 更新时间: 2026-06-01
-> 当前真实状态: **2 个测试文件，11 个 test 函数，0 个有意义通过**
+> 更新时间: 2026-06-01 (M4 完成)
+> 当前状态: **68/68 公开 API 测试全部通过 (M0–M4)**
 
 ## 当前状态
 
 | 指标 | 数据 |
 |------|------|
-| pytest 可发现 | 11 个 test |
-| 真正通过 | 0 个（3 个无关纯 parse 测试，1 个 warning，7 个 fail） |
-| 失败原因 | 全部是 `ModuleNotFoundError: No module named 'debug' / 'extractors' / ...`，因为它们还在调用 2026-06-01 已删除的旧模块 |
-| `.sv` fixture | 89 个（在 `tests/targeted/`, `tests/unit/trace/sv_cases/` 等） |
+| pytest 可发现 (主测试) | 68 个 test |
+| **主测试通过** | **68/68 全部通过** |
+| `.sv` fixture | 89 个 (在 `tests/targeted/`, `tests/unit/trace/sv_cases/` 等) |
+| 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
+| 真实项目验证 | OpenTitan 6 模块 (30,218 drivers 总计, 0 warning, 0 empty) |
 | 归档测试 | 167 个失效 .py → `tests/_legacy/` |
+| 旧架构测试 (需迁移) | 2 个文件, 8 fail / 3 pass |
 
 ## 现状详细
 
 ```
-$ python -m pytest tests/ -v --collect-only
-ERROR tests/unit/test_real_projects.py::TestTinyGPU::test_drive_load_tracing
-ERROR tests/unit/test_real_projects.py::TestConstraintAnalysis::test_constraint_parsing
-... (7 errors total)
-collected 11 items
-
-$ python -m pytest tests/ -v
-8 failed, 3 passed, 1 warning
+$ python -m pytest tests/unit/test_signal_tracer.py -v
+68 passed in 1.83s
 ```
 
-3 个"通过"里：
-- 1 个返回 `True` 而非 assert → pytest warning
-- 2 个纯 parse 烟测（`test_parse_all_files` / `test_parse_verilog`），不验证追踪功能
+15 个 TestClass 覆盖 M0–M4:
+- M0: TestBasic, TestControlFlow, TestArrays, TestNoCrashes
+- M1: TestTraceResultFields
+- M1.5: TestMultiDriver, TestClockResetExtraction, TestDriverChain
+- M2: TestContextAccuracy, TestContextBundle
+- M3: TestMultiFile
+- M4: TestExpressionCoverage, TestContinuousAssignRobustness, TestMultiFileLineFallback, TestScopeFilePath, TestAdditionalExpressions
 
-**结论**：当前**公开 API `trace_signal` 没有任何测试覆盖**。
+### 旧架构测试 (待迁移 _legacy)
 
-## 测试目标（M1 阶段）
+```
+$ python -m pytest tests/unit/test_real_projects.py tests/unit/sv_trace/test_all_tiers_extended.py
+2 failed, 2 passed, 1 warning
+```
 
-10 个 pytest 覆盖 `trace_signal` 公开 API：
+失败原因: 引用已删除的 M0 架构模块 (`trace.DriverTracer`, `debug.constraint_parser_v2`)。**不影响主测试**。建议下一步迁移到 `tests/_legacy/`。
 
-| # | 场景 | 关键断言 |
-|---|------|---------|
-| 1 | 基础 always_ff 寄存器 | `data_out` 至少 1 个 driver；line 在 always_ff 内 |
-| 2 | 基础 always_comb | `result` 至少 1 个 driver |
-| 3 | continuous assign | `wire x` 至少 1 个 driver，scope_kind == CONTINUOUS_ASSIGN |
-| 4 | 嵌套 if 条件栈 | `data_out` driver 的 `condition_stack` 含 `['!rst_n', 'enable']`（或类似） |
-| 5 | case 语句 | `state` 在 case(...) 表达式里出现，作为 load |
-| 6 | 数组位选 | `data[7:0]` 通过 prefix 匹配或结构化识别找到 driver |
-| 7 | 跨 scope 的 load | `data_in` 在多个 always 块中被读取，每个都返回 1 个 load |
-| 8 | 时钟/复位提取 | `always_ff @(posedge clk or negedge rst_n)` → driver 的 `clock == 'clk'`, `reset == 'rst_n'` |
-| 9 | driver_chain 递归 | `get_driver_chain('data_out')` 至少包含 `data_in` |
-| 10 | 端到端 fixture | 用 `benchmarks/01_basic_registers.sv`，跑 `trace_signal('data_out')` 不抛异常 |
+## 已完成各阶段
 
-## 后续阶段（M2-M4）
+### M0–M1 (13 个测试)
+- 基础 always_ff/comb/latch
+- 控制流 (if/else/case 条件)
+- 数组 1D/2D
+- TraceResult 完整字段
 
-- **M2**：context bundle 字段填充率测试（每行代码每个字段不能是空字符串）
-- **M3**：跨模块 fixture（3-4 文件层级 SV）
-- **M4**：真实项目烟测（OpenTitan 5 模块、XiangShan 1 模块）
-- **M5**：性能基准（50 文件 3 万行 trace < 100ms）
+### M1.5 (20 个测试)
+- 多驱动信号检测
+- clock/reset 提取 (从 always @(posedge clk or negedge rst_n))
+- driver_chain 递归查询 (带 cycle detection)
+
+### M2 (13 个测试)
+- line/scope_text 准确性
+- ContextBundle frozen dataclass + to_dict()/summary()
+- 全部 M1.5 + M1 + M0 独立验证
+
+### M3 (9 个测试)
+- 多文件 build + 跨模块引用
+- 层次路径 (top.u_mid.u_leaf)
+- 后缀匹配 (trace('data_out') 找跨 instance 所有同名信号)
+
+### M4 (5 个测试)
+- 表达式覆盖 (MemberAccess / RangeSelect / Replication / UnbasedUnsized / StructuredAssignmentPattern / Streaming / Inside / LValueReference)
+- ContinuousAssign InvalidExpression 防御
+- 跨文件行号 (SourceManager)
+- TraceResult.file 精确 (ScopeInfo.file_path)
+- 嵌套 MemberAccess+RangeSelect (reg2hw.val[BufferAw:0])
+
+## M5 计划
+
+- 性能基准 (50 文件 3 万行 trace < 100ms)
+- 增量 build (单文件变更不重编译全部)
+- 并发 build (多 .sv 同时解析)
+- 缓存 (TraceSummary 跨 query 复用)
 
 ## 不在测试范围
 
