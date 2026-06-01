@@ -1,8 +1,8 @@
 [project]
 name = "sv-trace"
 version = "1.0.0"
-description = "SystemVerilog static analysis library for RTL tracing, verification, and code quality"
-readme = "README.md"
+description = "SystemVerilog signal tracer: given a signal name, return all drivers and loads with full context (file, line, scope, clock, reset, conditions, port connection)"
+readme = "STRUCTURE.md"
 license = {text = "MIT"}
 authors = [
     {name = "fundou1081", email = "fundou1081@users.noreply.github.com"}
@@ -12,16 +12,15 @@ maintainers = [
 ]
 requires-python = ">=3.11"
 keywords = [
-    "systemverilog", "verilog", "uvm", "sva",
-    "static-analysis", "verification", "rtl", "slang",
+    "systemverilog", "rtl", "signal-tracing", "driver", "load",
+    "static-analysis", "slang", "pyslang",
 ]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
 ]
 
@@ -30,10 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-z3 = ["z3-solver>=4.16"]
-viz = ["graphviz>=0.20"]
-dev = ["pytest>=7.0", "pytest-cov>=4.0", "black>=23.0", "ruff>=0.1.0"]
-all = ["z3-solver>=4.16", "graphviz>=0.20", "pytest>=7.0", "black>=23.0", "ruff>=0.1.0"]
+dev = ["pytest>=7.0", "black>=23.0", "ruff>=0.1.0"]
 
 [project.urls]
 Homepage = "https://github.com/fundou1081/sv-trace"

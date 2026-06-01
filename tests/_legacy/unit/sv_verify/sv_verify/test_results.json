@@ -1,0 +1,37 @@
+{
+  "results": {
+    "FSM Analyzer": {
+      "passed": 15,
+      "failed": 0
+    },
+    "CDC Extended": {
+      "passed": 15,
+      "failed": 0
+    },
+    "Reset Integrity": {
+      "passed": 15,
+      "failed": 0
+    },
+    "Fanout Analyzer": {
+      "passed": 15,
+      "failed": 0
+    },
+    "Condition Coverage": {
+      "passed": 15,
+      "failed": 0
+    },
+    "Timed Path": {
+      "passed": 15,
+      "failed": 0
+    },
+    "SVA Generator": {
+      "passed": 10,
+      "failed": 0
+    },
+    "Verification Plan": {
+      "passed": 10,
+      "failed": 0
+    }
+  },
+  "errors": []
+}

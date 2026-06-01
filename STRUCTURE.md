@@ -1,6 +1,15 @@
 # sv-trace 项目结构
 
-> 更新时间: 2026-05-15 20:55 GMT+8
+> 更新时间: 2026-06-01
+> 状态: 经历过 2026-06-01 的大幅精简，原 16+ 子模块已合并/删除
+
+## 项目目标
+
+> **只做一件事：信号追踪 + 上下文召回，做到极致。**
+
+不做的：CDC 分析、多驱动检测、面积/功耗/性能估算、Lint、FSM 提取、约束分析、覆盖率建议、TB 复杂度评分、Code Quality 评分、Dependency 图、Visualize……
+
+这些都已从 `src/` 删除（见 `archive/2026-06-01_signal_tracer_only/` 归档）。
 
 ---
 
@@ -8,42 +17,44 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Parse (pyslang)                                           │
-│  输入: .sv 源码 → 输出: SyntaxTree                          │
+│  输入: .sv 源码 (单文件)                                       │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  Pass 1: ScopeBuilder (scope/)                               │
-│  输入: SyntaxTree → 输出: ScopeTree + SymbolTable             │
-│  - 模块/接口/program 定义边界                               │
-│  - 过程块 (always_ff/comb/always) 边界                      │
-│  - 实例层级 (module → instance → sub_instance)              │
+│  pyslang Compilation                                        │
+│  SyntaxTree.fromText() → Compilation() → getRoot()           │
+│  - 完整语义分析（含 generate 展开）                            │
+│  - 统一符号表（PortSymbol / ProceduralBlockSymbol 等）         │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  Pass 2: Extractors (extractors/)                           │
-│  输入: SyntaxTree + ScopeTree + SymbolTable                 │
-│  输出: SemanticGraph                                        │
-│  - LoadExtractor     → 负载关系                             │
-│  - DriverExtractor   → 驱动关系                             │
-│  - ConnectionExtractor → 端口连接                           │
+│  PortResolver (语法层)                                        │
+│  解析 .HierarchyInstantiation 获取实例端口连接                 │
+│  例: dut u_dut(.data_in(sig_in)) → (u_dut, data_in, sig_in) │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  Pass 3: SemanticEnricher (semantic/)                       │
-│  输入: SemanticGraph + AgentContext                         │
-│  输出: EnrichedSemanticGraph                                │
-│  - 置信度评估 (ConfidenceLevel)                            │
-│  - 自然语言描述生成                                         │
-│  - AGENT 填充 business_meaning / tags                       │
+│  SignalTracer (语义层)                                        │
+│  root.visit() 遍历所有 ProceduralBlockSymbol +               │
+│  ContinuousAssignSymbol，提取 driver/load 关系                │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  QueryInterface (trace/)                                    │
-│  - driver.py: DriverCollector (驱动收集)                   │
-│  - load.py: LoadTracer (负载追踪)                          │
-│  - connection.py, dataflow.py, controlflow.py              │
-│  - query/clock_domain.py, signal_chain.py, timing_path.py  │
+│  SignalTracerApp (应用层)                                     │
+│  组合 SignalTracer + PortResolver                            │
+│  提供跨模块 driver/load 追踪                                   │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│  输出: TraceSummary                                          │
+│  signal_name, drivers[], loads[]                             │
+│  每个 TraceResult 包含:                                       │
+│  - file / line / char_offset                                │
+│  - scope_kind / scope_text (整个 always_ff 块源码)            │
+│  - clock / reset (从 event 表达式提取)                        │
+│  - condition / condition_stack (嵌套 if 条件)                │
+│  - hierarchical_path / is_port / port_direction              │
+│  - port_connection (跨模块时填充)                            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -52,134 +63,153 @@
 ## 目录结构
 
 ```
-src/
-├── scope/                    # ✅ Pass 1: 作用域体系
-│   ├── __init__.py
-│   ├── models.py             # ScopeKind, ScopeInfo, SignalRef, ScopeTree
-│   ├── builder.py            # ScopeBuilder
-│   ├── symbol_table.py       # SymbolTable
-│   └── utils.py              # extract_identifier 等工具函数
+sv-trace/
+├── src/
+│   ├── __init__.py                  # 包入口（精简 docstring）
+│   ├── sv_manager.py                # SV 文件加载、源码定位、行号查询
+│   └── signal_tracer/               # 核心：信号追踪器
+│       ├── __init__.py              # 公开 API
+│       ├── models.py                # TraceResult / TraceSummary / ScopeInfo
+│       ├── tracer.py                # SignalTracer: 语义层 driver/load 提取
+│       ├── port_resolver.py         # PortResolver: 语法层端口连接解析
+│       └── signal_tracer_app.py     # SignalTracerApp: 组合 + 跨模块追踪
 │
-├── extractors/              # ✅ Pass 2: 提取器体系
-│   ├── __init__.py
-│   ├── base.py              # Extractor 基类, SemanticGraph, LoadPoint, DriverPoint
-│   ├── load.py              # LoadExtractor (负载关系)
-│   ├── driver.py            # DriverExtractor (驱动关系)
-│   └── connection.py         # ConnectionExtractor (端口连接)
+├── benchmarks/                      # 12 个 SV fixture (1-10 + comprehensive)
+│                                   # 涵盖 always_ff / always_comb / case / generate / FSM / pipeline
 │
-├── semantic/               # ✅ Pass 3: 语义增强层
-│   ├── __init__.py
-│   ├── models.py           # EnrichedSignal, EnrichedSemanticGraph
-│   ├── enricher.py          # SemanticEnricher
-│   └── agent_interface.py   # AgentContext
-│
-├── trace/                 # ✅ 对外 API 层
-│   ├── __init__.py
-│   ├── load.py             # LoadTracer (底层 → extractors/)
-│   ├── driver.py           # DriverCollector (底层 → extractors/)
-│   ├── parse_warn.py       # ParseWarningHandler
-│   ├── connection.py       # 端口连接追踪
-│   ├── controlflow.py      # 控制流分析
-│   ├── dataflow.py         # 数据流分析
-│   ├── dependency.py        # 依赖分析
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── base.py
-│   │   └── interfaces.py
-│   └── query/
-│       ├── __init__.py
-│       ├── clock_domain.py    # 时钟域追踪
-│       ├── signal_chain.py    # 信号链路追踪
-│       ├── timing_path.py     # 时序路径追踪
-│       └── module_connections.py
-│
-├── debug/                 # ✅ 调试分析器 (已适配 pyslang)
-│   ├── class_extractor.py  # ✅ 类提取器 (已适配)
-│   ├── class_hierarchy.py  # 类层次结构
-│   ├── class_usage.py      # 类实例化追踪
-│   ├── analyzers/          # 分析器集合
-│   │   ├── cdc.py          # 跨时钟域分析
-│   │   ├── multi_driver.py # 多驱动检测
-│   │   ├── uninitialized.py # 未初始化检测
+├── tests/
+│   ├── unit/                       # 真测试 (pytest 可发现)
+│   │   ├── test_real_projects.py
+│   │   └── sv_trace/
+│   │       └── test_all_tiers_extended.py
+│   ├── targeted/                    # 40 个 .sv fixture (旧测试数据)
+│   ├── unit/trace/sv_cases/         # 50+ 个 .sv fixture (按类别分目录)
+│   │   ├── cdc/                     # (旧 CDC 测试代码)
+│   │   ├── driver/                  # (driver 测试代码)
+│   │   ├── fsm/                     # (FSM 测试代码)
 │   │   └── ...
+│   ├── advanced/test.sv
+│   ├── testbed/cpu.sv
+│   ├── README.md
+│   └── TEST_PLAN.md
+│
+├── _archive/                        # 多轮历史归档（不动）
+├── _archived/                       # 多轮历史归档（不动）
+├── archive/                         # 多轮历史归档（不动）
+│   ├── 2026-06-01_signal_tracer_only/  # 2026-06-01 重构前的 src/ 全部代码
+│   ├── deprecated/                  # 早期废弃文件
 │   └── ...
 │
-├── parse/                # ✅ pyslang 封装
-│   ├── __init__.py
-│   └── sv_parser.py       # SVParser
+├── tests/_legacy/                   # 2026-06-01 重构前的旧测试 (167 .py + 7 .md + 1 .json)
+│                                   # 保留以供回溯；不再被 pytest 发现
 │
-└── apps/                # 🔄 应用层 (待评估)
+├── STRUCTURE.md                     # 本文件
+├── TODO.md                          # 当前路线图
+├── TEST_PLAN.md                     # 测试计划 (顶层)
+├── tests/
+│   ├── README.md                    # 测试总览
+│   └── TEST_PLAN.md                 # 测试详细计划
+├── pyproject.toml
+├── pytest.ini
+└── Makefile
 ```
 
 ---
 
-## ✅ 已完成架构
+## 公开 API
 
-| 模块 | 状态 | 文件数 | 说明 |
-|------|------|--------|------|
-| scope/ | ✅ | 4 | Pass 1: ScopeTree 构建 |
-| extractors/ | ✅ | 4 | Pass 2: SemanticGraph 提取 |
-| semantic/ | ✅ | 3 | Pass 3: 语义增强 |
-| trace/ 核心 | ✅ | 3 | load, driver, parse_warn |
-| parse/ | ✅ | 1 | SVParser |
+```python
+from signal_tracer import trace_signal, trace_signal_from_file, TraceSummary
+
+# 函数式 API
+result: TraceSummary = trace_signal("data_out", sv_code, "test.sv")
+
+# 类式 API
+from signal_tracer import SignalTracer, SignalTracerApp
+tracer = SignalTracer(sv_code, "test.sv").build()
+result = tracer.trace("data_out")           # 包含跨模块追踪
+```
+
+`TraceSummary` 字段：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `signal_name` | str | 查询的信号名 |
+| `drivers` | `List[DriverTrace]` | 所有驱动（谁在写它） |
+| `loads` | `List[LoadTrace]` | 所有负载（谁在读它） |
+| `.get_clock_domains()` | `List[str]` | 涉及的时钟域 |
+| `.get_driver_chain(max_depth)` | `List[str]` | 驱动链（递归上游） |
+
+`DriverTrace` / `LoadTrace` 字段（继承自 `TraceResult`）：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `signal_name` | str | 该 trace 关联的信号 |
+| `source_expr` | str | 驱动源 / 负载源 表达式文本 |
+| `source_signals` | `List[str]` | 表达式中引用的其他信号 |
+| `file` | str | 文件路径 |
+| `line` | int | 赋值语句行号 |
+| `scope_kind` | ScopeKind | `ALWAYS_FF` / `ALWAYS_COMB` / `ALWAYS_LATCH` / `CONTINUOUS_ASSIGN` |
+| `scope_text` | str | 整个 scope 的源码（always_ff 整块） |
+| `scope_line_start/end` | int | scope 源码起止行 |
+| `clock` | str | 提取出的时钟名（`posedge clk`） |
+| `reset` | str | 提取出的复位名（`negedge rst_n`） |
+| `condition` | str | 赋值所在 if 条件 |
+| `condition_stack` | `List[str]` | 嵌套 if 条件栈 |
+| `is_port` | bool | 是否是端口 |
+| `port_direction` | str | `'in'` / `'out'` / `'inout'` |
+| `hierarchical_path` | str | 完整层次路径（`top.u_dut.data_out`） |
+| `confidence` | str | `'high'` / `'medium'` / `'low'` |
 
 ---
 
-## 🔄 待适配模块
-
-| 模块 | 说明 |
-|------|------|
-| trace/ 其他 | connection, dataflow, controlflow 等已添加 fallback |
-| trace/query/ | 已适配: clock_domain, signal_chain, timing_path |
-| debug/ | 调试分析器，待适配新架构 |
-| apps/ | 独立入口，待评估是否需要 |
-
----
-
-## 📁 _archive/ 归档
+## 数据流（单次 `trace()` 调用）
 
 ```
-_archive/
-├── semantic_old/           # 归档的 semantic 旧模块
-│   ├── base.py              # 兼容层（已废弃）
-│   ├── clock.py, driver.py, fsm.py, load.py 等
-├── test_driver_semantic_validation.py  # 归档的测试
-└── ...
-```
-
-**说明**: 归档的文件不再使用，但保留以防需要回溯。
-
----
-
-## 核心数据流
-
-```
-1. SVParser.parse_text() → SyntaxTree
-2. ScopeBuilder.build() → ScopeTree + SymbolTable
-3. LoadExtractor.extract() → SemanticGraph (loads)
-4. DriverExtractor.extract() → SemanticGraph (drivers)
-5. SemanticEnricher.enrich() → EnrichedSemanticGraph
-6. DriverCollector / LoadTracer → 用户查询
+1. SignalTracer.__init__()       存 sv_code, file_path
+2. .build()                       pyslang parse → 遍历 ProceduralBlock/ContinuousAssign
+                                  → self._drivers, self._loads, self._scopes
+3. .trace(signal_name)            查 self._drivers / self._loads
+                                  → 跨模块时调 self._cross_module_drivers/loads
+                                  → 返回 TraceSummary
 ```
 
 ---
 
-## 命名约定
+## 不做 / 已删除模块
 
-| 类型 | 前缀/后缀 | 示例 |
-|------|-----------|------|
-| Extractor | Extractor | `LoadExtractor`, `DriverExtractor` |
-| 数据模型 | Point / Info / Ref | `LoadPoint`, `ScopeInfo`, `SignalRef` |
-| Builder | Builder | `ScopeBuilder` |
-| Enricher | Enricher | `SemanticEnricher` |
-| Tracer | Tracer | `LoadTracer`, `DriverCollector` |
-| Analyzer | Analyzer | `ClockDomainAnalyzer` |
+下面这些在 2026-06-01 之前存在，已删除（归档在 `archive/2026-06-01_signal_tracer_only/`）：
+
+| 旧模块 | 当时功能 | 删除原因 |
+|--------|---------|---------|
+| `parse/` (parser.py) | 自实现 SV 解析器 | pyslang 已完全替代 |
+| `debug/analyzers/cdc` | 跨时钟域分析 | 不在"信号追踪"目标内 |
+| `debug/analyzers/multi_driver` | 多驱动检测 | 同上 |
+| `debug/analyzers/uninitialized` | 未初始化检测 | 同上 |
+| `debug/analyzers/xvalue` | X 值传播 | 同上 |
+| `debug/analyzers/dangling_port` | 悬空端口 | 同上 |
+| `debug/analyzers/reset_domain` | 复位域分析 | 同上 |
+| `debug/analyzers/fsm_analyzer` | FSM 提取 | 同上 |
+| `debug/analyzers/timed_path` | 时序路径 | 同上 |
+| `debug/class_extractor` | 类提取 | 同上 |
+| `debug/dependency/` | 依赖图 | 同上 |
+| `debug/iospec` | IO 规格 | 同上 |
+| `verify/` | 验证支持（约束/覆盖/FSM→SVA） | 同上 |
+| `lint/` | Lint | 同上 |
+| `query/` | 各类查询（clock_domain/signal_chain/timing_path） | 被 SignalTracer 内置查询替代 |
+| `power/`, `area/`, `performance/` | 资源/功耗/性能估算 | 同上 |
+| `regression/`, `reports/`, `viz/`, `apps/` | 报表/可视化/应用 | 同上 |
+| `extractors/`, `scope/`, `semantic/` | 3-pass 架构 | 已被 SignalTracer 单 pass 替代 |
+| `trace/` (旧) | 旧 trace 实现 | 被 signal_tracer 替代 |
+
+如果未来需要这些功能，应作为独立项目而非本项目的一部分。
 
 ---
 
 ## 相关文档
 
-- `docs/README.md` - 项目首页
-- `docs/MIGRATION_GUIDE.md` - 架构迁移指南
-- `docs/DEVELOPMENT_DISCIPLINE.md` - 开发纪律（铁律 1-24）
-- `docs/MULTI_PASS_ARCHITECTURE_PLAN.md` - 多轮架构迁移计划
+- `TODO.md` - 当前开发路线图
+- `TEST_PLAN.md` - 测试计划
+- `tests/README.md` - 测试总览
+- `archive/2026-06-01_signal_tracer_only/` - 重构前的完整历史代码
+- `tests/_legacy/` - 重构前的旧测试
