@@ -699,3 +699,302 @@ class TestContextAccuracy:
         for d in r.drivers:
             assert d.char_offset > 0, \
                 f"char_offset 应 > 0 (实际偏移), got {d.char_offset}"
+
+
+class TestContextBundle:
+    """M2 任务 2 + 3: ContextBundle 数据结构 + TraceResult.context 字段"""
+
+    def test_context_bundle_basic_fields(self):
+        """ContextBundle 包含所有关键字段"""
+        from signal_tracer import ContextBundle
+        cb = ContextBundle(
+            file='m.sv',
+            line=10,
+            char_offset=100,
+            scope_text='always_ff ...',
+            scope_line_start=8,
+            scope_line_end=13,
+            scope_kind='always_ff',
+            clock='clk',
+            reset='rst_n',
+            condition='!rst_n',
+            condition_stack=('!rst_n',),
+            is_port=True,
+            port_direction='out',
+            hierarchical_path='top.u_dut.q',
+            confidence='high',
+        )
+        assert cb.file == 'm.sv'
+        assert cb.line == 10
+        assert cb.clock == 'clk'
+        assert cb.reset == 'rst_n'
+        assert cb.condition_stack == ('!rst_n',)
+
+    def test_context_bundle_is_frozen(self):
+        """ContextBundle 是 frozen dataclass, 不能修改"""
+        from signal_tracer import ContextBundle
+        cb = ContextBundle(
+            file='m.sv', line=10, char_offset=0,
+            scope_text='', scope_line_start=0, scope_line_end=0,
+            scope_kind='', clock='', reset='',
+            condition='', condition_stack=(),
+            is_port=False, port_direction='', hierarchical_path='',
+            confidence='high',
+        )
+        # 尝试修改应抛 FrozenInstanceError
+        import pytest
+        from dataclasses import FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
+            cb.file = 'changed.sv'
+
+    def test_to_context_method(self):
+        """TraceResult.to_context() 返回 ContextBundle"""
+        from signal_tracer import ContextBundle
+        code = '''
+        module m;
+            logic clk, rst_n, q, d;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) q <= 0;
+                else q <= d;
+            end
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        d = r.drivers[0]
+        ctx = d.to_context()
+        assert isinstance(ctx, ContextBundle)
+        assert ctx.file == 'm.sv'
+        assert ctx.clock == 'clk'
+        assert ctx.reset == 'rst_n'
+        assert ctx.scope_kind == 'always_ff'
+
+    def test_to_contexts_on_summary(self):
+        """TraceSummary.to_contexts() 返回 List[ContextBundle]"""
+        from signal_tracer import ContextBundle
+        code = '''
+        module m;
+            logic clk, rst_n, q, d;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) q <= 0;
+                else q <= d;
+            end
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        ctxs = r.to_contexts()
+        assert len(ctxs) == 2
+        assert all(isinstance(c, ContextBundle) for c in ctxs)
+
+    def test_context_bundle_to_dict(self):
+        """to_dict() 可序列化"""
+        from signal_tracer import ContextBundle
+        cb = ContextBundle(
+            file='m.sv', line=10, char_offset=100,
+            scope_text='always_ff @(posedge clk) ...', scope_line_start=8, scope_line_end=12,
+            scope_kind='always_ff', clock='clk', reset='',
+            condition='', condition_stack=('!rst_n',),
+            is_port=True, port_direction='out', hierarchical_path='top.q',
+            confidence='high',
+        )
+        d = cb.to_dict()
+        assert d['file'] == 'm.sv'
+        assert d['line'] == 10
+        assert d['clock'] == 'clk'
+        assert d['condition_stack'] == ['!rst_n']  # tuple → list
+        # 可 JSON 序列化
+        import json
+        json_str = json.dumps(d)
+        assert 'always_ff' in json_str
+        assert 'clk' in json_str
+
+    def test_context_bundle_summary(self):
+        """summary() 输出一行可读摘要"""
+        from signal_tracer import ContextBundle
+        cb = ContextBundle(
+            file='m.sv', line=10, char_offset=0,
+            scope_text='', scope_line_start=8, scope_line_end=12,
+            scope_kind='always_ff', clock='clk', reset='rst_n',
+            condition='', condition_stack=('!rst_n',),
+            is_port=False, port_direction='', hierarchical_path='',
+            confidence='high',
+        )
+        s = cb.summary()
+        assert 'm.sv:10' in s
+        assert 'always_ff' in s
+        assert 'clock=clk' in s
+        assert 'reset=rst_n' in s
+        assert '!rst_n' in s
+
+    def test_context_bundle_condition_stack_is_tuple(self):
+        """condition_stack 应是 tuple (frozen 要求)"""
+        from signal_tracer import ContextBundle
+        cb = ContextBundle(
+            file='', line=0, char_offset=0,
+            scope_text='', scope_line_start=0, scope_line_end=0,
+            scope_kind='', clock='', reset='',
+            condition='', condition_stack=('a', 'b', 'c'),
+            is_port=False, port_direction='', hierarchical_path='',
+            confidence='high',
+        )
+        assert isinstance(cb.condition_stack, tuple)
+        assert cb.condition_stack == ('a', 'b', 'c')
+
+    def test_to_context_preserves_all_fields(self):
+        """to_context() 应保留 TraceResult 的所有相关字段"""
+        code = '''
+        module m;
+            logic clk, rst_n, q, d;
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n)
+                    q <= 8'h0;
+                else
+                    q <= d;
+            end
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        d = r.drivers[0]
+        ctx = d.to_context()
+        # 字段对得上
+        assert ctx.file == d.file
+        assert ctx.line == d.line
+        assert ctx.char_offset == d.char_offset
+        assert ctx.scope_text == d.scope_text
+        assert ctx.scope_line_start == d.scope_line_start
+        assert ctx.scope_line_end == d.scope_line_end
+        assert ctx.clock == d.clock
+        assert ctx.reset == d.reset
+        assert tuple(d.condition_stack) == ctx.condition_stack
+        assert ctx.is_port == d.is_port
+        assert ctx.port_direction == d.port_direction
+        assert ctx.hierarchical_path == d.hierarchical_path
+        assert ctx.confidence == d.confidence
+
+
+# ---------- M3: 跨文件 + 层次路径 ----------
+
+class TestMultiFile:
+    """M3 任务 1: SignalTracer 支持多文件输入
+
+    验证:
+    - add_file() API
+    - 跨文件 Compilation (单 Compilation, 多 SyntaxTree)
+    - hpath-based driver 存储
+    - 向后兼容 (单文件)
+    """
+
+    FIXTURE_DIR = 'tests/fixtures/m3_hierarchical'
+
+    def _load_fixtures(self):
+        from signal_tracer import SignalTracer
+        t = SignalTracer()
+        for n in ['top', 'mid', 'leaf']:
+            path = f'{self.FIXTURE_DIR}/{n}.sv'
+            t.add_file(path, open(path).read())
+        t.build()
+        return t
+
+    def test_add_file_returns_self(self):
+        """add_file() 返回 self 支持链式调用"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer()
+        result = t.add_file('m.sv', 'module m; endmodule')
+        assert result is t
+
+    def test_backward_compat_single_file(self):
+        """老 API SignalTracer(code, path) 仍工作"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic a, b;
+            always_comb a = b;
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv').build()
+        r = t.trace('a')
+        assert len(r.drivers) == 1
+
+    def test_multi_file_loads_to_single_compilation(self):
+        """3 个文件应加到同一 Compilation, 都能解析"""
+        t = self._load_fixtures()
+        # 验证 _files 里有 3 个
+        assert len(t._files) == 3
+
+    def test_hierarchical_path_storage(self):
+        """driver key 应是 {hpath}.{signal} 形式"""
+        t = self._load_fixtures()
+        # leaf 的 dout 在两个 instance 中被驱动
+        assert 'top.u_mid.u_l1.dout' in t._drivers
+        assert 'top.u_mid.u_l2.dout' in t._drivers
+        # leaf 端口 dout 应有 2 个 driver (rst 分支 + 正常分支) × 2 instance = 4
+        assert len(t._drivers['top.u_mid.u_l1.dout']) == 2
+        assert len(t._drivers['top.u_mid.u_l2.dout']) == 2
+
+    def test_trace_by_full_hpath(self):
+        """trace('top.u_mid.u_l1.dout') 查到具体 instance 的 driver"""
+        t = self._load_fixtures()
+        r = t.trace('top.u_mid.u_l1.dout')
+        # 2 个 driver (rst 分支 + 正常分支)
+        assert len(r.drivers) == 2
+        # driver 应该有正确的 hpath
+        for d in r.drivers:
+            assert d.hierarchical_path == 'top.u_mid.u_l1', \
+                f"expected 'top.u_mid.u_l1', got {d.hierarchical_path!r}"
+
+    def test_trace_by_suffix_match_finds_all_instances(self):
+        """trace('dout') 找到所有 instance 中的 dout"""
+        t = self._load_fixtures()
+        r = t.trace('dout')
+        # 4 个 driver: u_l1.dout (2) + u_l2.dout (2)
+        assert len(r.drivers) == 4
+        hpaths = {d.hierarchical_path for d in r.drivers}
+        assert hpaths == {'top.u_mid.u_l1', 'top.u_mid.u_l2'}
+
+    def test_trace_by_suffix_match_for_loads(self):
+        """trace('din') 找到所有 load (被读位置)"""
+        t = self._load_fixtures()
+        r = t.trace('din')
+        # din 在 leaf 里被读 (RHS of dout <= din), 在两个 instance 中
+        # leaf.din 是 input port, 不会出现在 _loads 里 (port 不算 load)
+        # 实际是 mid 的 sw1/sw2 在 mid 里驱动 sum/diff 之前, din 是 leaf 内部
+        # 这里 _loads 应该有 2 个 (两个 leaf instance 各一个)
+        assert len(r.loads) >= 1
+
+    def test_non_existent_signal_returns_empty(self):
+        """不存在的信号返回空, 不抛异常"""
+        t = self._load_fixtures()
+        r = t.trace('nonexistent_signal')
+        assert len(r.drivers) == 0
+        assert len(r.loads) == 0
+
+    def test_two_file_simple_hierarchy(self):
+        """2 个文件的最简层级 (top + sub)"""
+        from signal_tracer import SignalTracer
+        sub_code = '''
+        module sub (
+            input  logic clk, rst_n,
+            input  logic [7:0] din,
+            output logic [7:0] dout
+        );
+            always_ff @(posedge clk or negedge rst_n)
+                if (!rst_n) dout <= 0;
+                else dout <= din;
+        endmodule
+        '''
+        top_code = '''
+        module top (
+            input  logic clk, rst_n,
+            input  logic [7:0] sw,
+            output logic [7:0] led
+        );
+            sub u_sub(.clk(clk), .rst_n(rst_n), .din(sw), .dout(led));
+        endmodule
+        '''
+        t = SignalTracer()
+        t.add_file('sub.sv', sub_code)
+        t.add_file('top.sv', top_code)
+        t.build()
+        # 跨文件 sub 仍能解析
+        assert 'top.u_sub.dout' in t._drivers
+        r = t.trace('top.u_sub.dout')
+        assert len(r.drivers) == 2

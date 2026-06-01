@@ -215,8 +215,11 @@ class SignalTracer:
     给一个信号，返回它的所有驱动和负载。
     """
     
-    def __init__(self, sv_code: str, file_path: str = ""):
-        self._sv_code = sv_code
+    def __init__(self, sv_code: str = "", file_path: str = ""):
+        # M3: 支持多文件. _files 是 [(file_path, sv_code), ...]
+        # 向后兼容: 如果传了 sv_code, 仍可直接工作
+        self._files: List[Tuple[str, str]] = []
+        self._sv_code = sv_code  # 保留作向后兼容 (单文件时 = _files[0][1])
         self._file_path = file_path
         self._tree: pyslang.SyntaxTree = None
         self._drivers: Dict[str, List[TraceResult]] = {}
@@ -225,35 +228,70 @@ class SignalTracer:
         self._port_info: Dict[str, str] = {}  # hpath -> direction ('in', 'out', 'inout')
         self._port_resolver: PortResolver = None  # 端口连接解析器
         self._built = False
-    
+        if sv_code or file_path:
+            self.add_file(file_path, sv_code)
+
+    def add_file(self, file_path: str, sv_code: str) -> 'SignalTracer':
+        """M3: 加一个 .sv 文件到追踪项目
+
+        多个文件会被加到同一 pyslang Compilation, 可以跨文件追踪 (top.u_sub.signal)。
+
+        可以连续调用多次:
+            t = SignalTracer()
+            t.add_file('top.sv', top_code)
+            t.add_file('sub.sv', sub_code)
+            t.build()
+            t.trace('top.u_sub.out_data')
+
+        Returns:
+            self, 支持链式调用
+        """
+        if not sv_code:
+            return self
+        self._files.append((file_path, sv_code))
+        # 保持 _sv_code 指向第一个文件 (向后兼容)
+        if not self._sv_code:
+            self._sv_code = sv_code
+            self._file_path = file_path
+        return self
+
     def build(self):
         """构建追踪索引"""
         if self._built:
             return self
-        
+
         self._scopes = []
         self._drivers = {}
         self._loads = {}
-        
-        # Use Compilation for semantic analysis (handles generate expansion)
-        tree = pyslang.SyntaxTree.fromText(self._sv_code)
+
+        if not self._files:
+            # 没有文件, build 出空
+            self._built = True
+            return self
+
+        # M3: 多棵 SyntaxTree 加到同一 Compilation (跨文件 module 解析)
         comp = pyslang.Compilation()
-        comp.addSyntaxTree(tree)
+        for file_path, sv_code in self._files:
+            tree = pyslang.SyntaxTree.fromText(sv_code, file_path or '')
+            comp.addSyntaxTree(tree)
         comp.freeze()
-        
+
         # Get elaborated root and traverse all semantic symbols
         root = comp.getRoot()
-        
+
         # Collect port information first
         self._collect_port_info(root)
-        
+
         # Use visit() to traverse the semantic AST - visit() handles internal traversal
+        # and crosses module boundaries (top.u_sub.signal 都能拿到)
         root.visit(lambda s: self._process_all_symbols(s))
-        
+
         # Build port connection resolver for cross-module tracing
-        self._port_resolver = PortResolver(self._sv_code)
-        self._port_resolver.build()
-        
+        # PortResolver 当前是单文件, 喂第一个文件 (主要使用场景是单文件或顶层)
+        if self._sv_code:
+            self._port_resolver = PortResolver(self._sv_code)
+            self._port_resolver.build()
+
         self._built = True
         return self
     
@@ -318,10 +356,12 @@ class SignalTracer:
             syn_text = str(syn).strip()
 
         # Create scope info for continuous assign
+        # M3: continuous assign 的 hpath 就是其所在 module 的 hpath (如 'top' 或 'top.u_sub')
+        assign_hpath = getattr(sym, 'hierarchicalPath', '') or ''
         scope = ScopeInfo(
             kind=ScopeKind.CONTINUOUS_ASSIGN,
-            name=getattr(sym, 'hierarchicalPath', '') or 'assign',
-            instance_path='',
+            name=assign_hpath or 'assign',
+            instance_path=assign_hpath,
             line_start=line,
             line_end=line_end,
             text=syn_text,
@@ -331,6 +371,9 @@ class SignalTracer:
             reset='',
         )
         self._scopes.append(scope)
+
+        # M3: 用 scope.instance_path (hpath) 作为前缀
+        full_name = self._qualify_signal_name(scope, lhs_name)
 
         # Create driver trace
         trace = TraceResult(
@@ -349,14 +392,21 @@ class SignalTracer:
             scope_offset_end=0,
             clock='',
             reset='',
+            hierarchical_path=assign_hpath,
         )
+        if full_name not in self._drivers:
+            self._drivers[full_name] = []
+        self._drivers[full_name].append(trace)
         if lhs_name not in self._drivers:
             self._drivers[lhs_name] = []
         self._drivers[lhs_name].append(trace)
-        
+
         # Create load traces for signals used in RHS
         for sig in rhs_info['signals']:
             if sig != lhs_name:
+                full_sig = self._qualify_signal_name(scope, sig)
+                if full_sig not in self._loads:
+                    self._loads[full_sig] = []
                 if sig not in self._loads:
                     self._loads[sig] = []
                 load_trace = TraceResult(
@@ -375,8 +425,9 @@ class SignalTracer:
                     scope_offset_end=0,
                     clock='',
                     reset='',
-                    hierarchical_path='',
+                    hierarchical_path=assign_hpath,
                 )
+                self._loads[full_sig].append(load_trace)
                 self._loads[sig].append(load_trace)
     
     def _process_procedural_block(self, block):
@@ -943,6 +994,9 @@ class SignalTracer:
         # M2: 获取实际赋值表达式的行号 (不是 scope 起始行)
         actual_line, actual_offset = self._get_expr_location(expr, scope)
 
+        # M3: 用 scope.instance_path (hpath) 作为前缀, 让 trace('top.u_sub.signal') 能工作
+        full_name = self._qualify_signal_name(scope, lhs_name)
+
         # Create trace for driver
         trace = TraceResult(
             trace_type=TraceType.DRIVER,
@@ -963,11 +1017,14 @@ class SignalTracer:
             hierarchical_path=scope.instance_path,
             condition_stack=list(condition_stack),
         )
+        if full_name not in self._drivers:
+            self._drivers[full_name] = []
+        self._drivers[full_name].append(trace)
+
+        # 同时存到 leaf name 和基名下, 让 trace('signal') / trace('arr') 也能查到
         if lhs_name not in self._drivers:
             self._drivers[lhs_name] = []
         self._drivers[lhs_name].append(trace)
-
-        # 同时存到基名下，让 trace_signal('a') 也能查到 a[i] 的 driver
         if '[' in lhs_name:
             base = lhs_name.split('[')[0]
             if base and base != lhs_name:
@@ -978,6 +1035,9 @@ class SignalTracer:
         # Create traces for loads
         for sig in rhs_info['signals']:
             if sig != lhs_name:
+                full_sig = self._qualify_signal_name(scope, sig)
+                if full_sig not in self._loads:
+                    self._loads[full_sig] = []
                 if sig not in self._loads:
                     self._loads[sig] = []
                 load_trace = TraceResult(
@@ -999,7 +1059,23 @@ class SignalTracer:
                     hierarchical_path=scope.instance_path,
                     condition_stack=list(condition_stack),
                 )
+                self._loads[full_sig].append(load_trace)
                 self._loads[sig].append(load_trace)
+
+    def _qualify_signal_name(self, scope, signal_name: str) -> str:
+        """M3: 用 scope 的 hpath 前缀限定信号名
+
+        例: scope.instance_path='top.u_sub', signal_name='out_data'
+            -> 'top.u_sub.out_data'
+
+        退化: scope.instance_path 为空 / 'unknown' 时, 返回原 signal_name
+        """
+        prefix = scope.instance_path if scope else ''
+        if not prefix or prefix == 'unknown':
+            return signal_name
+        if not signal_name:
+            return prefix
+        return f"{prefix}.{signal_name}"
 
     def _get_expr_location(self, expr, scope) -> Tuple[int, int]:
         """获取表达式的精确位置 (行号, 字符偏移)
@@ -1371,34 +1447,61 @@ class SignalTracer:
         return trace_result
     
     def trace(self, signal_name: str) -> TraceSummary:
-        """追踪信号的所有驱动和负载 (支持跨模块追踪)"""
+        """追踪信号的所有驱动和负载 (支持跨模块 + 层次路径)
+
+        M3 智能匹配:
+        1. 完全匹配 (signal_name 含 '.': 当 hpath 用; 否则当 leaf name)
+        2. 前缀匹配 (数组 a[i] → a[...])
+        3. 后缀匹配 (查 'out_data' 会找所有 '*.out_data')
+        4. Cross-module fallback (找不到时走端口连接)
+        """
         if not self._built:
             self.build()
-        
-        drivers = self._drivers.get(signal_name, [])
-        loads = self._loads.get(signal_name, [])
-        
-        # If not found and this is an array access like data[0], try prefix matching
+
+        drivers: List[TraceResult] = []
+        loads: List[TraceResult] = []
+
+        # Pass 1: 完全匹配
+        if signal_name in self._drivers:
+            drivers.extend(self._drivers[signal_name])
+        if signal_name in self._loads:
+            loads.extend(self._loads[signal_name])
+
+        # Pass 2: 数组前缀匹配 (a[0] 找 a[...])
         if not drivers and not loads and '[' in signal_name:
-            # Try to match against keys like data[i]
-            base_name = signal_name.split('[')[0]
-            for key, drivers_list in self._drivers.items():
-                if key.startswith(base_name + '['):
-                    drivers.extend(drivers_list)
-            for key, loads_list in self._loads.items():
-                if key.startswith(base_name + '['):
-                    loads.extend(loads_list)
-        
-        # Cross-module tracing: find signals that connect to this signal through ports
+            base = signal_name.split('[')[0]
+            for k, lst in self._drivers.items():
+                if k.startswith(base + '['):
+                    drivers.extend(lst)
+            for k, lst in self._loads.items():
+                if k.startswith(base + '['):
+                    loads.extend(lst)
+
+        # Pass 3: 后缀匹配 (查 'out_data' 找所有 '*.out_data')
+        # 但只对不含 '.' 的查询做 (避免 'top.u_sub.out_data' 也匹配 'sub.out_data')
+        if not drivers and not loads and '.' not in signal_name:
+            suffix = '.' + signal_name
+            seen_keys = set()  # 防重复
+            for k, lst in self._drivers.items():
+                if k.endswith(suffix) and k not in seen_keys:
+                    drivers.extend(lst)
+                    seen_keys.add(k)
+            seen_keys.clear()
+            for k, lst in self._loads.items():
+                if k.endswith(suffix) and k not in seen_keys:
+                    loads.extend(lst)
+                    seen_keys.add(k)
+
+        # Pass 4: Cross-module fallback (port connection)
         if not drivers or not loads:
-            cross_drivers = self._cross_module_drivers(signal_name)
-            if cross_drivers:
-                drivers.extend(cross_drivers)
-        
+            cross = self._cross_module_drivers(signal_name)
+            if cross:
+                drivers.extend(cross)
+
         # Enrich with port info
         drivers = [self._enrich_port_info(d) for d in drivers]
         loads = [self._enrich_port_info(l) for l in loads]
-        
+
         return TraceSummary(
             signal_name=signal_name,
             drivers=[DriverTrace(**d.__dict__) for d in drivers],
