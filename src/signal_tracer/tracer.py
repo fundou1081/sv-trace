@@ -1332,10 +1332,13 @@ class SignalTracer:
                         if left_val and right_val:
                             return f'{name}[{left_val}:{right_val}]'
                     return name
-                # M4: 嵌套 MemberAccess, e.g. reg2hw.val[BufferAw:0]
-                # value 有 .member 字段
+                # M5.2: 嵌套 ElementSelect, e.g. arr[0][255:0] 的 [0] 部分
+                # value 有 .selector 字段 (如 [0])
                 value_kind = str(value.kind).split('.')[-1]
-                if value_kind == 'MemberAccess':
+                if value_kind == 'ElementSelect':
+                    # 递归拿 value 的字符串名
+                    base_name = self._get_lhs_name_semantic(value) or ''
+                elif value_kind == 'MemberAccess':
                     member = getattr(value, 'member', None)
                     if member:
                         member_name = getattr(member, 'name', '') or ''
@@ -1567,6 +1570,11 @@ class SignalTracer:
                         if hpath:
                             base_name = hpath
                             signals.append(hpath)
+                elif value_kind == 'ElementSelect':
+                    # M5.2: 嵌套 ElementSelect, e.g. sideload[0][255:0]
+                    value_info = self._get_rhs_info_semantic(value)
+                    base_name = value_info['text']
+                    signals.extend(value_info['signals'])
 
             # Get range info [left:right]
             left_val = getattr(expr, 'left', None)

@@ -2487,3 +2487,63 @@ class TestDumpMultiDrivers:
         parsed = json.loads(s)
         assert parsed['summary']['total_drivers'] >= 2
         assert len(parsed['conflicts']) >= 1
+
+
+# ---------- M5.2a: 嵌套 ElementSelect + RangeSelect (OpenTitan 发现) ----------
+
+class TestElementSelectNesting:
+    """M5.2a: 嵌套 ElementSelect 表达式 (e.g. arr[0][255:0])
+
+    OpenTitan 真实项目 (otbn/alu_bignum.sv) 发现:
+    `assign x = sideload_key_shares_i[0][255:0]`
+    之前 _get_rhs_info_semantic 漏处理 ElementSelect 嵌套, 返回空 source_expr
+    修复: ElementSelect 递归处理, 拿 ElementSelect 内的子表达式
+    """
+
+    def test_element_select_basic(self):
+        """ElementSelect 基本: arr[0]"""
+        from signal_tracer import trace_signal
+        code = '''
+        module m;
+            logic [7:0][3:0] arr;
+            logic [3:0] out;
+            always_comb out = arr[0];  // 读 arr[0]
+        endmodule
+        '''
+        r = trace_signal('out', code, 'm.sv')
+        for d in r.drivers:
+            assert d.source_expr, f"source_expr 不应空: {d.source_expr!r}"
+            assert 'arr' in d.source_signals
+
+    def test_range_select_with_element_select(self):
+        """RangeSelect 包 ElementSelect: arr[0][255:0]"""
+        from signal_tracer import trace_signal
+        code = '''
+        module m;
+            logic [7:0][255:0] arr;
+            logic [255:0] out;
+            assign out = arr[0][255:0];  // RangeSelect 包 ElementSelect 包 NamedValue
+        endmodule
+        '''
+        r = trace_signal('out', code, 'm.sv')
+        for d in r.drivers:
+            # 修复前 source_expr='', 修复后应是 'arr[0][255:0]'
+            assert d.source_expr, f"source_expr 不应空: {d.source_expr!r}"
+            assert 'arr' in d.source_signals
+
+    def test_element_select_nested_in_range_select_in_open_titan(self):
+        """OpenTitan otbn: arr[0][255:0] 嵌套"""
+        from signal_tracer import SignalTracer
+        dir_path = '/Users/fundou/my_dv_proj/opentitan/hw/ip/otbn/rtl/'
+        files = {f: open(dir_path + f).read() for f in os.listdir(dir_path) if f.endswith('.sv')}
+        t = SignalTracer()
+        for n, c in files.items():
+            t.add_file(dir_path + n, c)
+        t.build()
+        # 找 ispr_rdata_no_intg_mux_in 的 driver — 之前是空 source_expr
+        sigs = [s for s in t._drivers if 'ispr_rdata_no_intg_mux_in[IsprKeyS0L]' in s]
+        assert len(sigs) > 0, "应找到 ispr_rdata_no_intg_mux_in[IsprKeyS0L] 的 driver"
+        for sig in sigs:
+            for d in t._drivers[sig]:
+                assert d.source_expr, f"{sig} driver 应有 source_expr (修复 ElementSelect 嵌套)"
+                # 之前是 4 个空 driver, 修复后应是 0
