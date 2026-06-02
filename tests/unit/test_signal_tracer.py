@@ -1681,3 +1681,118 @@ endmodule
             assert ce.matches_signal_name is True    # 'tx_enable' 在行中
             assert ctx.to_dict()['is_verified'] is True
             assert ctx.to_dict()['credibility_score'] == 1.0
+
+
+# ---------- M5.1 (b): find_multi_drivers 自动填充 evidence ----------
+
+class TestMultiDriverEvidence:
+    """M5.1 (b): find_multi_drivers 默认 verify=True, 每个 driver 自动带 evidence
+
+    多驱动检测 + 证据链 = '看到冲突 + 看到冲突的真凭实据'
+    """
+
+    def test_multi_drivers_default_verify_populates_evidence(self):
+        """默认 verify=True: 每个 driver 的 _evidence_override 已填充"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] data;
+            logic clk, rst_n, mode;
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 0) data <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 1) data <= 8'h55;
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        multi = t.find_multi_drivers()  # verify=True 默认
+        assert 'm.data' in multi or 'data' in multi
+        drivers = list(multi.values())[0]
+        assert len(drivers) >= 2
+        for d in drivers:
+            # evidence 已被填充
+            ev = getattr(d, '_evidence_override', None)
+            assert ev is not None, f"driver @ line {d.line} 应有 _evidence_override"
+            assert ev.file_readable is True
+            assert ev.snippet_present is True
+            assert ev.credibility_score == 1.0
+            assert ev.is_verified is True
+
+    def test_multi_drivers_verify_false_no_evidence(self):
+        """verify=False: 不填充 evidence (向后兼容)"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] data;
+            logic clk, rst_n, mode;
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 0) data <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 1) data <= 8'h55;
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        multi = t.find_multi_drivers(verify=False)
+        drivers = list(multi.values())[0]
+        for d in drivers:
+            ev = getattr(d, '_evidence_override', None)
+            assert ev is None, f"verify=False 时不应有 _evidence_override"
+
+    def test_multi_drivers_evidence_in_to_context(self):
+        """driver evidence 通过 to_context 暴露给 agent"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] data;
+            logic clk, rst_n, mode;
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 0) data <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 1) data <= 8'h55;
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        multi = t.find_multi_drivers()
+        for d in list(multi.values())[0]:
+            ctx = d.to_context()
+            d_dict = ctx.to_dict()
+            # 顶层 credibility 字段
+            assert d_dict['credibility_score'] == 1.0
+            assert d_dict['is_verified'] is True
+            assert '8\'hAA' in d_dict['evidence_snippet'] or '8\'h55' in d_dict['evidence_snippet']
+            # 完整 evidence 在 code_evidence 字段
+            assert d_dict['code_evidence']['matches_source_expr'] is True
+            assert d_dict['code_evidence']['matches_signal_name'] is True
+
+    def test_multi_drivers_evidence_in_open_titan(self):
+        """OpenTitan 真实项目: find_multi_drivers 自动带 evidence"""
+        from signal_tracer import SignalTracer
+        spi_dir = '/Users/fundou/my_dv_proj/opentitan/hw/ip/spi_device/rtl/'
+        files = {f: open(spi_dir + f).read() for f in __import__('os').listdir(spi_dir) if f.endswith('.sv')}
+        t = SignalTracer()
+        for n, c in files.items():
+            t.add_file(spi_dir + n, c)
+        t.build()
+        multi = t.find_multi_drivers()
+        # 至少 1 个多驱动信号
+        assert len(multi) > 0
+        # 取一个看 evidence
+        sig, drivers = list(multi.items())[0]
+        for d in drivers:
+            ev = getattr(d, '_evidence_override', None)
+            assert ev is not None
+            # OpenTitan 真实项目应都能验证 (除非文件不可读)
+            assert ev.file_readable is True
+            assert ev.credibility_score >= 0.6  # 至少 0.6
+            ctx = d.to_context()
+            d_dict = ctx.to_dict()
+            assert d_dict['evidence_snippet'] != ''  # 实际行被读取

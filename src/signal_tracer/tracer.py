@@ -1949,10 +1949,25 @@ class SignalTracer:
         return [LoadTrace(**l.__dict__) for l in self._loads.get(signal_name, [])]
 
     def _get_file_content(self, file_path: str) -> Optional[str]:
-        """M5.1: 从已加载文件查找内容 (用于证据链交叉验证)"""
-        for fp, content in self._files:
-            if fp == file_path or (file_path and fp and fp.endswith(file_path)):
-                return content
+        """M5.1: 从已加载文件查找内容 (用于证据链交叉验证)
+
+        路径匹配规则 (按优先级):
+        1. 完全匹配
+        2. basename 匹配 (兼容相对路径 vs 绝对路径)
+        3. endswith 匹配 (宽松)
+        """
+        if not file_path:
+            return None
+        # Basename 提取
+        import os
+        target_base = os.path.basename(file_path)
+        for fp, fc in self._files:
+            if fp == file_path:
+                return fc
+            if target_base and os.path.basename(fp) == target_base:
+                return fc
+            if file_path and fp and fp.endswith(file_path):
+                return fc
         return None
 
     def trace_verified(self, signal_name: str) -> 'TraceSummary':
@@ -1984,7 +1999,7 @@ class SignalTracer:
                 )
         return result
 
-    def find_multi_drivers(self) -> Dict[str, List[TraceResult]]:
+    def find_multi_drivers(self, verify: bool = True) -> Dict[str, List[TraceResult]]:
         """找出所有被多个 scope 驱动的信号 (>= 2 个不同 scope)
 
         在 always 风格的 RTL 里，同一信号被 >= 2 个不同 scope 驱动通常是 bug
@@ -1993,8 +2008,17 @@ class SignalTracer:
         去重规则：按 scope_text 去重。同一 always 块内的 if/else 多分支
         算 1 个 driver（它们实际是同一块代码在不同条件下的输出）。
 
+        M5.1: 默认 verify=True, 为每个 driver 自动填充 code_evidence (用 in-memory
+        文件内容), 让 caller 立刻看到每个 driver 的 credibility_score 0-1 和
+        is_verified 标记。多驱动检测 + 证据链 = "看到冲突 + 看到冲突的真凭实据"。
+
+        Args:
+            verify: 是否自动填充 evidence (默认 True)
+
         Returns:
-            Dict[信号名, List[TraceResult]]，只含 >= 2 个 scope 的信号
+            Dict[信号名, List[TraceResult]], 只含 >= 2 个 scope 的信号。
+            若 verify=True, 每个 driver 的 _evidence_override 已填充,
+            可直接 d.to_context() 拿到带 credibility 的 ContextBundle。
         """
         if not self._built:
             self.build()
@@ -2008,6 +2032,19 @@ class SignalTracer:
                     unique_scopes.add(d.scope_text)
             if len(unique_scopes) >= 2:
                 result[sig_name] = drivers
+
+        # M5.1: 自动填充 evidence (用 in-memory 文件内容, 避免磁盘 I/O)
+        if verify and result:
+            from signal_tracer.models import build_evidence
+            for sig_name, drivers in result.items():
+                for d in drivers:
+                    fc = self._get_file_content(d.file)
+                    if fc:
+                        d._evidence_override = build_evidence(
+                            file=d.file, line=d.line,
+                            source_expr=d.source_expr, signal_name=d.signal_name,
+                            scope_text=d.scope_text, file_content=fc, context_window=2,
+                        )
         return result
 
     def get_driver_count(self, signal_name: str) -> int:
