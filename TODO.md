@@ -127,6 +127,7 @@ TODO:
 - ❌ Lint / Style 检查（属于 code quality 工具）
 - ❌ 类/约束提取（属于元编程工具）
 - ❌ 可视化（属于 UI 工具）
+- ❌ **代码证据链不算 lint**: M5.1 evidence 是 "读回文件交叉验证", 跟 lint 工具的 "检测代码模式" 不同。evidence 是**自证** (trace 自己证明自己), lint 是**找错** (工具指出代码错)。
 
 如果未来需要，应作为独立项目开发。
 
@@ -134,29 +135,56 @@ TODO:
 
 ## 历史
 
-**2026-06-01 大精简 + 4 个里程碑**：
+**2026-06-01 大精简 + 4 个里程碑 (M0-M3)**:
 - 起点：src/ 16+ 子模块，公开 API 0 测试，11/11 benchmark 全挂
 - 终态：src/ = `signal_tracer` + `sv_manager`（5 文件），公开 API 68 测试全过
 - 8 个 commit 完成 M0-M3
 
-**重构**：
-- 删 16+ 子模块：parse / debug / verify / lint / query / power / area / performance / regression / reports / viz / apps / extractors / scope / semantic / trace(旧)
+**2026-06-02 M4 真实项目验证**:
+- OpenTitan 6 模块 (uart/spi_device/dma/i2c/aes/hmac) 端到端跑通
+- 30,218 drivers 总追踪量, 0 warning, 0 empty driver
+- 修了 file path bug, 跨文件 line 错误, RangeSelect 嵌套空 text, InvalidExpression 防御
+
+**2026-06-02 M4.1 Interface/Modport**:
+- 17+ 种 SV 表达式覆盖 (MemberAccess / Streaming / Inside / StructuredAssignmentPattern 等)
+- HierarchicalValue 处理 modport 访问 (`m.valid` / `m.data[3:0]`)
+
+**2026-06-02-03 M5.1 evidence 链 (全家族)**:
+- CodeEvidence 数据类: snippet / context_before/after / matches_* / credibility_score 0-1
+- 6 个 trace API 默认 verify=True 自动带 evidence
+- 3 个 dump 工具 1 次返回整链 dict (含 summary)
+- 35 个新测试累计 117/117 通过
+- 加 SKILL.md (供 agent 调用)
+
+**重构**:
+- 删 16+ 子模块: parse / debug / verify / lint / query / power / area / performance / regression / reports / viz / apps / extractors / scope / semantic / trace(旧)
 - 统一到 `src/signal_tracer/` + `src/sv_manager.py`
 - pyslang 取代自研 parser
-- 删 167 个失效测试，归档到 `tests/_legacy/`
+- 删 167 个失效测试, 归档到 `tests/_legacy/`
 - 删 192 行 tracer.py 内部死代码
+- M5.1 修 2 个旧架构测试文件 (8 fail) 迁移到 _legacy
 
-**Commits** (按时间倒序)：
+**Commits** (按时间倒序):
 ```
+7e3129a M5.1g - dump_multi_drivers 一次 dump 多驱动检测 (冲突+证据)
+b30fa01 M5.1f - dump_chain 一次 dump 整链为 JSON (LLM 友好)
+d0d4c46 M5.1e - get_load_chain 整合 evidence (与 driver chain 对称)
+27f6a7e M5.1d - trace/trace_drivers/trace_loads 整合 evidence
+b19a986 M5.1c - get_driver_chain 整合 evidence (链上每跳带 credibilidad)
+caead28 M5.1b - find_multi_drivers 整合 evidence (默认 verify=True)
+42e2ab2 docs: README + SKILL.md 同步 M5.1 evidence chain
+e50fe4c M5.1 - 代码证据链, 召回上下文作为可证伪的追踪证据
+ffdfe71 docs: 更新 README + 新增 SKILL.md (供 agent 调用)
+b76d971 M4.1 - Interface/Modport 信号追踪支持
+4baf9a9 M4 - 扩展 StructuredAssignmentPattern + SimpleAssignmentPattern + LValueReference
+8ddd000 M4 - 扩展表达式处理覆盖工业 SV 语法
+c72c3e9 M4 plan A - 跨文件 line 精确化 (pyslang SourceManager)
 b74d437 M3 - 多文件支持 + 层次路径追踪
 5b26cdd M2 任务 2+3 - ContextBundle + TraceResult.to_context()
 9de4660 M2 任务 1 - 修复 line/scope_text 准确性
 907f5ef M1.5 任务 3 - driver_chain 递归查询
 c155739 M1.5 任务 2 - 提取 clock/reset 字段
 835b0c1 M1.5 任务 1 - 多驱动信号检测
-84de7a7 docs: 新增顶层 README.md
-9937c22 refactor: 删除剩余废弃子目录
-6081337 docs(tests): 同步文档 + 归档失效测试
 9ec7ae0 refactor(tracer): 精简 src/ + 修 P0 bug
 ```
 

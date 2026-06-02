@@ -87,7 +87,7 @@ sv-trace/
 │                                   # 涵盖 always_ff / always_comb / case / generate / FSM / pipeline
 │
 ├── tests/
-│   ├── unit/test_signal_tracer.py  # 55 个公开 API 测试
+│   ├── unit/test_signal_tracer.py  # 117 个公开 API 测试 (含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d + 5 M5.1e + 9 M5.1f + 6 M5.1g)
 │   ├── unit/trace/sv_cases/         # 50+ .sv fixture (cdc/driver/fsm/...)
 │   ├── fixtures/m3_hierarchical/    # M3 跨文件 fixture
 │   │   ├── top.sv                   # 顶层, 实例化 mid
