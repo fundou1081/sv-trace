@@ -320,6 +320,63 @@ for ctx in r.to_contexts():
 state_machine.sv:16 (continuous_assign) cond=[]
 ```
 
+### 例 6：代码证据链 (M5.1) — 让 trace 自证
+
+每个 trace 读回实际文件, 验证 `source_expr` 和 `signal_name` 真的在该行, 输出 `credibility_score` (0-1) 让 LLM/用户能反查。
+
+```python
+from signal_tracer import SignalTracer
+
+sv_code = """
+module counter (
+    input  logic       clk,
+    input  logic       rst_n,
+    input  logic [7:0] data_in,
+    output logic [7:0] count
+);
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) count <= 8'h00;
+        else        count <= count + data_in;
+    end
+endmodule
+"""
+
+t = SignalTracer(sv_code, "counter.sv")
+t.build()
+
+# trace_verified() 自动用 in-memory 内容验证
+for ctx in t.trace_verified("count").to_contexts():
+    d = ctx.to_dict()
+    print(f"📍 {ctx.file}:{ctx.line}  |  credibility={d['credibility_score']}  verified={d['is_verified']}")
+    print(f"   snippet: {d['evidence_snippet']}")
+    print(ctx.code_evidence.to_evidence_string())
+```
+
+输出：
+
+```
+📍 counter.sv:9  |  credibility=1.0  verified=True
+   snippet: if (!rst_n) count <= 8'h00;
+Evidence for always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) count <= 8'h00;
+        else        count <= count + data_in;
+    end @ counter.sv:9
+  file_readable: True
+  snippet: if (!rst_n) count <= 8'h00;
+  scope: always_ff @(posedge clk or negedge rst_n) begin  ...
+  matches: source_expr match: ✓, signal_name match: ✓
+  credibility: 1.00/1.0 (VERIFIED)
+     8 |     always_ff @(posedge clk or negedge rst_n) begin
+     9 > if (!rst_n) count <= 8'h00;
+    10 |         else        count <= count + data_in;
+    11 |     end
+```
+
+**credibility_score 量化 (0-1)**:
+- `file_readable` (+0.2) + `snippet_present` (+0.2) + `matches_source_expr` (+0.4) + `matches_signal_name` (+0.2)
+- 防御性: 文件不存在 → 0.0; 不匹配 → 0.4; 仅 signal 匹配 → 0.6; 全匹配 → 1.0
+- evidence 不会"假装 OK"，会真实反映可信度 (如 pyslang 把 `count + data_in` 显示为 `count Add data_in` 时, matches_source 自动失败)
+
 ## 公开 API
 
 ### 函数式
@@ -381,7 +438,7 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **74/74 通过** (1.98s) |
+| 公开 API 测试 | **82/82 通过** (1.99s) |
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
@@ -396,7 +453,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 
 ## 测试覆盖 (M0–M4)
 
-主测试 `tests/unit/test_signal_tracer.py` 包含 **16 个 TestClass, 74 个测试**：
+主测试 `tests/unit/test_signal_tracer.py` 包含 **17 个 TestClass, 82 个测试**：
 
 | 阶段 | TestClass | 测试数 | 覆盖点 |
 |------|-----------|--------|--------|
@@ -407,6 +464,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M3 | `TestMultiFile` | — | 多文件 build, 层次路径 (`top.u_mid.u_leaf`), 后缀匹配 |
 | M4 | `TestExpressionCoverage`, `TestContinuousAssignRobustness`, `TestMultiFileLineFallback`, `TestScopeFilePath`, `TestAdditionalExpressions` | +5 | 17 种 SV 表达式, InvalidExpression 防御, 跨文件行号 (SourceManager), TraceResult.file 精确, 嵌套 MemberAccess+RangeSelect |
 | M4.1 | `TestInterfaceModport` | +6 | Interface/Modport 信号追踪 (HierarchicalValue), 跨 modport 读写, m.data[3:0] 位选 |
+| M5.1 | `TestCodeEvidence` | +8 | 代码证据链 (CodeEvidence), credibility_score 0-1 量化, is_verified 标记, `trace_verified()` 自动验证 |
 
 各阶段演进：
 
@@ -418,9 +476,70 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M2 | 13 | 59 |
 | M3 | 9 | 68 |
 | M4 | 5 | 73 |
-| M4.1 | 6 | (主测试 74) |
+| M4.1 | 6 | 74 |
+| M5.1 | 8 | (主测试 82) |
 
 详见 [tests/README.md](tests/README.md) 和 [TEST_PLAN.md](TEST_PLAN.md)。
+
+## 代码证据链 (M5.1)
+
+每个 trace 都带**可证伪的代码证据链** — 读回实际文件, 验证 `source_expr` 和 `signal_name` 真的在该行。LLM/用户能反查 trace 真的对, 而不是默默相信。
+
+### 核心 API
+
+```python
+# 方式 1: trace_signal + 传 file_content
+result = trace_signal('count', sv_code, 'counter.sv')
+for ctx in result.to_contexts(file_content=sv_code):
+    d = ctx.to_dict()
+    print(f"  credibility={d['credibility_score']}  is_verified={d['is_verified']}")
+    print(f"  snippet: {d['evidence_snippet']}")
+    print(ctx.code_evidence.to_evidence_string())
+
+# 方式 2: SignalTracer 多文件 + 自动 in-memory 验证
+t = SignalTracer()
+t.add_file('top.sv', top_code)
+t.add_file('sub.sv', sub_code)
+t.build()
+result = t.trace_verified('top.u_sub.signal')  # 自动用 self._files 验证
+```
+
+### 可信度评分 (credibility_score 0-1)
+
+| 验证项 | 分值 | 说明 |
+|--------|------|------|
+| `file_readable` | +0.2 | 文件能读 |
+| `snippet_present` | +0.2 | line 存在 |
+| `matches_source_expr` | +0.4 | 文本里真找到 source_expr |
+| `matches_signal_name` | +0.2 | 文本里真找到 signal_name |
+
+`is_verified = file_readable ∧ snippet_present ∧ (matches_source ∨ matches_signal)`
+
+### OpenTitan 验证
+
+```
+tx_enable @ uart_core.sv:77:
+  snippet: 'assign tx_enable        = reg2hw.ctrl.tx.q;'
+  matches: source_expr ✓, signal_name ✓
+  credibility: 1.0/1.0 (VERIFIED)
+  context_before: ['']
+  context_after: ['  assign rx_enable        = reg2hw.ctrl.rx.q;', ...]
+
+readbuf_threshold @ spi_device.sv:600:
+  snippet: 'assign readbuf_threshold = reg2hw.read_threshold.q[BufferAw:0];'
+  credibility: 1.0/1.0 (VERIFIED) — 含 BufferAw 的 RangeSelect 也 OK
+```
+
+### 防御性: 不匹配会真实反映
+
+| 场景 | credibility | is_verified |
+|------|-------------|-------------|
+| 文件不存在 | 0.0 | ❌ |
+| 可读但都不匹配 | 0.4 | ❌ |
+| 仅 signal_name 匹配 | 0.6 | ✅ |
+| 全部匹配 | 1.0 | ✅ |
+
+evidence 不会"假装 OK"，会真实反映可信度。
 
 ## 真实项目验证 (M4)
 
@@ -438,6 +557,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 **M4 能力覆盖的 SV 语法**:
 
 - 表达式: `MemberAccess` / `RangeSelect` / `ElementSelect` / `BinaryOp` / `UnaryOp` / `ConditionalOp` / `CastExpression` / `Call` / `Replication` / `Concatenation` / `Streaming` (`{<<8{x}}` / `{>>8{x}}`) / `Inside` / `UnbasedUnsizedIntegerLiteral` (`'0` / `'1`) / `StructuredAssignmentPattern` / `SimpleAssignmentPattern` / `LValueReference` / `DataType` / **`HierarchicalValue` (Interface/Modport 访问, M4.1)**
+- 证据链: 每个 trace 读回实际文件交叉验证, `credibility_score` 0-1 量化, `is_verified` 标记 (M5.1)
 - 嵌套: 任意深度 MemberAccess (e.g. `reg2hw.ctrl.tx.q`) + 跨 RangeSelect (`reg2hw.val[BufferAw:0]`)
 - 跨文件: 多 .sv 编译为同一 Compilation, 跨模块引用 + 层次路径 (`uart.uart_core.tx_enable`)
 - 跨文件行号: `pyslang SourceManager.getLineNumber()` 走 SourceLocation.buffer 精准算行
@@ -450,6 +570,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 - modport direction (input/output) 区分 driver/load — 尚未实现 (现在 input 和 output 都被当 driver, 可能误报多驱动)
 - Clocking block / Property/Sequence 内部
 - System task ($cast, $readmemh) 中的信号
+- M5.1 evidence 的 `matches_source_expr` 是**字面量**子串匹配 — pyslang 文本格式 (如 `count Add data_in`) 与源码 (`count + data_in`) 不完全一致时, 命中率会降, 反映在 credibility_score 上, 不会静默接受
 
 ## 项目结构
 
@@ -465,7 +586,7 @@ sv-trace/
 │       └── signal_tracer_app.py       # SignalTracerApp: 单文件跨模块（兼容）
 ├── benchmarks/                        # 12 个 SV fixture (基础 always/case/FSM/...)
 ├── tests/
-│   ├── unit/test_signal_tracer.py     # 68 个公开 API 测试
+│   ├── unit/test_signal_tracer.py     # 82 个公开 API 测试 (含 8 个 M5.1 evidence)
 │   ├── fixtures/m3_hierarchical/      # 3 文件 / 3 层 instance fixture
 │   │   ├── top.sv
 │   │   ├── mid.sv
@@ -492,7 +613,8 @@ sv-trace/
 - ✅ **M3** 跨文件支持 + 层次路径追踪（9/9）
 - ✅ **M4** 真实项目验证（OpenTitan 6 模块, 0 warning/0 empty, 30,218 drivers 总计）
 - ✅ **M4.1** Interface/Modport 信号追踪（HierarchicalValue 完整覆盖, 6 个新测试）
-- 📋 **M5** 极致优化（增量、并发、缓存）
+- ✅ **M5.1** 代码证据链 (CodeEvidence) - 让 trace 自证, credibility 0-1 量化
+- 📋 **M5.2+** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。
 

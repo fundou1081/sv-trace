@@ -1,6 +1,6 @@
 ---
 name: sv-trace
-description: SystemVerilog 信号追踪器 (signal tracer) — 给一个 SV 信号名, 返回该信号在源码中的所有 driver (驱动) 和 load (负载), 以及完整上下文 (文件、行号、scope 源码、时钟/复位、条件栈、层次路径)。基于 pyslang 语义层分析, 支持多文件项目、Interface/Modport、跨模块层次路径。Use when (1) 需要在 RTL 源码中追踪某个信号的所有驱动/读取位置, (2) 调试"这个信号在哪里被赋值"或"谁在读这个信号", (3) 自动生成信号的 driver/load 列表喂给 LLM, (4) 在大型 SV 项目 (OpenTitan 等) 中跨模块追踪信号, (5) 验证多驱动冲突 (always_ff 多次写同一信号)。
+description: SystemVerilog 信号追踪器 (signal tracer) — 给一个 SV 信号名, 返回该信号在源码中的所有 driver (驱动) 和 load (负载), 以及完整上下文 (文件、行号、scope 源码、时钟/复位、条件栈、层次路径)。每个 trace 都带**可证伪的代码证据链 (M5.1)**: 读回实际文件验证 source_expr/signal_name 真在该行, 输出 credibility_score (0-1) 和 is_verified 标记, 让 LLM/用户能反查。基于 pyslang 语义层分析, 支持多文件项目、Interface/Modport、跨模块层次路径。Use when (1) 需要在 RTL 源码中追踪某个信号的所有驱动/读取位置, (2) 调试"这个信号在哪里被赋值"或"谁在读这个信号", (3) 自动生成信号的 driver/load 列表喂给 LLM, (4) 在大型 SV 项目 (OpenTitan 等) 中跨模块追踪信号, (5) 验证多驱动冲突 (always_ff 多次写同一信号), (6) 需要 trace 的"可信度"量化 - 不光看 trace 还要看 trace 有没有真。
 ---
 
 # sv-trace — SystemVerilog 信号追踪
@@ -72,6 +72,20 @@ chain = t.get_driver_chain('data_out', max_depth=10)
 for ctx in result.to_contexts():
     print(ctx.summary())          # 一行可读
     print(json.dumps(ctx.to_dict()))  # 完整字段 JSON
+
+# M5.1: 交叉验证 - 读回文件确认 trace 真的对
+result = t.trace_verified('tx_enable')
+for ctx in result.to_contexts():
+    d = ctx.to_dict()
+    print(f"  credibility={d['credibility_score']:.2f}  is_verified={d['is_verified']}")
+    print(f"  snippet: {d['evidence_snippet']}")
+    print(ctx.code_evidence.to_evidence_string())  # LLM-friendly 多行格式
+
+# 或手动构建 evidence
+from signal_tracer.models import build_evidence
+ev = build_evidence(file='test.sv', line=10, source_expr='data', signal_name='q',
+                    file_content=open('test.sv').read())
+print(ev.to_evidence_string())
 ```
 
 ## 使用模式 (5 个常见场景)
@@ -108,6 +122,50 @@ t.trace('signal_name')             # 后缀匹配
 # m.data[3:0] = 4'hA 这种 modport + bit select 也能
 ```
 
+### 6. 代码证据链 (M5.1) - 让 trace 自证
+**核心问题**: 之前 trace 只是元数据, "信不信由你"。M5.1 让每个 trace 都能"自证"。
+
+```python
+from signal_tracer import trace_signal
+result = trace_signal('count', sv_code, 'counter.sv')
+for ctx in result.to_contexts(file_content=sv_code):  # 传 file_content 让 evidence 读回
+    d = ctx.to_dict()
+    print(f"  credibility={d['credibility_score']}  is_verified={d['is_verified']}")
+    print(f"  snippet: {d['evidence_snippet']}")
+    # 可读输出 (含上下 2 行):
+    print(ctx.code_evidence.to_evidence_string())
+```
+
+输出:
+```
+  credibility=1.0  is_verified=True
+  snippet: if (!rst_n) count <= 8'h00;
+Evidence for always_ff @(posedge clk ...) @ counter.sv:9
+  file_readable: True
+  snippet: if (!rst_n) count <= 8'h00;
+  matches: source_expr match: ✓, signal_name match: ✓
+  credibility: 1.00/1.0 (VERIFIED)
+     8 |     always_ff @(posedge clk or negedge rst_n) begin
+     9 > if (!rst_n) count <= 8'h00;
+    10 |         else        count <= count + data_in;
+    11 |     end
+```
+
+**可信度评分** (0-1):
+- `file_readable` (+0.2) — 文件能读
+- `snippet_present` (+0.2) — line 存在
+- `matches_source_expr` (+0.4) — 文本里真找到 source_expr
+- `matches_signal_name` (+0.2) — 文本里真找到 signal_name
+
+**SignalTracer 多文件项目**: 用 `trace_verified()` 自动用 in-memory 内容填充 evidence (避免磁盘 I/O):
+```python
+t = SignalTracer()
+t.add_file('top.sv', top_code)
+t.add_file('sub.sv', sub_code)
+t.build()
+result = t.trace_verified('top.u_sub.signal')  # 自动用 self._files 填充
+```
+
 ## 何时使用
 
 - **用 sv-trace**: 需要在 SV 源码中"追踪信号去向", 调试 RTL bug, 验证 LLM 写的 SV 行为
@@ -134,13 +192,16 @@ t.trace('signal_name')             # 后缀匹配
 - 不支持 virtual interface
 - 不支持 Clocking block / Property/Sequence 内部
 - 不支持 System task (`$cast`, `$readmemh`) 中的信号
+- M5.1 evidence 的 `matches_source_expr` 是**字面量**子串匹配 — pyslang 文本格式
+  (如 `count Add data_in`) 与源码 (`count + data_in`) 不完全一致时, 命中率会降。
+  反映在 credibility_score 上, 不会静默接受。
 
 ## 测试 & 开发
 
 ```bash
 cd ~/my_dv_proj/sv-trace
 
-# 跑测试 (74/74 全部通过)
+# 跑测试 (82/82 全部通过, 含 8 个 M5.1 evidence 测试)
 python -m pytest tests/unit/test_signal_tracer.py -v
 
 # 跑 OpenTitan 验证
@@ -178,7 +239,7 @@ from signal_tracer import SignalTracer
 2. 更新本 SKILL.md (如果 API 行为变了, 或新 SV 特性覆盖)
 3. 跑 `python -m pytest tests/unit/test_signal_tracer.py` 确认 74/74 通过
 
-测试计数: 当前 **74/74** (1.98s)。低于此数 → 有回归; 高于此数 → 新测试已加。
+测试计数: 当前 **82/82** (1.99s)。低于此数 → 有回归; 高于此数 → 新测试已加。
 
 ## 详细参考 (按需加载)
 
@@ -187,4 +248,5 @@ from signal_tracer import SignalTracer
 - 测试计划与各阶段测试数: `TEST_PLAN.md`
 - 5 个使用示例 (可运行代码 + 输出): `README.md` "使用示例" 章节
 - 17+ 种 SV 表达式覆盖清单: `README.md` "M4 能力覆盖" 章节
+- **代码证据链 (M5.1) 详解**: `README.md` "使用示例" 例 6 + "M5.1 能力" 章节
 - OpenTitan 验证数据: `README.md` "真实项目验证 (M4)" 章节

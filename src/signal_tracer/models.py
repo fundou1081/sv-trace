@@ -317,6 +317,9 @@ class ContextBundle:
             'code_evidence': self.code_evidence.to_dict() if self.code_evidence else None,
             'credibility_score': self.code_evidence.credibility_score if self.code_evidence else None,
             'is_verified': self.code_evidence.is_verified if self.code_evidence else False,
+            'matches_source_expr': self.code_evidence.matches_source_expr if self.code_evidence else None,
+            'matches_signal_name': self.code_evidence.matches_signal_name if self.code_evidence else None,
+            'evidence_snippet': self.code_evidence.snippet if self.code_evidence else '',
         }
 
     def summary(self) -> str:
