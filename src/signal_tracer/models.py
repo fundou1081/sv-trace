@@ -534,6 +534,115 @@ class CodeEvidence:
         return '\n'.join(lines)
 
 
+@dataclass
+class MultiDriverConflict:
+    """多驱动冲突的分类结果 (M5.2b)
+
+    区分真 bug vs false positive, 让 agent/用户能快速判断哪些是值得修的。
+    """
+    signal_name: str
+    drivers: List['TraceResult']  # 所有 driver TraceResult
+    classification: str            # 'real_conflict' / 'cross_instance' / 'bit_partition' / 'generate_block'
+    unique_scopes: int            # 几个不同 scope_text
+    unique_hpaths: int             # 几个不同 hierarchical_path
+    bit_range_overlap: bool       # 位选区间是否重叠
+    cross_files: List[str]        # 跨文件列表
+    note: str                     # 解释: 为何这样分类
+
+    @property
+    def is_likely_bug(self) -> bool:
+        """是否疑似真 multi-driver bug
+
+        只有 real_conflict 是 (跨 instance 假阳性 + 按位分区都不是)。
+        """
+        return self.classification == 'real_conflict'
+
+
+def _get_lhs_bit_range(driver) -> Optional[Tuple[int, int]]:
+    """从 driver 的 LHS 提取位选区间 (lo, hi), 没有位选则返回 None
+
+    用于按位分区检测:
+    - assign sig[7:0] = ... → (0, 7)
+    - assign sig[i] = ...   → None (i 是变量, 静态无法确定)
+    - assign sig = ...      → None (整 signal)
+    """
+    if driver is None:
+        return None
+    # 拿 LHS — 通过 ScopeInfo 间接
+    # 我们的 TraceResult 没有 lhs_expr, 但 scope_text 含 LHS
+    scope = driver.scope_text or ''
+    # 找第一个 '[' 后的数字
+    import re
+    m = re.search(r'\[(\d+)\s*:\s*(\d+)\]', scope)
+    if m:
+        lo, hi = int(m.group(1)), int(m.group(2))
+        return (min(lo, hi), max(lo, hi))
+    # 单 bit [i]
+    m2 = re.search(r'\[(\w+)\]', scope)
+    if m2 and m2.group(1).isdigit():
+        v = int(m2.group(1))
+        return (v, v)
+    return None
+
+
+def _bit_ranges_overlap(r1, r2) -> bool:
+    """两个位选区间 (lo, hi) 是否重叠"""
+    if r1 is None or r2 is None:
+        return None  # 未知
+    l1, h1 = r1
+    l2, h2 = r2
+    return not (h1 < l2 or h2 < l1)
+
+
+def _classify_multi_drivers(sig_name: str, drivers: List['TraceResult']) -> Tuple[str, str]:
+    """分类 multi-driver: real_conflict / cross_instance / bit_partition / generate_block
+
+    判定顺序 (从最确定的 false positive 排除开始):
+    1. 跨 instance (unique_hpaths > 1) → cross_instance (false positive)
+    2. 位选不重叠 → bit_partition (false positive)
+    3. generate 块 (同一 always 内 instantiate 不同 generate 块) → generate_block (设计意图)
+    4. 否则 → real_conflict (真 bug)
+
+    Returns: (classification, note)
+    """
+    if not drivers:
+        return 'real_conflict', 'no drivers'
+
+    unique_hpaths = set()
+    for d in drivers:
+        if d.hierarchical_path:
+            unique_hpaths.add(d.hierarchical_path)
+        elif d.file:
+            # 没 hpath 时用 file
+            unique_hpaths.add(d.file.split('/')[-1])
+
+    if len(unique_hpaths) > 1:
+        return 'cross_instance', f'跨 {len(unique_hpaths)} 个 instance, 各写各的同名 local'
+
+    # 同一 instance — 看位选
+    bit_ranges = [_get_lhs_bit_range(d) for d in drivers]
+    # 只看非 None 的
+    known = [r for r in bit_ranges if r is not None]
+    if len(known) >= 2:
+        # 检查所有对是否都不重叠
+        any_overlap = False
+        for i in range(len(known)):
+            for j in range(i+1, len(known)):
+                if _bit_ranges_overlap(known[i], known[j]):
+                    any_overlap = True
+                    break
+            if any_overlap:
+                break
+        if not any_overlap:
+            return 'bit_partition', f'位选区间 {[r for r in known]} 不重叠, 按位分区写'
+
+    # 看是否 generate 模式 (scope_text 包含 gen_ 关键字)
+    if any('gen_' in (d.scope_text or '') for d in drivers):
+        return 'generate_block', 'generate 块内同名 local 在不同 generate 分支各被驱动一次'
+
+    return 'real_conflict', f'同一 instance 同一文件 {len(drivers)} 个 scope 写同一 signal'
+
+
 def build_evidence(
     file: str,
     line: int,

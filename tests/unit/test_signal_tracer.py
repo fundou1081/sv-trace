@@ -2444,7 +2444,13 @@ class TestDumpMultiDrivers:
         assert dump['summary']['all_verified'] is True  # vacuously true
 
     def test_dump_multi_drivers_in_open_titan(self):
-        """OpenTitan: dump_multi_drivers 让 LLM 1 看到所有冲突 + 证据"""
+        """OpenTitan uart: dump_multi_drivers 含分类 (M5.2b)
+
+        uart 实际没有真 multi-driver bug:
+        - find_multi_drivers() 旧 API 报 8 个冲突
+        - find_multi_drivers_classified(strict) 报 0 个真冲突
+        - 全分类 8 个都是 cross_instance false positive
+        """
         from signal_tracer import SignalTracer
         uart_dir = '/Users/fundou/my_dv_proj/opentitan/hw/ip/uart/rtl/'
         files = {n: open(uart_dir + n).read() for n in
@@ -2454,11 +2460,21 @@ class TestDumpMultiDrivers:
             t.add_file(uart_dir + n, c)
         t.build()
         dump = t.dump_multi_drivers()
-        # 跨多个文件的冲突
+        # 旧 API 的总冲突数 (含 false positive)
         assert dump['summary']['total_conflict_signals'] >= 5
+        # 严格分类下 uart 实际没有真 multi-driver bug
+        assert dump['summary']['real_conflict_count'] == 0, f"uart 不应有真 multi-driver bug, 但有 {dump['summary']['real_conflict_count']} 个"
+        # 跨多个文件
         assert len(dump['summary']['cross_files']) >= 2
-        # 每个 conflict 的 driver 都有 evidence
+        # 4 类分类字段都应存在
+        assert 'cross_instance_count' in dump['summary']
+        assert 'bit_partition_count' in dump['summary']
+        assert 'generate_block_count' in dump['summary']
+        # 每个 conflict 都有 evidence + classification
         for c in dump['conflicts']:
+            assert 'classification' in c
+            assert 'is_likely_bug' in c
+            assert 'note' in c
             for d in c['drivers']:
                 assert d['credibility'] >= 0.0
                 assert d['is_verified'] in (True, False)
@@ -2547,3 +2563,189 @@ class TestElementSelectNesting:
             for d in t._drivers[sig]:
                 assert d.source_expr, f"{sig} driver 应有 source_expr (修复 ElementSelect 嵌套)"
                 # 之前是 4 个空 driver, 修复后应是 0
+
+
+# ---------- M5.2b: find_multi_drivers_classified 智能分类 ----------
+
+class TestMultiDriverClassified:
+    """M5.2b: find_multi_drivers_classified 区分真 multi-driver bug 和 false positive
+
+    OpenTitan otbn 验证发现:
+    - 36 个 '冲突' 中 34 是 cross_instance (假阳性)
+    - 2 个 real_conflict (真 bug candidates)
+    - bit_partition / generate_block 检测受 pyslang 限制 (parametric indices, keyword check)
+    """
+
+    def test_cross_instance_classified(self):
+        """跨 instance 误报 → 分类为 cross_instance (非 real_conflict)"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic err;
+            sub_a u_a (.out_err(err));
+            sub_b u_b (.out_err(err));
+        endmodule
+        module sub_a(output logic out_err);
+            assign out_err = 1'b0;
+        endmodule
+        module sub_b(output logic out_err);
+            assign out_err = 1'b1;
+        endmodule
+        '''
+        t = SignalTracer()
+        t.add_file('m.sv', code)
+        t.build()
+        all_c = t.find_multi_drivers_classified(include_false_positives=True)
+        real = [c for c in all_c.values() if c.is_likely_bug]
+        # 应该都是 cross_instance
+        assert len(real) == 0, f"跨 instance 不应是真冲突, 但有 {len(real)} 个 real"
+        cross = [c for c in all_c.values() if c.classification == 'cross_instance']
+        assert len(cross) >= 1, "应至少识别 1 个 cross_instance"
+
+    def test_strict_mode_excludes_false_positives(self):
+        """strict 模式 (默认) 只返回 is_likely_bug=True 的"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic err;
+            sub_a u_a (.out_err(err));
+            sub_b u_b (.out_err(err));
+        endmodule
+        module sub_a(output logic out_err);
+            assign out_err = 1'b0;
+        endmodule
+        module sub_b(output logic out_err);
+            assign out_err = 1'b1;
+        endmodule
+        '''
+        t = SignalTracer()
+        t.add_file('m.sv', code)
+        t.build()
+        strict = t.find_multi_drivers_classified()  # 默认 include_false_positives=False
+        assert len(strict) == 0, "strict 模式应排除 false positive"
+
+    def test_bit_partition_classified(self):
+        """按位分区写入 → 分类为 bit_partition (非 real_conflict)
+        注意: 当位选区间是常量时才能检测 (WLEN-1 这种 parametric 拿不到)
+        """
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] sig;
+            always_comb sig[3:0] = 4'hA;
+            always_comb sig[7:4] = 4'hB;
+        endmodule
+        '''
+        t = SignalTracer()
+        t.add_file('m.sv', code)
+        t.build()
+        all_c = t.find_multi_drivers_classified(include_false_positives=True)
+        # 位选是常量 [3:0] 和 [7:4], 应该被检测为 bit_partition
+        bit = [c for c in all_c.values() if c.classification == 'bit_partition']
+        real = [c for c in all_c.values() if c.is_likely_bug]
+        assert len(bit) == 1, f"应识别为 bit_partition, 实际分类: {[c.classification for c in all_c.values()]}"
+        assert len(real) == 0, "bit_partition 不应是真冲突"
+
+    def test_real_conflict_detected(self):
+        """同一 instance 同一文件 真 multi-driver → 分类为 real_conflict"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] q;
+            logic clk, rst_n;
+            always_ff @(posedge clk) begin
+                if (rst_n) q <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (!rst_n) q <= 8'hBB;
+            end
+        endmodule
+        '''
+        t = SignalTracer()
+        t.add_file('m.sv', code)
+        t.build()
+        # 默认 strict 模式
+        conflicts = t.find_multi_drivers_classified()
+        # signal 'q' 在 _drivers 中既是 'm.q' 又是 'q' 两条 (duplicate), 都正确识别
+        assert len(conflicts) >= 1, f"应识别 >= 1 个 real_conflict, 实际 {len(conflicts)}"
+        for c in conflicts.values():
+            assert c.classification == 'real_conflict'
+            assert c.is_likely_bug is True
+            assert 'q' in c.signal_name
+
+    def test_classified_in_open_titan_otbn(self):
+        """OpenTitan otbn: 36 冲突中只有 2 个是 real_conflict"""
+        from signal_tracer import SignalTracer
+        dir_path = '/Users/fundou/my_dv_proj/opentitan/hw/ip/otbn/rtl/'
+        files = {f: open(dir_path + f).read() for f in __import__('os').listdir(dir_path) if f.endswith('.sv')}
+        t = SignalTracer()
+        for n, c in files.items():
+            t.add_file(dir_path + n, c)
+        t.build()
+        all_c = t.find_multi_drivers_classified(include_false_positives=True)
+        real_count = sum(1 for c in all_c.values() if c.is_likely_bug)
+        cross_count = sum(1 for c in all_c.values() if c.classification == 'cross_instance')
+        # OpenTitan 真实数据: 36 个多驱动, 34 是 cross_instance, 2 是 real_conflict
+        assert real_count <= 5, f"otbn 真 multi-driver bug 候选数应 < 5, 实际 {real_count}"
+        assert cross_count >= 30, f"otbn 跨 instance false positive 应 >= 30, 实际 {cross_count}"
+
+    def test_dump_multi_drivers_classify_summary(self):
+        """dump_multi_drivers() 默认 classify=True, 含 4 类分类数"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] q;
+            logic clk, rst_n;
+            always_ff @(posedge clk) begin
+                if (rst_n) q <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (!rst_n) q <= 8'hBB;
+            end
+        endmodule
+        '''
+        t = SignalTracer()
+        t.add_file('m.sv', code)
+        t.build()
+        dump = t.dump_multi_drivers()
+        s = dump['summary']
+        # 4 类分类字段
+        for k in ['real_conflict_count', 'cross_instance_count', 'bit_partition_count', 'generate_block_count']:
+            assert k in s, f"summary 应含 {k}"
+        # 至少有 1 个真冲突 (q 在 _drivers 中可能重复为 m.q 和 q)
+        assert s['real_conflict_count'] >= 1
+        assert s['cross_instance_count'] == 0
+        # 冲突列表里应有 classification 字段
+        for c in dump['conflicts']:
+            assert 'classification' in c
+            assert 'is_likely_bug' in c
+            assert 'note' in c
+
+    def test_dump_multi_drivers_classify_false(self):
+        """dump_multi_drivers(classify=False) 保持旧行为, 不含分类字段"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] q;
+            logic clk, rst_n;
+            always_ff @(posedge clk) begin
+                if (rst_n) q <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (!rst_n) q <= 8'hBB;
+            end
+        endmodule
+        '''
+        t = SignalTracer()
+        t.add_file('m.sv', code)
+        t.build()
+        dump = t.dump_multi_drivers(classify=False)
+        s = dump['summary']
+        # 旧 API: total_conflict_signals = len(conflicts) (>= 1)
+        assert s['total_conflict_signals'] >= 1
+        # 4 类分类字段: classify=False 时 4 类都 = 0 (因为不分类)
+        assert s['real_conflict_count'] == 0 or s['real_conflict_count'] == len(dump['conflicts'])
+        assert s['cross_instance_count'] == 0
+        # 冲突里不应有 classification 字段
+        for c in dump['conflicts']:
+            assert 'classification' not in c

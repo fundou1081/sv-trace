@@ -2243,12 +2243,98 @@ class SignalTracer:
                         )
         return result
 
+    def find_multi_drivers_classified(
+        self, verify: bool = True, include_false_positives: bool = False
+    ) -> Dict[str, 'MultiDriverConflict']:
+        """M5.2b: 多驱动检测 + 智能分类, 区分真 bug 和 false positive
+
+        OpenTitan 验证发现: 之前 find_multi_drivers() 把以下都报为冲突:
+        1. 跨 instance 同名 local (各 module 都有同名 error/control 信号)
+        2. 按位分区写入 (不同 assign 写同一 signal 不同位段)
+        3. generate 块内同名 local (不同 generate 分支)
+        实际都不是真 multi-driver bug。
+
+        本方法对每条冲突做 4 类分类:
+        - 'real_conflict'      — 同一 instance 同一文件真有多个 scope 写同一 signal (真 bug)
+        - 'cross_instance'     — 跨 instance, 各写各的同名 local (false positive)
+        - 'bit_partition'      — 位选区间不重叠, 按位分区写 (false positive)
+        - 'generate_block'     — generate 块内同名 local (false positive, 设计意图)
+
+        Args:
+            verify: 是否自动填充 evidence (默认 True)
+            include_false_positives: 是否含 false positive (默认 False, 只返回真冲突)
+
+        Returns:
+            Dict[信号名, MultiDriverConflict], 含 classification/note/is_likely_bug
+            若 include_false_positives=False (默认), 只返回 is_likely_bug=True 的真冲突
+        """
+        if not self._built:
+            self.build()
+
+        from signal_tracer.models import MultiDriverConflict, _classify_multi_drivers
+
+        result: Dict[str, MultiDriverConflict] = {}
+        for sig_name, drivers in self._drivers.items():
+            # 收集所有不同的 scope_text
+            unique_scopes = set()
+            for d in drivers:
+                if d.scope_text:
+                    unique_scopes.add(d.scope_text)
+            if len(unique_scopes) < 2:
+                continue
+
+            # 分类
+            classification, note = _classify_multi_drivers(sig_name, drivers)
+            unique_hpaths = len(set(d.hierarchical_path for d in drivers if d.hierarchical_path))
+            bit_ranges = []
+            from signal_tracer.models import _get_lhs_bit_range, _bit_ranges_overlap
+            for d in drivers:
+                br = _get_lhs_bit_range(d)
+                if br is not None:
+                    bit_ranges.append(br)
+            overlap = None
+            if len(bit_ranges) >= 2:
+                overlap = any(_bit_ranges_overlap(bit_ranges[i], bit_ranges[j])
+                              for i in range(len(bit_ranges))
+                              for j in range(i+1, len(bit_ranges)))
+
+            conflict = MultiDriverConflict(
+                signal_name=sig_name,
+                drivers=drivers,
+                classification=classification,
+                unique_scopes=len(unique_scopes),
+                unique_hpaths=unique_hpaths,
+                bit_range_overlap=overlap if overlap is not None else False,
+                cross_files=sorted(set(d.file.split('/')[-1] for d in drivers if d.file)),
+                note=note,
+            )
+
+            # 过滤
+            if not include_false_positives and not conflict.is_likely_bug:
+                continue
+            result[sig_name] = conflict
+
+        # 填充 evidence (跟 find_multi_drivers 一致)
+        if verify and result:
+            from signal_tracer.models import build_evidence
+            for sig_name, conflict in result.items():
+                for d in conflict.drivers:
+                    fc = self._get_file_content(d.file)
+                    if fc:
+                        d._evidence_override = build_evidence(
+                            file=d.file, line=d.line,
+                            source_expr=d.source_expr, signal_name=d.signal_name,
+                            scope_text=d.scope_text, file_content=fc, context_window=2,
+                        )
+        return result
+
     def dump_multi_drivers(
         self,
         verify: bool = True,
         include_context_window: bool = True,
         include_scope_text: bool = False,
         summary_only: bool = False,
+        classify: bool = True,
     ) -> Dict:
         """M5.1g: 一次 dump 整个多驱动检测结果 (含 summary + 每个冲突的 evidence 详细)
 
@@ -2266,8 +2352,18 @@ class SignalTracer:
             Dict 含 2 个顶层字段: summary / conflicts
             (与 dump_chain 不同, 这里没有 direction 因为方向是固定的: 多驱动检测)
         """
-        multi = self.find_multi_drivers(verify=verify)
-        if not multi:
+        # M5.2b: 默认 classify=True, 走分类方法排除 false positive
+        classified_lookup = {}
+        if classify:
+            classified_lookup = self.find_multi_drivers_classified(
+                verify=verify, include_false_positives=True
+            )
+            # 转成老格式 (sig -> List[TraceResult]) 给下面循环用
+            multi = {sig: conflict.drivers for sig, conflict in classified_lookup.items()
+                     if conflict.is_likely_bug}
+        else:
+            multi = self.find_multi_drivers(verify=verify)
+        if not multi and not (classify and classified_lookup):
             return {
                 'summary': {
                     'total_conflict_signals': 0,
@@ -2277,6 +2373,10 @@ class SignalTracer:
                     'min_credibility': 0.0,
                     'all_verified': True,
                     'cross_files': [],
+                    'real_conflict_count': 0,
+                    'cross_instance_count': 0,
+                    'bit_partition_count': 0,
+                    'generate_block_count': 0,
                 },
                 'conflicts': [],
             }
@@ -2288,6 +2388,18 @@ class SignalTracer:
         cross_files = set()
         all_verified_count = 0
         total_driver_count = 0
+
+        # M5.2b: 收集 summary 统计 (从所有 driver, 不只是 filter 后的)
+        all_drivers_for_stats = []
+        if classify and classified_lookup:
+            for conflict in classified_lookup.values():
+                all_drivers_for_stats.extend(conflict.drivers)
+        else:
+            for drivers in multi.values():
+                all_drivers_for_stats.extend(drivers)
+        for d in all_drivers_for_stats:
+            if d.file:
+                cross_files.add(d.file.split('/')[-1])
 
         for sig, drivers in multi.items():
             # scope 数 (去重)
@@ -2335,21 +2447,53 @@ class SignalTracer:
                     }
                 driver_dicts.append(d_dict)
 
-            conflicts.append({
+            conflict_dict = {
                 'signal_name': sig,
                 'scope_count': len(unique_scopes),
                 'driver_count': len(drivers),
                 'drivers': driver_dicts,
-            })
+            }
+            if classify:
+                conflict_info = classified_lookup.get(sig)
+                if conflict_info:
+                    conflict_dict['classification'] = conflict_info.classification
+                    conflict_dict['is_likely_bug'] = conflict_info.is_likely_bug
+                    conflict_dict['note'] = conflict_info.note
+                    conflict_dict['bit_range_overlap'] = conflict_info.bit_range_overlap
+            conflicts.append(conflict_dict)
 
+        # M5.2b: 统计 4 类分类数
+        # 注意: 用 classified_lookup (全部) 而非 conflicts (过滤后), 拿完整分类统计
+        if classify and classified_lookup:
+            real_conflict_count = sum(1 for c in classified_lookup.values() if c.is_likely_bug)
+            cross_instance_count = sum(1 for c in classified_lookup.values() if c.classification == 'cross_instance')
+            bit_partition_count = sum(1 for c in classified_lookup.values() if c.classification == 'bit_partition')
+            generate_block_count = sum(1 for c in classified_lookup.values() if c.classification == 'generate_block')
+        else:
+            real_conflict_count = len(conflicts)
+            cross_instance_count = 0
+            bit_partition_count = 0
+            generate_block_count = 0
+
+        # M5.2b: total_conflict_signals 反映所有分类的总数 (含 false positive)
+        if classify and classified_lookup:
+            total_conflict_signals_all = len(classified_lookup)
+            total_drivers_all = sum(len(c.drivers) for c in classified_lookup.values())
+        else:
+            total_conflict_signals_all = len(conflicts)
+            total_drivers_all = total_driver_count
         summary = {
-            'total_conflict_signals': len(conflicts),
-            'total_drivers': total_driver_count,
-            'avg_drivers_per_conflict': round(total_driver_count / len(conflicts), 2),
+            'total_conflict_signals': total_conflict_signals_all,
+            'total_drivers': total_drivers_all,
+            'avg_drivers_per_conflict': round(total_drivers_all / total_conflict_signals_all, 2) if total_conflict_signals_all else 0.0,
             'avg_credibility': round(sum(credibilities) / len(credibilities), 2) if credibilities else 0.0,
             'min_credibility': min(credibilities) if credibilities else 0.0,
             'all_verified': all_verified_count == total_driver_count,
             'cross_files': sorted(cross_files),
+            'real_conflict_count': real_conflict_count,
+            'cross_instance_count': cross_instance_count,
+            'bit_partition_count': bit_partition_count,
+            'generate_block_count': generate_block_count,
         }
 
         result = {'summary': summary}
