@@ -424,6 +424,50 @@ OpenTitan 真实示例 (spi_device): 21 个多驱动信号, 每个 driver 的 cr
 
 不需要 evidence: `find_multi_drivers(verify=False)`。
 
+### 例 8：递归 driver_chain + 证据链 (M5.1c) — 顺藤摸瓜带 credibility
+
+`get_driver_chain(verify=True)` 默认链上每跳自动带 evidence, 让递归查询的每一步都有"真凭实据"。
+
+```python
+from signal_tracer import SignalTracer
+
+sv_code = """
+module chain;
+    logic [7:0] a, b, c, out;
+    always_comb begin
+        b = a;     // b 来自 a
+        c = b;     // c 来自 b
+        out = c;   // out 来自 c
+    end
+endmodule
+"""
+
+t = SignalTracer(sv_code, "chain.sv")
+t.build()
+
+chain = t.get_driver_chain("out")  # 默认 verify=True
+for d in chain:
+    d_dict = d.to_context().to_dict()
+    print(f"📍 {d.signal_name} @ {d.file.split('/')[-1]}:{d.line}  "
+          f"credibility={d_dict['credibility_score']:.2f}")
+    print(f"   snippet: {d_dict['evidence_snippet']}")
+```
+
+输出：
+
+```
+📍 out @ chain.sv:6  credibility=1.00
+   snippet: out = c;
+📍 c @ chain.sv:5  credibility=1.00
+   snippet: c = b;
+📍 b @ chain.sv:4  credibility=1.00
+   snippet: b = a;
+```
+
+OpenTitan 真实示例 (uart `allzero_cnt_q`): 30 跳的驱动链, 每跳都带 credibility。LLM 可以顺着链一步步反查, 看到"这一跳到底从哪来"。
+
+不需要 evidence: `get_driver_chain(verify=False)`。
+
 ## 公开 API
 
 ### 函数式
@@ -485,7 +529,7 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **86/86 通过** (2.15s) |
+| 公开 API 测试 | **90/90 通过** (2.27s) |
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
@@ -500,7 +544,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 
 ## 测试覆盖 (M0–M4)
 
-主测试 `tests/unit/test_signal_tracer.py` 包含 **18 个 TestClass, 86 个测试**：
+主测试 `tests/unit/test_signal_tracer.py` 包含 **19 个 TestClass, 90 个测试**：
 
 | 阶段 | TestClass | 测试数 | 覆盖点 |
 |------|-----------|--------|--------|
@@ -513,6 +557,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M4.1 | `TestInterfaceModport` | +6 | Interface/Modport 信号追踪 (HierarchicalValue), 跨 modport 读写, m.data[3:0] 位选 |
 | M5.1 | `TestCodeEvidence` | +8 | 代码证据链 (CodeEvidence), credibility_score 0-1 量化, is_verified 标记, `trace_verified()` 自动验证 |
 | M5.1b | `TestMultiDriverEvidence` | +4 | `find_multi_drivers(verify=True)` 默认自动带 evidence (看到冲突 + 真凭实据) |
+| M5.1c | `TestDriverChainEvidence` | +4 | `get_driver_chain(verify=True)` 默认链上每跳自动带 evidence (顺藤摸瓜带 credibility) |
 
 各阶段演进：
 
@@ -526,7 +571,8 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M4 | 5 | 73 |
 | M4.1 | 6 | 74 |
 | M5.1 | 8 | 82 |
-| M5.1b | 4 | (主测试 86) |
+| M5.1b | 4 | 86 |
+| M5.1c | 4 | (主测试 90) |
 
 详见 [tests/README.md](tests/README.md) 和 [TEST_PLAN.md](TEST_PLAN.md)。
 
@@ -608,6 +654,7 @@ evidence 不会"假装 OK"，会真实反映可信度。
 - 表达式: `MemberAccess` / `RangeSelect` / `ElementSelect` / `BinaryOp` / `UnaryOp` / `ConditionalOp` / `CastExpression` / `Call` / `Replication` / `Concatenation` / `Streaming` (`{<<8{x}}` / `{>>8{x}}`) / `Inside` / `UnbasedUnsizedIntegerLiteral` (`'0` / `'1`) / `StructuredAssignmentPattern` / `SimpleAssignmentPattern` / `LValueReference` / `DataType` / **`HierarchicalValue` (Interface/Modport 访问, M4.1)**
 - 证据链: 每个 trace 读回实际文件交叉验证, `credibility_score` 0-1 量化, `is_verified` 标记 (M5.1)
 - 多驱动检测 + 证据链: `find_multi_drivers(verify=True)` 默认自动带 evidence, 看到冲突 + 真凭实据 (M5.1b)
+- 驱动链 + 证据链: `get_driver_chain(verify=True)` 链上每跳自动带 evidence, 顺藤摸瓜带 credibility (M5.1c)
 - 嵌套: 任意深度 MemberAccess (e.g. `reg2hw.ctrl.tx.q`) + 跨 RangeSelect (`reg2hw.val[BufferAw:0]`)
 - 跨文件: 多 .sv 编译为同一 Compilation, 跨模块引用 + 层次路径 (`uart.uart_core.tx_enable`)
 - 跨文件行号: `pyslang SourceManager.getLineNumber()` 走 SourceLocation.buffer 精准算行
@@ -636,7 +683,7 @@ sv-trace/
 │       └── signal_tracer_app.py       # SignalTracerApp: 单文件跨模块（兼容）
 ├── benchmarks/                        # 12 个 SV fixture (基础 always/case/FSM/...)
 ├── tests/
-│   ├── unit/test_signal_tracer.py     # 86 个公开 API 测试 (含 8 个 M5.1 + 4 个 M5.1b)
+│   ├── unit/test_signal_tracer.py     # 90 个公开 API 测试 (含 8 M5.1 + 4 M5.1b + 4 M5.1c)
 │   ├── fixtures/m3_hierarchical/      # 3 文件 / 3 层 instance fixture
 │   │   ├── top.sv
 │   │   ├── mid.sv
@@ -665,6 +712,7 @@ sv-trace/
 - ✅ **M4.1** Interface/Modport 信号追踪（HierarchicalValue 完整覆盖, 6 个新测试）
 - ✅ **M5.1** 代码证据链 (CodeEvidence) - 让 trace 自证, credibility 0-1 量化
 - ✅ **M5.1b** find_multi_drivers 整合 evidence - 多驱动检测带 credibility
+- ✅ **M5.1c** get_driver_chain 整合 evidence - 顺藤摸瓜链上每跳带 credibility
 - 📋 **M5.2+** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。

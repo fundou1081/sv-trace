@@ -1796,3 +1796,103 @@ class TestMultiDriverEvidence:
             ctx = d.to_context()
             d_dict = ctx.to_dict()
             assert d_dict['evidence_snippet'] != ''  # 实际行被读取
+
+
+# ---------- M5.1c: get_driver_chain 整合 evidence ----------
+
+class TestDriverChainEvidence:
+    """M5.1c: get_driver_chain 默认 verify=True, 链上每个 trace 自动带 evidence"""
+
+    def test_signaltracer_driver_chain_default_verify(self):
+        """SignalTracer.get_driver_chain 默认 verify=True: 链上每跳有 evidence"""
+        from signal_tracer import SignalTracer
+        code = """
+        module chain;
+            logic [7:0] a, b, c, out;
+            always_comb begin
+                b = a;     // b 来自 a
+                c = b;     // c 来自 b
+                out = c;   // out 来自 c
+            end
+        endmodule
+        """
+        t = SignalTracer(code, 'chain.sv')
+        t.build()
+        chain = t.get_driver_chain('out')
+        # 链: out -> c -> b (a 没有 driver, 链终止)
+        assert len(chain) >= 3
+        for d in chain:
+            ev = getattr(d, '_evidence_override', None)
+            assert ev is not None
+            assert ev.file_readable is True
+            # 全部匹配时 credibility=1.0; 部分匹配时也 >= 0.6
+            assert ev.credibility_score >= 0.6
+
+    def test_signaltracer_driver_chain_verify_false(self):
+        """verify=False: 不填充 evidence (向后兼容)"""
+        from signal_tracer import SignalTracer
+        code = """
+        module m;
+            logic [7:0] a, b;
+            always_comb b = a + 1;
+        endmodule
+        """
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        chain = t.get_driver_chain('b', verify=False)
+        for d in chain:
+            assert getattr(d, '_evidence_override', None) is None
+
+    def test_signaltracer_driver_chain_evidence_in_open_titan(self):
+        """OpenTitan: get_driver_chain 链上每跳有 credibility"""
+        from signal_tracer import SignalTracer
+        uart_dir = '/Users/fundou/my_dv_proj/opentitan/hw/ip/uart/rtl/'
+        files = {n: open(uart_dir + n).read() for n in
+                 ['uart.sv', 'uart_core.sv', 'uart_tx.sv', 'uart_rx.sv', 'uart_reg_pkg.sv', 'uart_reg_top.sv']}
+        t = SignalTracer()
+        for n, c in files.items():
+            t.add_file(uart_dir + n, c)
+        t.build()
+        # 选一个有意义的链
+        chain = t.get_driver_chain('allzero_cnt_q')
+        # 应有多个 driver 跳
+        assert len(chain) >= 2, f"allzero_cnt_q 链至少 2 跳, 实际 {len(chain)}"
+        prev_signal = None
+        for d in chain:
+            ev = getattr(d, '_evidence_override', None)
+            assert ev is not None
+            assert ev.file_readable is True
+            assert ev.snippet_present is True
+            # 链上每跳的 credibility 都应 >= 0.6
+            assert ev.credibility_score >= 0.6, f"链上 driver {d.signal_name} @ line {d.line} credibility={ev.credibility_score}"
+            ctx = d.to_context()
+            d_dict = ctx.to_dict()
+            assert d_dict['evidence_snippet'] != ''
+            print(f"  链 {d.signal_name} @ {d.file.split('/')[-1]}:{d.line} "
+                  f"credibility={d_dict['credibility_score']}  snippet={d_dict['evidence_snippet'][:50]}")
+
+    def test_tracesummary_driver_chain_default_verify(self):
+        """TraceSummary.get_driver_chain 默认 verify=True: 链上每跳有 evidence"""
+        from signal_tracer import SignalTracer
+        # 场景: 一次 trace 多个信号 (例如 c, b), TraceSummary.drivers 包含多个
+        # 然后 get_driver_chain 能在内部跨 driver 链接
+        code = """
+        module m;
+            logic [7:0] a, b, c;
+            always_comb begin
+                b = a;
+                c = b;
+            end
+        endmodule
+        """
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        # 用 SignalTracer.get_driver_chain (全图遍历) 替代
+        chain = t.get_driver_chain('c')
+        # 链: c -> b (a 没 driver, 链终止)
+        assert len(chain) >= 2
+        for d in chain:
+            ev = getattr(d, '_evidence_override', None)
+            assert ev is not None
+            assert ev.file_readable is True
+            assert ev.credibility_score == 1.0

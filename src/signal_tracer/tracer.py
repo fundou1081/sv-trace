@@ -2058,7 +2058,7 @@ class SignalTracer:
         return len({d.scope_text for d in drivers if d.scope_text})
 
     def get_driver_chain(
-        self, signal_name: str, max_depth: int = 10
+        self, signal_name: str, max_depth: int = 10, verify: bool = True
     ) -> List[TraceResult]:
         """递归查询信号的完整驱动链 (从 output 追溯到 input)
 
@@ -2073,9 +2073,14 @@ class SignalTracer:
 
         循环依赖 (a = b; b = a) 会自动检测, 不死循环。
 
+        M5.1b: 默认 verify=True, 为驱动链上每个 trace 自动填充 evidence。
+        调用 d.to_context() 立刻拿到带 credibility_score 的 ContextBundle,
+        让用户能看到链上每一跳的"真凭实据"。
+
         Args:
             signal_name: 起始信号
             max_depth: 最大递归深度 (防复杂网状电路)
+            verify: M5.1b: 是否自动填充 evidence (默认 True)
 
         Returns:
             List[TraceResult], 顺序是 从信号本身向其上游
@@ -2101,6 +2106,18 @@ class SignalTracer:
                         walk(src, depth + 1)
 
         walk(signal_name, 0)
+
+        # M5.1b: 自动填充 evidence (用 in-memory 文件内容)
+        if verify and chain:
+            from signal_tracer.models import build_evidence
+            for d in chain:
+                fc = self._get_file_content(d.file)
+                if fc:
+                    d._evidence_override = build_evidence(
+                        file=d.file, line=d.line,
+                        source_expr=d.source_expr, signal_name=d.signal_name,
+                        scope_text=d.scope_text, file_content=fc, context_window=2,
+                    )
         return chain
 
     def _is_real_signal(self, name: str) -> bool:

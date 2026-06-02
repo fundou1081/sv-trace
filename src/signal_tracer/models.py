@@ -222,25 +222,55 @@ class TraceSummary:
         """
         return [d.to_context(file_content=file_content, context_window=context_window) for d in self.drivers]
     
-    def get_driver_chain(self, max_depth: int = 10) -> List[str]:
-        """获取驱动链 (从输入到输出)"""
-        chain = []
+    def get_driver_chain(self, max_depth: int = 10, verify: bool = True) -> List[TraceResult]:
+        """获取驱动链 (从信号本身到上游), 返回 TraceResult 列表 (M5.1b)
+
+        与 SignalTracer.get_driver_chain 类似, 但基于 self.drivers 工作。
+        区别:
+        - SignalTracer.get_driver_chain: 全图遍历, 跨整个项目
+        - TraceSummary.get_driver_chain: 只看本次 trace 的 drivers
+
+        M5.1b: 默认 verify=True, 为链上每个 trace 自动填充 evidence。
+
+        Args:
+            max_depth: 最大递归深度
+            verify: 是否自动填充 evidence (默认 True)
+
+        Returns:
+            List[TraceResult], 顺序是 从信号本身向其上游
+        """
+        from signal_tracer.models import build_evidence
+        chain: List['TraceResult'] = []
         visited = set()
-        
+
         def build_chain(sig_name: str, depth: int):
             if depth > max_depth or sig_name in visited:
                 return
             visited.add(sig_name)
-            
-            # 找到这个信号的驱动源
             for d in self.drivers:
                 if d.signal_name == sig_name:
+                    chain.append(d)
                     for src in d.source_signals:
                         if src and src not in ('0', '1', 'true', 'false'):
-                            chain.append(src)
                             build_chain(src, depth + 1)
-        
+
         build_chain(self.signal_name, 0)
+
+        # M5.1b: 自动填充 evidence
+        if verify and chain:
+            # M5.1b: 需要 SignalTracer 实例来获取 in-memory 内容
+            # 没有实例时 (TraceSummary 单独使用), evidence 不会被自动填充,
+            # 但用户仍可手动 build_evidence(...)
+            tracer = getattr(self, '_tracer', None)
+            if tracer:
+                for d in chain:
+                    fc = tracer._get_file_content(d.file)
+                    if fc:
+                        d._evidence_override = build_evidence(
+                            file=d.file, line=d.line,
+                            source_expr=d.source_expr, signal_name=d.signal_name,
+                            scope_text=d.scope_text, file_content=fc, context_window=2,
+                        )
         return chain
 
 
