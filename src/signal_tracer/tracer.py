@@ -218,6 +218,119 @@ def _reconstruct_node_text(node) -> str:
     return ""
 
 
+def _dump_chain(
+    chain: List['TraceResult'],
+    signal_name: str,
+    direction: str,
+    include_context_window: bool = True,
+    include_scope_text: bool = False,
+    summary_only: bool = False,
+) -> Dict:
+    """M5.1f: 核心函数, 把 chain list dump 成 dict (含 summary)
+
+    Args:
+        chain: List[TraceResult] (来自 get_driver_chain / get_load_chain)
+        signal_name: 查询的信号
+        direction: 'upstream' / 'downstream'
+        include_context_window: 是否含 context before/after
+        include_scope_text: 是否含完整 scope_text
+        summary_only: 只返回 summary 不要 hops
+
+    Returns:
+        Dict 含 4 个顶层字段: signal_name / direction / hops / summary
+
+    summary 字段:
+        - total_hops: 链长
+        - verified_count: is_verified=True 的 hop 数
+        - high_credibility_count: credibility >= 0.8 的 hop 数
+        - low_credibility_count: credibility < 0.6 的 hop 数 (告警指标)
+        - avg_credibility: 平均可信度
+        - min_credibility: 最低可信度
+        - cross_files: 跨文件列表
+    """
+    if not chain:
+        return {
+            'signal_name': signal_name,
+            'direction': direction,
+            'hops': [],
+            'summary': {
+                'total_hops': 0,
+                'verified_count': 0,
+                'high_credibility_count': 0,
+                'low_credibility_count': 0,
+                'avg_credibility': 0.0,
+                'min_credibility': 0.0,
+                'cross_files': [],
+            },
+        }
+
+    hops = []
+    credibilities = []
+    cross_files = set()
+    verified_count = 0
+    high_cred_count = 0
+    low_cred_count = 0
+
+    for d in chain:
+        ctx = d.to_context()
+        ce = ctx.code_evidence
+        try:
+            cred = round(ce.credibility_score, 2)
+        except Exception:
+            cred = 0.0
+        credibilities.append(cred)
+        is_verified = bool(ce.is_verified) if ce else False
+        if is_verified:
+            verified_count += 1
+        if cred >= 0.8:
+            high_cred_count += 1
+        if cred < 0.6:
+            low_cred_count += 1
+        if d.file:
+            cross_files.add(d.file.split('/')[-1])
+
+        hop = {
+            'hop': len(hops) + 1,
+            'signal_name': d.signal_name,
+            'file': d.file.split('/')[-1] if d.file else '',
+            'line': d.line,
+            'hierarchical_path': d.hierarchical_path,
+            'source_expr': d.source_expr,
+            'source_signals': list(d.source_signals) if d.source_signals else [],
+            'scope_kind': str(d.scope_kind) if d.scope_kind else '',
+            'credibility': cred,
+            'is_verified': is_verified,
+            'matches_source_expr': ce.matches_source_expr if ce else False,
+            'matches_signal_name': ce.matches_signal_name if ce else False,
+            'snippet': ce.snippet if ce else '',
+        }
+        if include_scope_text:
+            hop['scope_text'] = d.scope_text or ''
+        if include_context_window and ce:
+            hop['context_window'] = {
+                'before': list(ce.context_before),
+                'after': list(ce.context_after),
+            }
+        hops.append(hop)
+
+    summary = {
+        'total_hops': len(hops),
+        'verified_count': verified_count,
+        'high_credibility_count': high_cred_count,
+        'low_credibility_count': low_cred_count,
+        'avg_credibility': round(sum(credibilities) / len(credibilities), 2),
+        'min_credibility': min(credibilities),
+        'cross_files': sorted(cross_files),
+    }
+
+    result = {'signal_name': signal_name, 'direction': direction}
+    if summary_only:
+        result['summary'] = summary
+    else:
+        result['hops'] = hops
+        result['summary'] = summary
+    return result
+
 
 class SignalTracer:
     """信号追踪器
@@ -2269,6 +2382,62 @@ class SignalTracer:
                         scope_text=l.scope_text, file_content=fc, context_window=2,
                     )
         return chain
+
+    def dump_driver_chain(
+        self, signal_name: str, max_depth: int = 10,
+        include_context_window: bool = True,
+        include_scope_text: bool = False,
+        summary_only: bool = False,
+    ) -> Dict:
+        """M5.1f: 一次 dump 整个 driver chain 为 dict (含 summary, 喂 LLM 友好)
+
+        与 get_driver_chain 配对使用, 但返回的是**整链的字典**, 含:
+        - hops: 每跳的精简 dict (含 credibility / snippet / context_window)
+        - summary: 整链统计 (avg_credibility / min / verified_count / cross_files)
+
+        Args:
+            signal_name: 起始信号
+            max_depth: 最大递归深度
+            include_context_window: 是否含 context_window.before/after (默认 True)
+            include_scope_text: 是否含完整 scope_text (默认 False, 字符串可能较长)
+            summary_only: 只返回 summary 不要 hops (默认 False)
+
+        Returns:
+            Dict 含 4 个顶层字段: signal_name / direction / hops / summary
+        """
+        chain = self.get_driver_chain(signal_name, max_depth=max_depth, verify=True)
+        return _dump_chain(
+            chain, signal_name, 'upstream',
+            include_context_window=include_context_window,
+            include_scope_text=include_scope_text,
+            summary_only=summary_only,
+        )
+
+    def dump_load_chain(
+        self, signal_name: str, max_depth: int = 10,
+        include_context_window: bool = True,
+        include_scope_text: bool = False,
+        summary_only: bool = False,
+    ) -> Dict:
+        """M5.1f: 一次 dump 整个 load chain 为 dict (与 dump_driver_chain 对称)
+
+        Args:
+            signal_name: 起始信号
+            max_depth: 最大递归深度
+            include_context_window: 是否含 context_window (默认 True)
+            include_scope_text: 是否含 scope_text (默认 False)
+            summary_only: 只返回 summary 不要 hops (默认 False)
+
+        Returns:
+            Dict 含 4 个顶层字段: signal_name / direction / hops / summary
+        """
+        chain = self.get_load_chain(signal_name, max_depth=max_depth, verify=True)
+        return _dump_chain(
+            chain, signal_name, 'downstream',
+            include_context_window=include_context_window,
+            include_scope_text=include_scope_text,
+            summary_only=summary_only,
+        )
 
     def _is_real_signal(self, name: str) -> bool:
         """判断 name 是否是真实信号名 (不是字面常量 / 关键字)

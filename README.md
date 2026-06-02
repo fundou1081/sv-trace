@@ -553,6 +553,77 @@ OpenTitan 真实示例 (uart `reg2hw`): 61 跳的 load 链, 每跳都带 credibi
 
 不需要 evidence: `get_load_chain(verify=False)`。
 
+### 例 11：dump_chain 一次 dump 整个链为 JSON (M5.1f) — 喂 LLM 友好
+
+`dump_driver_chain()` / `dump_load_chain()` 1 次调用就拿到整链的 dict (含 summary), 不再需要 N 次 `to_context().to_dict()`。
+
+```python
+from signal_tracer import SignalTracer
+import json
+
+sv_code = """
+module chain;
+    logic [7:0] a, b, c, d;
+    always_comb begin
+        b = a;     // b 读 a
+        c = b;     // c 读 b
+        d = c;     // d 读 c
+    end
+endmodule
+"""
+
+t = SignalTracer(sv_code, "chain.sv")
+t.build()
+
+# 一次 dump 整链 (driver chain)
+dump = t.dump_driver_chain("c")
+print(f"signal: {dump['signal_name']}, direction: {dump['direction']}")
+print(f"
+summary:")
+for k, v in dump['summary'].items():
+    print(f"  {k}: {v}")
+print(f"
+hops ({len(dump['hops'])}):")
+for h in dump['hops']:
+    print(f"  hop {h['hop']}: {h['signal_name']} @ {h['file']}:{h['line']}  "
+          f"cred={h['credibility']}  verified={h['is_verified']}")
+    print(f"    snippet: {h['snippet']}")
+
+# 只要 summary (轻量, 喂 LLM 第一眼判断)
+summary = t.dump_driver_chain("c", summary_only=True)
+print(f"
+summary_only JSON size: {len(json.dumps(summary))} 字符")
+```
+
+输出：
+
+```
+signal: c, direction: upstream
+
+summary:
+  total_hops: 2
+  verified_count: 2
+  high_credibility_count: 2
+  low_credibility_count: 0
+  avg_credibility: 1.0
+  min_credibility: 1.0
+  cross_files: ['chain.sv']
+
+hops (2):
+  hop 1: c @ chain.sv:5  cred=1.0  verified=True
+    snippet: c = b;
+  hop 2: b @ chain.sv:4  cred=1.0  verified=True
+    snippet: b = a;
+```
+
+OpenTitan 真实示例 (uart `allzero_cnt_q`): 30 跳 driver chain 1 次 dump, ~15.8KB JSON, 含 summary + 30 hops 详细 evidence。
+
+可选参数:
+- `include_context_window=True` (默认) — 含 context_window before/after
+- `include_scope_text=False` (默认) — 不含 scope_text (可较长)
+- `summary_only=False` (默认) — 含 hops; True 时只返回 summary
+- `max_depth=10` (默认) — 链最大深度
+
 ## 公开 API
 
 ### 函数式
@@ -614,7 +685,7 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **102/102 通过** (2.42s) |
+| 公开 API 测试 | **111/111 通过** (2.33s) |
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
@@ -629,7 +700,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 
 ## 测试覆盖 (M0–M4)
 
-主测试 `tests/unit/test_signal_tracer.py` 包含 **21 个 TestClass, 102 个测试**：
+主测试 `tests/unit/test_signal_tracer.py` 包含 **22 个 TestClass, 111 个测试**：
 
 | 阶段 | TestClass | 测试数 | 覆盖点 |
 |------|-----------|--------|--------|
@@ -645,6 +716,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M5.1c | `TestDriverChainEvidence` | +4 | `get_driver_chain(verify=True)` 默认链上每跳自动带 evidence (顺藤摸瓜带 credibility) |
 | M5.1d | `TestTraceLoadsEvidence` | +7 | `trace()`/`trace_drivers()`/`trace_loads()` 默认 verify=True, drivers 和 loads 都自动带 evidence (查谁读了某信号) |
 | M5.1e | `TestLoadChainEvidence` | +5 | `get_load_chain(verify=True)` 顺藤摸瓜查下游 (与 driver chain 对称) |
+| M5.1f | `TestDumpChain` | +9 | `dump_driver_chain()`/`dump_load_chain()` 一次 dump 整链为 dict (含 summary, LLM 友好) |
 
 各阶段演进：
 
@@ -661,7 +733,8 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M5.1b | 4 | 86 |
 | M5.1c | 4 | 90 |
 | M5.1d | 7 | 97 |
-| M5.1e | 5 | (主测试 102) |
+| M5.1e | 5 | 102 |
+| M5.1f | 9 | (主测试 111) |
 
 详见 [tests/README.md](tests/README.md) 和 [TEST_PLAN.md](TEST_PLAN.md)。
 
@@ -746,6 +819,7 @@ evidence 不会"假装 OK"，会真实反映可信度。
 - 驱动链 + 证据链: `get_driver_chain(verify=True)` 链上每跳自动带 evidence, 顺藤摸瓜带 credibility (M5.1c)
 - trace + 证据链: `trace()`/`trace_drivers()`/`trace_loads()` 默认 verify=True, drivers 和 loads 都自动带 evidence (M5.1d)
 - load 链 + 证据链: `get_load_chain(verify=True)` 顺藤摸瓜下游, 链上每条 load 都带 evidence (M5.1e, 与 driver chain 对称)
+- dump_chain: 一次 dump 整链为 dict (含 summary avg/min/credibility/cross_files), 喂 LLM 1 个 prompt section 就够 (M5.1f)
 - 嵌套: 任意深度 MemberAccess (e.g. `reg2hw.ctrl.tx.q`) + 跨 RangeSelect (`reg2hw.val[BufferAw:0]`)
 - 跨文件: 多 .sv 编译为同一 Compilation, 跨模块引用 + 层次路径 (`uart.uart_core.tx_enable`)
 - 跨文件行号: `pyslang SourceManager.getLineNumber()` 走 SourceLocation.buffer 精准算行
@@ -774,7 +848,7 @@ sv-trace/
 │       └── signal_tracer_app.py       # SignalTracerApp: 单文件跨模块（兼容）
 ├── benchmarks/                        # 12 个 SV fixture (基础 always/case/FSM/...)
 ├── tests/
-│   ├── unit/test_signal_tracer.py     # 102 个公开 API 测试 (含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d + 5 M5.1e)
+│   ├── unit/test_signal_tracer.py     # 111 个公开 API 测试 (含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d + 5 M5.1e + 9 M5.1f)
 │   ├── fixtures/m3_hierarchical/      # 3 文件 / 3 层 instance fixture
 │   │   ├── top.sv
 │   │   ├── mid.sv
@@ -806,6 +880,7 @@ sv-trace/
 - ✅ **M5.1c** get_driver_chain 整合 evidence - 顺藤摸瓜链上每跳带 credibility
 - ✅ **M5.1d** trace/trace_drivers/trace_loads 整合 evidence - drivers 和 loads 都带 credibility
 - ✅ **M5.1e** get_load_chain 整合 evidence - 顺藤摸瓜查下游 (与 driver chain 对称)
+- ✅ **M5.1f** dump_chain 一次 dump 整链为 JSON - 含 summary, LLM 友好
 - 📋 **M5.2+** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。

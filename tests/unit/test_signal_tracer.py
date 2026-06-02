@@ -2177,3 +2177,163 @@ class TestLoadChainEvidence:
             ev = getattr(d, '_evidence_override', None)
             assert ev is not None
             assert ev.credibility_score == 1.0
+
+
+# ---------- M5.1f: dump_chain() 一次 dump 整个链为 dict ----------
+
+class TestDumpChain:
+    """M5.1f: dump_driver_chain / dump_load_chain 一次返回整链 dict + summary
+
+    1 次调用 vs 之前 N 次 to_context().to_dict()
+    summary 让 LLM 一眼看到整链质量
+    """
+
+    def test_dump_driver_chain_basic(self):
+        """dump_driver_chain 返回 4 个顶层字段 (signal_name/direction/hops/summary)"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module chain;
+            logic [7:0] a, b, c, d;
+            always_comb begin
+                b = a;     // b 读 a
+                c = b;     // c 读 b
+                d = c;     // d 读 c
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'chain.sv')
+        t.build()
+        # 起点 c, 链: c <- b <- a (2 跳)
+        dump = t.dump_driver_chain('c')
+        assert dump['signal_name'] == 'c'
+        assert dump['direction'] == 'upstream'
+        assert 'hops' in dump
+        assert 'summary' in dump
+        assert dump['summary']['total_hops'] == 2
+        assert dump['summary']['verified_count'] == 2
+        assert dump['summary']['avg_credibility'] == 1.0
+
+    def test_dump_chain_hop_fields(self):
+        """每个 hop 含 evidence 关键字段"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] q, d;
+            logic clk;
+            always_ff @(posedge clk) q <= d;
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        dump = t.dump_driver_chain('q')
+        for h in dump['hops']:
+            assert 'hop' in h
+            assert 'signal_name' in h
+            assert 'file' in h
+            assert 'line' in h
+            assert 'credibility' in h
+            assert 'is_verified' in h
+            assert 'matches_source_expr' in h
+            assert 'matches_signal_name' in h
+            assert 'snippet' in h
+            assert 'context_window' in h
+            # 上下文窗口格式
+            assert 'before' in h['context_window']
+            assert 'after' in h['context_window']
+
+    def test_dump_chain_summary_only(self):
+        """summary_only=True 不含 hops"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer('module m; logic a, b; always_comb b = a; endmodule', 'm.sv')
+        t.build()
+        # 用 b (有 driver), 不是 a (leaf, 没 driver)
+        dump = t.dump_driver_chain('b', summary_only=True)
+        assert 'hops' not in dump
+        assert 'summary' in dump
+        # summary_only 模式 JSON 极小 (< 500 字符)
+        import json
+        assert len(json.dumps(dump)) < 500
+
+    def test_dump_chain_include_scope_text(self):
+        """include_scope_text=True 时含完整 scope_text"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer('module m; logic a, b; always_comb b = a; endmodule', 'm.sv')
+        t.build()
+        dump = t.dump_driver_chain('a', include_scope_text=True)
+        for h in dump['hops']:
+            assert 'scope_text' in h
+            assert 'always_comb' in h['scope_text']
+
+    def test_dump_chain_exclude_context_window(self):
+        """include_context_window=False 不含 context_window"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer('module m; logic a, b; always_comb b = a; endmodule', 'm.sv')
+        t.build()
+        dump = t.dump_driver_chain('a', include_context_window=False)
+        for h in dump['hops']:
+            assert 'context_window' not in h
+
+    def test_dump_load_chain(self):
+        """dump_load_chain 与 dump_driver_chain 对称 (direction='downstream')"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] a, b, c;
+            always_comb begin
+                b = a;
+                c = b;
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        dump = t.dump_load_chain('a')
+        assert dump['direction'] == 'downstream'
+        # 链: a -> b -> c (2 跳)
+        assert dump['summary']['total_hops'] == 2
+        # 全部 verified
+        assert dump['summary']['verified_count'] == 2
+
+    def test_dump_chain_empty(self):
+        """空链 (没找到): 返回空 hops 和 zero summary"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer('module m; logic a; endmodule', 'm.sv')
+        t.build()
+        dump = t.dump_driver_chain('nonexistent')
+        assert dump['hops'] == []
+        assert dump['summary']['total_hops'] == 0
+        assert dump['summary']['avg_credibility'] == 0.0
+
+    def test_dump_chain_in_open_titan(self):
+        """OpenTitan 真实: dump_driver_chain + summary 让 LLM 一眼看到全链"""
+        from signal_tracer import SignalTracer
+        uart_dir = '/Users/fundou/my_dv_proj/opentitan/hw/ip/uart/rtl/'
+        files = {n: open(uart_dir + n).read() for n in
+                 ['uart.sv', 'uart_core.sv', 'uart_tx.sv', 'uart_rx.sv', 'uart_reg_pkg.sv', 'uart_reg_top.sv']}
+        t = SignalTracer()
+        for n, c in files.items():
+            t.add_file(uart_dir + n, c)
+        t.build()
+        # 30 跳的 driver chain
+        dump = t.dump_driver_chain('allzero_cnt_q')
+        assert dump['summary']['total_hops'] >= 25
+        assert dump['summary']['avg_credibility'] >= 0.8
+        # 跨多个文件
+        assert len(dump['summary']['cross_files']) >= 2
+        # 每个 hop 都有 credibility
+        for h in dump['hops']:
+            assert h['credibility'] >= 0.0
+            assert h['credibility'] <= 1.0
+
+    def test_dump_chain_serializable(self):
+        """dump 能直接 json.dumps (LLM-friendly)"""
+        from signal_tracer import SignalTracer
+        import json
+        t = SignalTracer('module m; logic a, b; always_comb b = a; endmodule', 'm.sv')
+        t.build()
+        # 用 b (有 driver)
+        dump = t.dump_driver_chain('b')
+        s = json.dumps(dump, ensure_ascii=False)
+        parsed = json.loads(s)
+        assert parsed['signal_name'] == 'b'
+        assert parsed['summary']['total_hops'] == 1
