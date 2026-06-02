@@ -1948,6 +1948,42 @@ class SignalTracer:
             self.build()
         return [LoadTrace(**l.__dict__) for l in self._loads.get(signal_name, [])]
 
+    def _get_file_content(self, file_path: str) -> Optional[str]:
+        """M5.1: 从已加载文件查找内容 (用于证据链交叉验证)"""
+        for fp, content in self._files:
+            if fp == file_path or (file_path and fp and fp.endswith(file_path)):
+                return content
+        return None
+
+    def trace_verified(self, signal_name: str) -> 'TraceSummary':
+        """M5.1: trace + 自动交叉验证 (读已加载的文件内容)
+
+        Args:
+            signal_name: 信号名
+
+        Returns:
+            TraceSummary, 每个 driver/load 的 ContextBundle.code_evidence 已被填充
+        """
+        result = self.trace(signal_name)
+        from signal_tracer.models import build_evidence
+        for d in result.drivers:
+            fc = self._get_file_content(d.file)
+            if fc:
+                d._evidence_override = build_evidence(
+                    file=d.file, line=d.line,
+                    source_expr=d.source_expr, signal_name=d.signal_name,
+                    scope_text=d.scope_text, file_content=fc, context_window=2,
+                )
+        for d in result.loads:
+            fc = self._get_file_content(d.file)
+            if fc:
+                d._evidence_override = build_evidence(
+                    file=d.file, line=d.line,
+                    source_expr=d.source_expr, signal_name=d.signal_name,
+                    scope_text=d.scope_text, file_content=fc, context_window=2,
+                )
+        return result
+
     def find_multi_drivers(self) -> Dict[str, List[TraceResult]]:
         """找出所有被多个 scope 驱动的信号 (>= 2 个不同 scope)
 

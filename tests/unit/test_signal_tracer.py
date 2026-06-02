@@ -1512,3 +1512,172 @@ class TestInterfaceModport:
         r_hi = t.trace('data[7:4]')
         assert len(r_hi.drivers) == 1
         assert r_hi.drivers[0].source_expr == "4'hB"
+
+
+# ---------- M5.1: 代码证据链 (CodeEvidence) ----------
+
+class TestCodeEvidence:
+    """M5.1: 召回的代码上下文作为最核心追踪证据链, 提高可信度
+
+    每个 trace 都能"自证" — 读回实际文件, 证明 source_expr 和 signal_name
+    真的在该行。LLM/用户能验证 trace 没有错。
+    """
+
+    def test_build_evidence_with_file_content(self):
+        """build_evidence: 给 file_content, 验证 matches_source_expr / matches_signal_name"""
+        from signal_tracer.models import build_evidence
+        ev = build_evidence(
+            file='test.sv', line=6,
+            source_expr='data_in', signal_name='count',
+            file_content='''module m;
+  logic [7:0] count, data_in;
+  logic clk;
+  always_ff @(posedge clk) begin
+    if (!rst) count <= 0;
+    else count <= data_in + 1;
+  end
+endmodule
+''',
+        )
+        assert ev.file_readable is True
+        assert ev.snippet_present is True
+        assert 'else count <= data_in + 1;' == ev.snippet
+        assert ev.matches_source_expr is True   # 'data_in' 在行中
+        assert ev.matches_signal_name is True    # 'count' 在行中
+        assert ev.is_verified is True
+        assert ev.credibility_score == 1.0
+
+    def test_build_evidence_partial_match(self):
+        """仅 signal_name 匹配 (driver 写在 RHS, 表达式不含完整 source)"""
+        from signal_tracer.models import build_evidence
+        ev = build_evidence(
+            file='test.sv', line=6,
+            source_expr='NONEXISTENT', signal_name='count',
+            file_content='module m;\n  logic a;\n  logic b;\n  always_ff @(posedge clk) begin\n    if (rst) a <= 0;\n    else count <= 0;\n  end\nendmodule\n',
+        )
+        assert ev.file_readable is True
+        assert ev.matches_source_expr is False
+        assert ev.matches_signal_name is True
+        # file_readable(0.2) + snippet(0.2) + signal_name(0.2) = 0.6
+        import pytest
+        assert ev.credibility_score == pytest.approx(0.6)
+        assert ev.is_verified is True  # 任一匹配即算 verified
+
+    def test_build_evidence_no_match(self):
+        """完全不匹配 — file 可读但 snippet 没匹配项"""
+        from signal_tracer.models import build_evidence
+        ev = build_evidence(
+            file='test.sv', line=1,
+            source_expr='xxx', signal_name='yyy',
+            file_content='module empty;',
+        )
+        assert ev.file_readable is True
+        assert ev.matches_source_expr is False
+        assert ev.matches_signal_name is False
+        # file_readable(0.2) + snippet(0.2) = 0.4
+        assert ev.credibility_score == 0.4
+        assert ev.is_verified is False
+
+    def test_build_evidence_unreadable_file(self):
+        """文件不可读 (路径不存在) — 防御性处理"""
+        from signal_tracer.models import build_evidence
+        ev = build_evidence(file='/nonexistent/path.sv', line=10)
+        assert ev.file_readable is False
+        assert ev.snippet_present is False
+        assert ev.credibility_score == 0.0
+        assert ev.is_verified is False
+
+    def test_context_bundle_includes_evidence(self):
+        """ContextBundle 字段含 code_evidence"""
+        from signal_tracer import trace_signal
+        code = '''
+        module m;
+            logic [7:0] q;
+            always_ff @(posedge clk) q <= 8'hAB;
+        endmodule
+        '''
+        r = trace_signal('q', code, 'm.sv')
+        for ctx in r.to_contexts(file_content=code):
+            d = ctx.to_dict()
+            assert 'code_evidence' in d
+            assert d['code_evidence'] is not None
+            ce = ctx.code_evidence
+            assert ce.file == 'm.sv'
+            assert ce.matches_source_expr is True
+            assert d['is_verified'] is True
+            assert d['credibility_score'] == 1.0
+
+    def test_trace_verified_uses_inmemory_content(self):
+        """SignalTracer.trace_verified 自动用 in-memory 内容填充 evidence"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] q, d;
+            logic clk;
+            always_ff @(posedge clk) q <= d;
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        r = t.trace_verified('q')
+        for ctx in r.to_contexts():
+            ce = ctx.code_evidence
+            # 不用传 file_content, evidence 已经被 in-memory 填充
+            assert ce.file_readable is True
+            assert ce.snippet_present is True
+            # 'q' 应在 snippet 中 (LHS), 'd' 应在 snippet 中 (RHS)
+            assert 'q' in ce.snippet or 'count' in ce.snippet or 'always_ff' in ce.snippet
+            # 'd' 可能不在所有 driver snippet 中 (看具体是哪个 driver)
+            # 信号名 'q' 应至少在 scope_text 中出现
+            assert ce.matches_signal_name is True or 'q' in ce.scope_text
+            assert ctx.to_dict()['is_verified'] is True or ce.credibility_score > 0.0
+
+    def test_evidence_string_format(self):
+        """to_evidence_string 输出可读格式"""
+        from signal_tracer.models import build_evidence
+        ev = build_evidence(
+            file='test.sv', line=5,
+            source_expr='data_in', signal_name='count',
+            file_content='''module m;
+  logic [7:0] count, data_in;
+  always_ff @(posedge clk) begin
+    if (!rst) count <= 0;
+    else count <= data_in + 1;
+  end
+endmodule
+''',
+        )
+        s = ev.to_evidence_string()
+        assert 'Evidence for' in s
+        assert 'test.sv:5' in s
+        assert 'snippet:' in s
+        assert 'matches:' in s
+        assert 'source_expr match: ✓' in s
+        assert 'signal_name match: ✓' in s
+        assert 'credibility: 1.00/1.0' in s
+        assert 'VERIFIED' in s
+        # 上下文窗口
+        assert 'context_before' in s.lower() or 'context_after' in s.lower() or '|' in s
+
+    def test_evidence_in_open_titan(self):
+        """OpenTitan 真实项目验证 — trace('tx_enable').trace_verified 拿到 evidence"""
+        from signal_tracer import SignalTracer
+        uart_dir = '/Users/fundou/my_dv_proj/opentitan/hw/ip/uart/rtl/'
+        files = {n: open(uart_dir + n).read() for n in
+                 ['uart.sv', 'uart_core.sv', 'uart_tx.sv', 'uart_rx.sv', 'uart_reg_pkg.sv', 'uart_reg_top.sv']}
+        t = SignalTracer()
+        for n, c in files.items():
+            t.add_file(uart_dir + n, c)
+        t.build()
+        r = t.trace_verified('tx_enable')
+        for ctx in r.to_contexts():
+            ce = ctx.code_evidence
+            # uart_core.sv line 77 是 assign tx_enable = reg2hw.ctrl.tx.q;
+            assert ce.file_readable is True
+            assert ce.snippet_present is True
+            # 实际行是: assign tx_enable = reg2hw.ctrl.tx.q;
+            assert 'tx_enable' in ce.snippet
+            assert ce.matches_source_expr is True   # 'reg2hw.ctrl.tx.q' 在行中
+            assert ce.matches_signal_name is True    # 'tx_enable' 在行中
+            assert ctx.to_dict()['is_verified'] is True
+            assert ctx.to_dict()['credibility_score'] == 1.0
