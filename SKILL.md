@@ -1,6 +1,6 @@
 ---
 name: sv-trace
-description: SystemVerilog 信号追踪器 (signal tracer) — 给一个 SV 信号名, 返回该信号在源码中的所有 driver (驱动) 和 load (负载), 以及完整上下文 (文件、行号、scope 源码、时钟/复位、条件栈、层次路径)。每个 trace 都带**可证伪的代码证据链 (M5.1)**: 读回实际文件验证 source_expr/signal_name 真在该行, 输出 credibility_score (0-1) 和 is_verified 标记, 让 LLM/用户能反查。基于 pyslang 语义层分析, 支持多文件项目、Interface/Modport、跨模块层次路径。Use when (1) 需要在 RTL 源码中追踪某个信号的所有驱动/读取位置, (2) 调试"这个信号在哪里被赋值"或"谁在读这个信号", (3) 自动生成信号的 driver/load 列表喂给 LLM, (4) 在大型 SV 项目 (OpenTitan 等) 中跨模块追踪信号, (5) 验证多驱动冲突 (always_ff 多次写同一信号) — 看到冲突 + 看到冲突的真凭实据, (7) 顺藤摸瓜查 driver 链 — 链上每跳都带 evidence (credibility), (8) 查谁读了某信号 (loads) — 每条 load 都带 evidence, (9) 顺藤摸瓜查 load 链 — 链上每跳都带 evidence (与 driver 链对称), (10) 一次 dump 整个链为 JSON — 含 summary, 喂 LLM 友好, (6) 需要 trace 的"可信度"量化 - 不光看 trace 还要看 trace 有没有真。
+description: SystemVerilog 信号追踪器 (signal tracer) — 给一个 SV 信号名, 返回该信号在源码中的所有 driver (驱动) 和 load (负载), 以及完整上下文 (文件、行号、scope 源码、时钟/复位、条件栈、层次路径)。每个 trace 都带**可证伪的代码证据链 (M5.1)**: 读回实际文件验证 source_expr/signal_name 真在该行, 输出 credibility_score (0-1) 和 is_verified 标记, 让 LLM/用户能反查。基于 pyslang 语义层分析, 支持多文件项目、Interface/Modport、跨模块层次路径。Use when (1) 需要在 RTL 源码中追踪某个信号的所有驱动/读取位置, (2) 调试"这个信号在哪里被赋值"或"谁在读这个信号", (3) 自动生成信号的 driver/load 列表喂给 LLM, (4) 在大型 SV 项目 (OpenTitan 等) 中跨模块追踪信号, (5) 验证多驱动冲突 (always_ff 多次写同一信号) — 看到冲突 + 看到冲突的真凭实据, (7) 顺藤摸瓜查 driver 链 — 链上每跳都带 evidence (credibility), (8) 查谁读了某信号 (loads) — 每条 load 都带 evidence, (9) 顺藤摸瓜查 load 链 — 链上每跳都带 evidence (与 driver 链对称), (10) 一次 dump 整个链为 JSON — 含 summary, 喂 LLM 友好, (11) dump_multi_drivers — 一次 dump 多驱动检测结果, 看到冲突 + 每个 driver 的证据, (6) 需要 trace 的"可信度"量化 - 不光看 trace 还要看 trace 有没有真。
 ---
 
 # sv-trace — SystemVerilog 信号追踪
@@ -91,6 +91,12 @@ dump = t.dump_driver_chain('tx_enable')  # 默认含 hops + context_window
 summary_only = t.dump_driver_chain('tx_enable', summary_only=True)  # 只要 summary
 # 也可 dump_load_chain (下游链)
 load_dump = t.dump_load_chain('reg2hw')
+
+# M5.1g: dump_multi_drivers - 一次 dump 多驱动检测 (冲突 + 每个 driver 证据)
+multi_dump = t.dump_multi_drivers()
+# 2 顶层字段: summary (冲突数/total_drivers/avg_cred/cross_files) + conflicts (每个冲突的 driver 列表)
+# summary_only=True 只返回 summary
+summary = t.dump_multi_drivers(summary_only=True)
 
 # 打包成 LLM-ready 上下文 (M2)
 for ctx in result.to_contexts():
@@ -239,7 +245,7 @@ result = t.trace_verified('top.u_sub.signal')  # 自动用 self._files 填充
 ```bash
 cd ~/my_dv_proj/sv-trace
 
-# 跑测试 (111/111 全部通过, 含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d + 5 M5.1e + 9 M5.1f)
+# 跑测试 (117/117 全部通过, 含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d + 5 M5.1e + 9 M5.1f + 6 M5.1g)
 python -m pytest tests/unit/test_signal_tracer.py -v
 
 # 跑 OpenTitan 验证
@@ -277,7 +283,7 @@ from signal_tracer import SignalTracer
 2. 更新本 SKILL.md (如果 API 行为变了, 或新 SV 特性覆盖)
 3. 跑 `python -m pytest tests/unit/test_signal_tracer.py` 确认 74/74 通过
 
-测试计数: 当前 **111/111** (2.33s)。低于此数 → 有回归; 高于此数 → 新测试已加。
+测试计数: 当前 **117/117** (2.39s)。低于此数 → 有回归; 高于此数 → 新测试已加。
 
 ## 详细参考 (按需加载)
 

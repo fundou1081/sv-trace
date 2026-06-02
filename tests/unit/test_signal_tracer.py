@@ -2337,3 +2337,153 @@ class TestDumpChain:
         parsed = json.loads(s)
         assert parsed['signal_name'] == 'b'
         assert parsed['summary']['total_hops'] == 1
+
+
+# ---------- M5.1g: dump_multi_drivers 一次 dump 整个多驱动检测结果 ----------
+
+class TestDumpMultiDrivers:
+    """M5.1g: dump_multi_drivers 一次返回冲突列表 dict + summary"""
+
+    def test_dump_multi_drivers_basic(self):
+        """dump_multi_drivers 返回 2 个顶层字段 (summary/conflicts)"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] data;
+            logic clk, rst_n, mode;
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 0) data <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 1) data <= 8'h55;
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        dump = t.dump_multi_drivers()
+        assert 'summary' in dump
+        assert 'conflicts' in dump
+        # 应有 1 个冲突 (data 被 2 个 scope 驱动)
+        assert dump['summary']['total_conflict_signals'] >= 1
+        assert dump['summary']['total_drivers'] >= 2
+        # avg_credibility 应较高
+        assert dump['summary']['avg_credibility'] >= 0.9
+        # all_verified 应为 True
+        assert dump['summary']['all_verified'] is True
+
+    def test_dump_multi_drivers_conflict_fields(self):
+        """每个 conflict 含 signal_name / scope_count / driver_count / drivers"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] data;
+            logic clk, rst_n, mode;
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 0) data <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 1) data <= 8'h55;
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        dump = t.dump_multi_drivers()
+        assert len(dump['conflicts']) >= 1
+        c = dump['conflicts'][0]
+        assert 'signal_name' in c
+        assert 'scope_count' in c
+        assert 'driver_count' in c
+        assert 'drivers' in c
+        # data 应有 2 个 drivers
+        if 'm.data' in [c['signal_name'] for c in dump['conflicts']] or 'data' in [c['signal_name'] for c in dump['conflicts']]:
+            target = [c for c in dump['conflicts'] if c['signal_name'] in ('m.data', 'data')][0]
+            assert target['driver_count'] == 2
+            assert target['scope_count'] == 2
+            # 每个 driver 含 evidence
+            for d in target['drivers']:
+                assert 'credibility' in d
+                assert 'is_verified' in d
+                assert 'snippet' in d
+
+    def test_dump_multi_drivers_summary_only(self):
+        """summary_only=True 不含 conflicts"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] data;
+            logic clk, rst_n, mode;
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 0) data <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 1) data <= 8'h55;
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        dump = t.dump_multi_drivers(summary_only=True)
+        assert 'conflicts' not in dump
+        assert 'summary' in dump
+        import json
+        # summary_only 模式 JSON 极小
+        assert len(json.dumps(dump)) < 500
+
+    def test_dump_multi_drivers_empty(self):
+        """没有多驱动时: 返回空 conflicts 和 zero summary"""
+        from signal_tracer import SignalTracer
+        t = SignalTracer('module m; logic [7:0] q, d; always_ff @(posedge clk) q <= d; endmodule', 'm.sv')
+        t.build()
+        dump = t.dump_multi_drivers()
+        assert dump['conflicts'] == []
+        assert dump['summary']['total_conflict_signals'] == 0
+        assert dump['summary']['total_drivers'] == 0
+        assert dump['summary']['avg_credibility'] == 0.0
+        assert dump['summary']['all_verified'] is True  # vacuously true
+
+    def test_dump_multi_drivers_in_open_titan(self):
+        """OpenTitan: dump_multi_drivers 让 LLM 1 看到所有冲突 + 证据"""
+        from signal_tracer import SignalTracer
+        uart_dir = '/Users/fundou/my_dv_proj/opentitan/hw/ip/uart/rtl/'
+        files = {n: open(uart_dir + n).read() for n in
+                 ['uart.sv', 'uart_core.sv', 'uart_tx.sv', 'uart_rx.sv', 'uart_reg_pkg.sv', 'uart_reg_top.sv']}
+        t = SignalTracer()
+        for n, c in files.items():
+            t.add_file(uart_dir + n, c)
+        t.build()
+        dump = t.dump_multi_drivers()
+        # 跨多个文件的冲突
+        assert dump['summary']['total_conflict_signals'] >= 5
+        assert len(dump['summary']['cross_files']) >= 2
+        # 每个 conflict 的 driver 都有 evidence
+        for c in dump['conflicts']:
+            for d in c['drivers']:
+                assert d['credibility'] >= 0.0
+                assert d['is_verified'] in (True, False)
+                assert d['snippet'] != ''
+
+    def test_dump_multi_drivers_serializable(self):
+        """dump 能直接 json.dumps"""
+        from signal_tracer import SignalTracer
+        import json
+        code = '''
+        module m;
+            logic [7:0] data;
+            logic clk, rst_n, mode;
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 0) data <= 8'hAA;
+            end
+            always_ff @(posedge clk) begin
+                if (rst_n && mode == 1) data <= 8'h55;
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        dump = t.dump_multi_drivers()
+        s = json.dumps(dump, ensure_ascii=False)
+        parsed = json.loads(s)
+        assert parsed['summary']['total_drivers'] >= 2
+        assert len(parsed['conflicts']) >= 1

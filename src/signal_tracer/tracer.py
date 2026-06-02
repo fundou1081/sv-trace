@@ -2235,6 +2235,120 @@ class SignalTracer:
                         )
         return result
 
+    def dump_multi_drivers(
+        self,
+        verify: bool = True,
+        include_context_window: bool = True,
+        include_scope_text: bool = False,
+        summary_only: bool = False,
+    ) -> Dict:
+        """M5.1g: 一次 dump 整个多驱动检测结果 (含 summary + 每个冲突的 evidence 详细)
+
+        与 find_multi_drivers 配对使用, 但返回的是**整冲突列表的 dict**, 含:
+        - conflicts: 每个多驱动信号的完整信息 (含每个 driver 的 evidence)
+        - summary: 整链统计 (冲突信号数 / 总 driver 数 / 跨文件范围)
+
+        Args:
+            verify: 是否自动填充 evidence (默认 True)
+            include_context_window: 是否含 context_window (默认 True)
+            include_scope_text: 是否含完整 scope_text (默认 False)
+            summary_only: 只返回 summary 不要 conflicts (默认 False)
+
+        Returns:
+            Dict 含 2 个顶层字段: summary / conflicts
+            (与 dump_chain 不同, 这里没有 direction 因为方向是固定的: 多驱动检测)
+        """
+        multi = self.find_multi_drivers(verify=verify)
+        if not multi:
+            return {
+                'summary': {
+                    'total_conflict_signals': 0,
+                    'total_drivers': 0,
+                    'avg_drivers_per_conflict': 0.0,
+                    'avg_credibility': 0.0,
+                    'min_credibility': 0.0,
+                    'all_verified': True,
+                    'cross_files': [],
+                },
+                'conflicts': [],
+            }
+
+        # 对每个冲突的每个 driver, 转成精简 dict (复用 _dump_chain 的 hop 格式)
+        conflicts = []
+        total_drivers = 0
+        credibilities = []
+        cross_files = set()
+        all_verified_count = 0
+        total_driver_count = 0
+
+        for sig, drivers in multi.items():
+            # scope 数 (去重)
+            unique_scopes = set()
+            for d in drivers:
+                if d.scope_text:
+                    unique_scopes.add(d.scope_text)
+
+            # 每个 driver 转 dict
+            driver_dicts = []
+            for d in drivers:
+                ctx = d.to_context()
+                ce = ctx.code_evidence
+                try:
+                    cred = round(ce.credibility_score, 2)
+                except Exception:
+                    cred = 0.0
+                credibilities.append(cred)
+                if ce and ce.is_verified:
+                    all_verified_count += 1
+                if d.file:
+                    cross_files.add(d.file.split('/')[-1])
+                total_driver_count += 1
+
+                d_dict = {
+                    'signal_name': d.signal_name,
+                    'file': d.file.split('/')[-1] if d.file else '',
+                    'line': d.line,
+                    'hierarchical_path': d.hierarchical_path,
+                    'source_expr': d.source_expr,
+                    'source_signals': list(d.source_signals) if d.source_signals else [],
+                    'scope_kind': str(d.scope_kind) if d.scope_kind else '',
+                    'credibility': cred,
+                    'is_verified': ce.is_verified if ce else False,
+                    'matches_source_expr': ce.matches_source_expr if ce else False,
+                    'matches_signal_name': ce.matches_signal_name if ce else False,
+                    'snippet': ce.snippet if ce else '',
+                }
+                if include_scope_text:
+                    d_dict['scope_text'] = d.scope_text or ''
+                if include_context_window and ce:
+                    d_dict['context_window'] = {
+                        'before': list(ce.context_before),
+                        'after': list(ce.context_after),
+                    }
+                driver_dicts.append(d_dict)
+
+            conflicts.append({
+                'signal_name': sig,
+                'scope_count': len(unique_scopes),
+                'driver_count': len(drivers),
+                'drivers': driver_dicts,
+            })
+
+        summary = {
+            'total_conflict_signals': len(conflicts),
+            'total_drivers': total_driver_count,
+            'avg_drivers_per_conflict': round(total_driver_count / len(conflicts), 2),
+            'avg_credibility': round(sum(credibilities) / len(credibilities), 2) if credibilities else 0.0,
+            'min_credibility': min(credibilities) if credibilities else 0.0,
+            'all_verified': all_verified_count == total_driver_count,
+            'cross_files': sorted(cross_files),
+        }
+
+        result = {'summary': summary}
+        if not summary_only:
+            result['conflicts'] = conflicts
+        return result
+
     def get_driver_count(self, signal_name: str) -> int:
         """返回驱动某信号的不同 scope 数
 

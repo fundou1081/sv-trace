@@ -624,6 +624,78 @@ OpenTitan 真实示例 (uart `allzero_cnt_q`): 30 跳 driver chain 1 次 dump, ~
 - `summary_only=False` (默认) — 含 hops; True 时只返回 summary
 - `max_depth=10` (默认) — 链最大深度
 
+### 例 12：dump_multi_drivers 一次 dump 多驱动检测 (M5.1g) — 看到冲突 + 每个 driver 的证据
+
+`dump_multi_drivers()` 1 次调用拿到**所有多驱动信号**的冲突列表 + 每个 driver 的 evidence, 不再需要 N 次手动调用。
+
+```python
+from signal_tracer import SignalTracer
+import json
+
+sv_code = """
+module m;
+    logic [7:0] data;
+    logic clk, rst_n, mode;
+    always_ff @(posedge clk) begin
+        if (rst_n && mode == 0) data <= 8'hAA;
+    end
+    always_ff @(posedge clk) begin
+        if (rst_n && mode == 1) data <= 8'h55;
+    end
+endmodule
+"""
+
+t = SignalTracer(sv_code, "m.sv")
+t.build()
+
+dump = t.dump_multi_drivers()
+print(f"summary:")
+for k, v in dump['summary'].items():
+    print(f"  {k}: {v}")
+print(f"
+conflicts ({len(dump['conflicts'])}):")
+for c in dump['conflicts']:
+    print(f"
+  ⚠️ {c['signal_name']}: {c['driver_count']} drivers, {c['scope_count']} scopes")
+    for d in c['drivers']:
+        print(f"     {d['file']}:{d['line']}  cred={d['credibility']}  source_expr={d['source_expr']!r}")
+        print(f"       snippet: {d['snippet']}")
+
+# 只要 summary (轻量)
+summary = t.dump_multi_drivers(summary_only=True)
+print(f"
+summary_only JSON: {len(json.dumps(summary))} 字符")
+```
+
+输出：
+
+```
+summary:
+  total_conflict_signals: 1
+  total_drivers: 2
+  avg_drivers_per_conflict: 2.0
+  avg_credibility: 1.0
+  min_credibility: 1.0
+  all_verified: True
+  cross_files: ['m.sv']
+
+conflicts (1):
+
+  ⚠️ m.data: 2 drivers, 2 scopes
+     m.sv:6  cred=1.0  source_expr="8'hAA"
+       snippet: if (rst_n && mode == 0) data <= 8'hAA;
+     m.sv:10  cred=1.0  source_expr="8'h55"
+       snippet: if (rst_n && mode == 1) data <= 8'h55;
+```
+
+OpenTitan 真实示例 (uart): 8 个冲突信号 (36 个总 driver), 全 credibility 1.0, 跨 3 个文件。LLM 1 个 prompt section 就看到所有冲突和每个 driver 的真凭实据。
+
+可选参数:
+- `summary_only=False` (默认) — 含 conflicts; True 时只返回 summary
+- `include_context_window=True` (默认) — 含 context before/after
+- `include_scope_text=False` (默认) — 不含 scope_text (字符串可能较长)
+- `verify=True` (默认) — 自动填充 evidence
+
 ## 公开 API
 
 ### 函数式
@@ -685,7 +757,7 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **111/111 通过** (2.33s) |
+| 公开 API 测试 | **117/117 通过** (2.39s) |
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
@@ -700,7 +772,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 
 ## 测试覆盖 (M0–M4)
 
-主测试 `tests/unit/test_signal_tracer.py` 包含 **22 个 TestClass, 111 个测试**：
+主测试 `tests/unit/test_signal_tracer.py` 包含 **23 个 TestClass, 117 个 测试**：
 
 | 阶段 | TestClass | 测试数 | 覆盖点 |
 |------|-----------|--------|--------|
@@ -717,6 +789,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M5.1d | `TestTraceLoadsEvidence` | +7 | `trace()`/`trace_drivers()`/`trace_loads()` 默认 verify=True, drivers 和 loads 都自动带 evidence (查谁读了某信号) |
 | M5.1e | `TestLoadChainEvidence` | +5 | `get_load_chain(verify=True)` 顺藤摸瓜查下游 (与 driver chain 对称) |
 | M5.1f | `TestDumpChain` | +9 | `dump_driver_chain()`/`dump_load_chain()` 一次 dump 整链为 dict (含 summary, LLM 友好) |
+| M5.1g | `TestDumpMultiDrivers` | +6 | `dump_multi_drivers()` 一次 dump 多驱动检测 (冲突列表 + 每个 driver evidence) |
 
 各阶段演进：
 
@@ -734,7 +807,8 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M5.1c | 4 | 90 |
 | M5.1d | 7 | 97 |
 | M5.1e | 5 | 102 |
-| M5.1f | 9 | (主测试 111) |
+| M5.1f | 9 | 111 |
+| M5.1g | 6 | (主测试 117) |
 
 详见 [tests/README.md](tests/README.md) 和 [TEST_PLAN.md](TEST_PLAN.md)。
 
@@ -820,6 +894,7 @@ evidence 不会"假装 OK"，会真实反映可信度。
 - trace + 证据链: `trace()`/`trace_drivers()`/`trace_loads()` 默认 verify=True, drivers 和 loads 都自动带 evidence (M5.1d)
 - load 链 + 证据链: `get_load_chain(verify=True)` 顺藤摸瓜下游, 链上每条 load 都带 evidence (M5.1e, 与 driver chain 对称)
 - dump_chain: 一次 dump 整链为 dict (含 summary avg/min/credibility/cross_files), 喂 LLM 1 个 prompt section 就够 (M5.1f)
+- dump_multi_drivers: 一次 dump 多驱动检测 (冲突列表 + 每个 driver evidence + 全局 summary), LLM 一眼看到所有冲突 (M5.1g)
 - 嵌套: 任意深度 MemberAccess (e.g. `reg2hw.ctrl.tx.q`) + 跨 RangeSelect (`reg2hw.val[BufferAw:0]`)
 - 跨文件: 多 .sv 编译为同一 Compilation, 跨模块引用 + 层次路径 (`uart.uart_core.tx_enable`)
 - 跨文件行号: `pyslang SourceManager.getLineNumber()` 走 SourceLocation.buffer 精准算行
@@ -848,7 +923,7 @@ sv-trace/
 │       └── signal_tracer_app.py       # SignalTracerApp: 单文件跨模块（兼容）
 ├── benchmarks/                        # 12 个 SV fixture (基础 always/case/FSM/...)
 ├── tests/
-│   ├── unit/test_signal_tracer.py     # 111 个公开 API 测试 (含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d + 5 M5.1e + 9 M5.1f)
+│   ├── unit/test_signal_tracer.py     # 117 个公开 API 测试 (含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d + 5 M5.1e + 9 M5.1f + 6 M5.1g)
 │   ├── fixtures/m3_hierarchical/      # 3 文件 / 3 层 instance fixture
 │   │   ├── top.sv
 │   │   ├── mid.sv
@@ -881,6 +956,7 @@ sv-trace/
 - ✅ **M5.1d** trace/trace_drivers/trace_loads 整合 evidence - drivers 和 loads 都带 credibility
 - ✅ **M5.1e** get_load_chain 整合 evidence - 顺藤摸瓜查下游 (与 driver chain 对称)
 - ✅ **M5.1f** dump_chain 一次 dump 整链为 JSON - 含 summary, LLM 友好
+- ✅ **M5.1g** dump_multi_drivers - 一次 dump 多驱动检测 (冲突 + 每个 driver 证据)
 - 📋 **M5.2+** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。
