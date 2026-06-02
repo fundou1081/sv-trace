@@ -2195,6 +2195,81 @@ class SignalTracer:
                     )
         return chain
 
+    def get_load_chain(
+        self, signal_name: str, max_depth: int = 10, verify: bool = True
+    ) -> List[TraceResult]:
+        """递归查询信号的完整负载链 (从 signal 顺藤摸瓜到所有下游)
+
+        与 get_driver_chain 方向相反:
+        - get_driver_chain: 顺藤摸瓜查上游 (谁驱动了 signal)
+        - get_load_chain: 顺藤摸瓜查下游 (谁读了 signal, 又被谁读)
+
+        递归逻辑:
+        1. 找 s 的所有 loads (谁读了 s)
+        2. 每个 load 的 LHS 是下一跳信号
+        3. 对下一跳信号递归查 loads
+        4. cycle detection (visited set)
+
+        例如:
+            always_comb b = a + 1;  // b 读 a
+            always_comb c = b + 1;  // c 读 b
+            always_comb d = c;      // d 读 c
+        调 get_load_chain('a') 返回 [
+            LoadTrace(b 读 a, uart_core.sv:4),
+            LoadTrace(c 读 b, uart_core.sv:5),
+            LoadTrace(d 读 c, uart_core.sv:6),
+        ]
+
+        M5.1e: 默认 verify=True, 链上每条 load 自动填充 evidence。
+        跟 get_driver_chain (M5.1c) 完全对称, 一查就反查, 顺藤摸瓜带 credibility。
+
+        Args:
+            signal_name: 起始信号 (查询"谁读了这个信号")
+            max_depth: 最大递归深度
+            verify: M5.1e: 是否自动填充 evidence (默认 True)
+
+        Returns:
+            List[TraceResult] (load 类型), 顺序是 从 signal 顺流到下游。
+            若 verify=True, 每个 load 的 _evidence_override 已填充。
+        """
+        if not self._built:
+            self.build()
+
+        chain: List[TraceResult] = []
+        visited: Set[str] = set()
+
+        def walk(sig: str, depth: int):
+            if depth > max_depth or sig in visited:
+                return
+            visited.add(sig)
+
+            # 找所有读 sig 的 load
+            loads = self._loads.get(sig, [])
+            for l in loads:
+                chain.append(l)
+                # 下一跳: load 的 source_signals (LHS — 谁写了, 也就是谁读了 sig)
+                # load.signal_name 是查询的 signal, source_signals 是 LHS 列表
+                for next_sig in l.source_signals:
+                    if next_sig and next_sig != sig and self._is_real_signal(next_sig):
+                        walk(next_sig, depth + 1)
+                # 注意: 一个 load 可能让 chain 同 LHS 出现多次 (因为 source_signals 含多个 LHS)
+                # 但 visited 集合会避免死循环
+
+        walk(signal_name, 0)
+
+        # M5.1e: 自动填充 evidence (用 in-memory 文件内容)
+        if verify and chain:
+            from signal_tracer.models import build_evidence
+            for l in chain:
+                fc = self._get_file_content(l.file)
+                if fc:
+                    l._evidence_override = build_evidence(
+                        file=l.file, line=l.line,
+                        source_expr=l.source_expr, signal_name=l.signal_name,
+                        scope_text=l.scope_text, file_content=fc, context_window=2,
+                    )
+        return chain
+
     def _is_real_signal(self, name: str) -> bool:
         """判断 name 是否是真实信号名 (不是字面常量 / 关键字)
 

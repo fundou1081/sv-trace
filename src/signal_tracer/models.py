@@ -222,6 +222,56 @@ class TraceSummary:
         """
         return [d.to_context(file_content=file_content, context_window=context_window) for d in self.drivers]
     
+    def get_load_chain(self, max_depth: int = 10, verify: bool = True) -> List[TraceResult]:
+        """获取负载链 (从 signal 顺藤摸瓜到下游), 返回 load TraceResult 列表 (M5.1e)
+
+        与 SignalTracer.get_load_chain 类似, 但基于 self.loads 工作。
+        区别:
+        - SignalTracer.get_load_chain: 全图遍历, 跨整个项目
+        - TraceSummary.get_load_chain: 只看本次 trace 的 loads
+
+        M5.1e: 默认 verify=True, 链上每条 load 自动填充 evidence (与 M5.1c 对称)。
+
+        Args:
+            max_depth: 最大递归深度
+            verify: 是否自动填充 evidence (默认 True)
+
+        Returns:
+            List[TraceResult] (load 类型), 顺序是 从 signal 顺流到下游
+        """
+        from signal_tracer.models import build_evidence
+        chain: List['TraceResult'] = []
+        visited = set()
+
+        def build_chain(sig_name: str, depth: int):
+            if depth > max_depth or sig_name in visited:
+                return
+            visited.add(sig_name)
+            for l in self.loads:
+                # 当前 load 的 source_signals 包含 sig_name
+                if sig_name in l.source_signals:
+                    chain.append(l)
+                    # 下一跳: load 的 source_signals (LHS — 读 sig_name 的消费者)
+                    for next_sig in l.source_signals:
+                        if next_sig and next_sig != sig_name:
+                            build_chain(next_sig, depth + 1)
+
+        build_chain(self.signal_name, 0)
+
+        # M5.1e: 自动填充 evidence
+        if verify and chain:
+            tracer = getattr(self, '_tracer', None)
+            if tracer:
+                for l in chain:
+                    fc = tracer._get_file_content(l.file)
+                    if fc:
+                        l._evidence_override = build_evidence(
+                            file=l.file, line=l.line,
+                            source_expr=l.source_expr, signal_name=l.signal_name,
+                            scope_text=l.scope_text, file_content=fc, context_window=2,
+                        )
+        return chain
+
     def get_driver_chain(self, max_depth: int = 10, verify: bool = True) -> List[TraceResult]:
         """获取驱动链 (从信号本身到上游), 返回 TraceResult 列表 (M5.1b)
 

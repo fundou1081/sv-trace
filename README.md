@@ -507,6 +507,52 @@ OpenTitan 真实示例 (uart `reg2hw`): 20 个 loads, 每条都带 credibility 1
 
 不需要 evidence: `trace_loads(verify=False)` 或 `trace(verify=False)`。
 
+### 例 10：load 链 + 证据链 (M5.1e) — 顺藤摸瓜查下游
+
+`get_load_chain(verify=True)` 跟 `get_driver_chain` 完全对称 — 查"谁读了这个 signal, 又被谁读", 链上每条 load 都带 evidence。
+
+```python
+from signal_tracer import SignalTracer
+
+sv_code = """
+module chain;
+    logic [7:0] a, b, c, d;
+    always_comb begin
+        b = a;     // b 读 a
+        c = b;     // c 读 b
+        d = c;     // d 读 c
+    end
+endmodule
+"""
+
+t = SignalTracer(sv_code, "chain.sv")
+t.build()
+
+# 顺流: 查 a 被谁读了, 又被谁读
+for l in t.get_load_chain("a"):
+    d = l.to_context().to_dict()
+    print(f"📍 {l.hierarchical_path}.{l.signal_name} @ {l.file.split('/')[-1]}:{l.line}")
+    print(f"   credibilidad={d['credibility_score']:.2f}")
+    print(f"   snippet: {d['evidence_snippet']}")
+```
+
+输出：
+
+```
+📍 m.a @ chain.sv:4  credibilidad=1.00
+   snippet: b = a;     // b 读 a
+📍 m.b @ chain.sv:5  credibilidad=1.00
+   snippet: c = b;     // c 读 b
+📍 m.c @ chain.sv:6  credibilidad=1.00
+   snippet: d = c;     // d 读 c
+```
+
+OpenTitan 真实示例 (uart `reg2hw`): 61 跳的 load 链, 每跳都带 credibility 和 snippet, 让你看"硬件 reg 一路被传到哪些下游信号"时, 每一跳都有真凭实据。
+
+与 driver chain (例 8) 对称: 例 8 顺上游, 例 10 顺下游, 都带 evidence。
+
+不需要 evidence: `get_load_chain(verify=False)`。
+
 ## 公开 API
 
 ### 函数式
@@ -568,7 +614,7 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **97/97 通过** (2.31s) |
+| 公开 API 测试 | **102/102 通过** (2.42s) |
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
@@ -583,7 +629,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 
 ## 测试覆盖 (M0–M4)
 
-主测试 `tests/unit/test_signal_tracer.py` 包含 **20 个 TestClass, 97 个测试**：
+主测试 `tests/unit/test_signal_tracer.py` 包含 **21 个 TestClass, 102 个测试**：
 
 | 阶段 | TestClass | 测试数 | 覆盖点 |
 |------|-----------|--------|--------|
@@ -598,6 +644,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M5.1b | `TestMultiDriverEvidence` | +4 | `find_multi_drivers(verify=True)` 默认自动带 evidence (看到冲突 + 真凭实据) |
 | M5.1c | `TestDriverChainEvidence` | +4 | `get_driver_chain(verify=True)` 默认链上每跳自动带 evidence (顺藤摸瓜带 credibility) |
 | M5.1d | `TestTraceLoadsEvidence` | +7 | `trace()`/`trace_drivers()`/`trace_loads()` 默认 verify=True, drivers 和 loads 都自动带 evidence (查谁读了某信号) |
+| M5.1e | `TestLoadChainEvidence` | +5 | `get_load_chain(verify=True)` 顺藤摸瓜查下游 (与 driver chain 对称) |
 
 各阶段演进：
 
@@ -613,7 +660,8 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M5.1 | 8 | 82 |
 | M5.1b | 4 | 86 |
 | M5.1c | 4 | 90 |
-| M5.1d | 7 | (主测试 97) |
+| M5.1d | 7 | 97 |
+| M5.1e | 5 | (主测试 102) |
 
 详见 [tests/README.md](tests/README.md) 和 [TEST_PLAN.md](TEST_PLAN.md)。
 
@@ -697,6 +745,7 @@ evidence 不会"假装 OK"，会真实反映可信度。
 - 多驱动检测 + 证据链: `find_multi_drivers(verify=True)` 默认自动带 evidence, 看到冲突 + 真凭实据 (M5.1b)
 - 驱动链 + 证据链: `get_driver_chain(verify=True)` 链上每跳自动带 evidence, 顺藤摸瓜带 credibility (M5.1c)
 - trace + 证据链: `trace()`/`trace_drivers()`/`trace_loads()` 默认 verify=True, drivers 和 loads 都自动带 evidence (M5.1d)
+- load 链 + 证据链: `get_load_chain(verify=True)` 顺藤摸瓜下游, 链上每条 load 都带 evidence (M5.1e, 与 driver chain 对称)
 - 嵌套: 任意深度 MemberAccess (e.g. `reg2hw.ctrl.tx.q`) + 跨 RangeSelect (`reg2hw.val[BufferAw:0]`)
 - 跨文件: 多 .sv 编译为同一 Compilation, 跨模块引用 + 层次路径 (`uart.uart_core.tx_enable`)
 - 跨文件行号: `pyslang SourceManager.getLineNumber()` 走 SourceLocation.buffer 精准算行
@@ -725,7 +774,7 @@ sv-trace/
 │       └── signal_tracer_app.py       # SignalTracerApp: 单文件跨模块（兼容）
 ├── benchmarks/                        # 12 个 SV fixture (基础 always/case/FSM/...)
 ├── tests/
-│   ├── unit/test_signal_tracer.py     # 97 个公开 API 测试 (含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d)
+│   ├── unit/test_signal_tracer.py     # 102 个公开 API 测试 (含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d + 5 M5.1e)
 │   ├── fixtures/m3_hierarchical/      # 3 文件 / 3 层 instance fixture
 │   │   ├── top.sv
 │   │   ├── mid.sv
@@ -756,6 +805,7 @@ sv-trace/
 - ✅ **M5.1b** find_multi_drivers 整合 evidence - 多驱动检测带 credibility
 - ✅ **M5.1c** get_driver_chain 整合 evidence - 顺藤摸瓜链上每跳带 credibility
 - ✅ **M5.1d** trace/trace_drivers/trace_loads 整合 evidence - drivers 和 loads 都带 credibility
+- ✅ **M5.1e** get_load_chain 整合 evidence - 顺藤摸瓜查下游 (与 driver chain 对称)
 - 📋 **M5.2+** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。

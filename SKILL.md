@@ -1,6 +1,6 @@
 ---
 name: sv-trace
-description: SystemVerilog 信号追踪器 (signal tracer) — 给一个 SV 信号名, 返回该信号在源码中的所有 driver (驱动) 和 load (负载), 以及完整上下文 (文件、行号、scope 源码、时钟/复位、条件栈、层次路径)。每个 trace 都带**可证伪的代码证据链 (M5.1)**: 读回实际文件验证 source_expr/signal_name 真在该行, 输出 credibility_score (0-1) 和 is_verified 标记, 让 LLM/用户能反查。基于 pyslang 语义层分析, 支持多文件项目、Interface/Modport、跨模块层次路径。Use when (1) 需要在 RTL 源码中追踪某个信号的所有驱动/读取位置, (2) 调试"这个信号在哪里被赋值"或"谁在读这个信号", (3) 自动生成信号的 driver/load 列表喂给 LLM, (4) 在大型 SV 项目 (OpenTitan 等) 中跨模块追踪信号, (5) 验证多驱动冲突 (always_ff 多次写同一信号) — 看到冲突 + 看到冲突的真凭实据, (7) 顺藤摸瓜查 driver 链 — 链上每跳都带 evidence (credibility), (8) 查谁读了某信号 (loads) — 每条 load 都带 evidence, (6) 需要 trace 的"可信度"量化 - 不光看 trace 还要看 trace 有没有真。
+description: SystemVerilog 信号追踪器 (signal tracer) — 给一个 SV 信号名, 返回该信号在源码中的所有 driver (驱动) 和 load (负载), 以及完整上下文 (文件、行号、scope 源码、时钟/复位、条件栈、层次路径)。每个 trace 都带**可证伪的代码证据链 (M5.1)**: 读回实际文件验证 source_expr/signal_name 真在该行, 输出 credibility_score (0-1) 和 is_verified 标记, 让 LLM/用户能反查。基于 pyslang 语义层分析, 支持多文件项目、Interface/Modport、跨模块层次路径。Use when (1) 需要在 RTL 源码中追踪某个信号的所有驱动/读取位置, (2) 调试"这个信号在哪里被赋值"或"谁在读这个信号", (3) 自动生成信号的 driver/load 列表喂给 LLM, (4) 在大型 SV 项目 (OpenTitan 等) 中跨模块追踪信号, (5) 验证多驱动冲突 (always_ff 多次写同一信号) — 看到冲突 + 看到冲突的真凭实据, (7) 顺藤摸瓜查 driver 链 — 链上每跳都带 evidence (credibility), (8) 查谁读了某信号 (loads) — 每条 load 都带 evidence, (9) 顺藤摸瓜查 load 链 — 链上每跳都带 evidence (与 driver 链对称), (6) 需要 trace 的"可信度"量化 - 不光看 trace 还要看 trace 有没有真。
 ---
 
 # sv-trace — SystemVerilog 信号追踪
@@ -78,6 +78,11 @@ count = t.get_driver_count('data_out')
 chain = t.get_driver_chain('data_out', max_depth=10)
 # 链上每跳的 _evidence_override 已自动填充, 可 d.to_context() 立刻拿到带 credibility 的 context
 # 不需要 evidence: t.get_driver_chain('data_out', verify=False)
+
+# 顺藤摸瓜查下游 load 链 (M5.1e) - 与 driver chain 完全对称
+load_chain = t.get_load_chain('data_in', max_depth=10)
+# 查"谁读了这个 signal, 又被谁读", 链上每条 load 也自动带 evidence
+# 不需要 evidence: t.get_load_chain('data_in', verify=False)
 
 # 打包成 LLM-ready 上下文 (M2)
 for ctx in result.to_contexts():
@@ -226,7 +231,7 @@ result = t.trace_verified('top.u_sub.signal')  # 自动用 self._files 填充
 ```bash
 cd ~/my_dv_proj/sv-trace
 
-# 跑测试 (97/97 全部通过, 含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d)
+# 跑测试 (102/102 全部通过, 含 8 M5.1 + 4 M5.1b + 4 M5.1c + 7 M5.1d + 5 M5.1e)
 python -m pytest tests/unit/test_signal_tracer.py -v
 
 # 跑 OpenTitan 验证
@@ -264,7 +269,7 @@ from signal_tracer import SignalTracer
 2. 更新本 SKILL.md (如果 API 行为变了, 或新 SV 特性覆盖)
 3. 跑 `python -m pytest tests/unit/test_signal_tracer.py` 确认 74/74 通过
 
-测试计数: 当前 **97/97** (2.31s)。低于此数 → 有回归; 高于此数 → 新测试已加。
+测试计数: 当前 **102/102** (2.42s)。低于此数 → 有回归; 高于此数 → 新测试已加。
 
 ## 详细参考 (按需加载)
 
