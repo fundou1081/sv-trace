@@ -15,6 +15,16 @@ from signal_tracer.models import (
 from signal_tracer.port_resolver import PortResolver, PortConnection
 
 
+def _strip_evidence(trace_result) -> dict:
+    """从 TraceResult 提取 dict, 过滤掉内部 _evidence_override 字段
+
+    DriverTrace(**d.__dict__) 会因 _evidence_override 而崩溃 (DriverTrace 没这个字段)。
+    此函数提取安全字段给 DriverTrace/LoadTrace 构造用, 保留 _evidence_override 在
+    原对象上 (供 to_context() 用)。
+    """
+    return {k: v for k, v in trace_result.__dict__.items() if k != '_evidence_override'}
+
+
 def _get_line_from_offset(text: str, offset: int) -> int:
     """从字符偏移计算行号 (1-indexed)"""
     if offset <= 0:
@@ -1806,7 +1816,7 @@ class SignalTracer:
             trace_result.port_direction = self._port_info[full_path]
         return trace_result
     
-    def trace(self, signal_name: str) -> TraceSummary:
+    def trace(self, signal_name: str, verify: bool = True) -> TraceSummary:
         """追踪信号的所有驱动和负载 (支持跨模块 + 层次路径)
 
         M3 智能匹配:
@@ -1862,10 +1872,41 @@ class SignalTracer:
         drivers = [self._enrich_port_info(d) for d in drivers]
         loads = [self._enrich_port_info(l) for l in loads]
 
+        # M5.1d: 自动填充 evidence (用 in-memory 文件内容)
+        if verify and (drivers or loads):
+            from signal_tracer.models import build_evidence
+            for d in drivers:
+                fc = self._get_file_content(d.file)
+                if fc:
+                    d._evidence_override = build_evidence(
+                        file=d.file, line=d.line,
+                        source_expr=d.source_expr, signal_name=d.signal_name,
+                        scope_text=d.scope_text, file_content=fc, context_window=2,
+                    )
+            for l in loads:
+                fc = self._get_file_content(l.file)
+                if fc:
+                    l._evidence_override = build_evidence(
+                        file=l.file, line=l.line,
+                        source_expr=l.source_expr, signal_name=l.signal_name,
+                        scope_text=l.scope_text, file_content=fc, context_window=2,
+                    )
+
+        new_drivers = [DriverTrace(**_strip_evidence(d)) for d in drivers]
+        new_loads = [LoadTrace(**_strip_evidence(l)) for l in loads]
+        # 复制 _evidence_override 到新对象 (M5.1d)
+        for orig, new in zip(drivers, new_drivers):
+            ev = getattr(orig, '_evidence_override', None)
+            if ev:
+                new._evidence_override = ev
+        for orig, new in zip(loads, new_loads):
+            ev = getattr(orig, '_evidence_override', None)
+            if ev:
+                new._evidence_override = ev
         return TraceSummary(
             signal_name=signal_name,
-            drivers=[DriverTrace(**d.__dict__) for d in drivers],
-            loads=[LoadTrace(**l.__dict__) for l in loads],
+            drivers=new_drivers,
+            loads=new_loads,
         )
     
     def _cross_module_drivers(self, signal_name: str) -> List[TraceResult]:
@@ -1936,17 +1977,51 @@ class SignalTracer:
         
         return result
     
-    def trace_drivers(self, signal_name: str) -> List[DriverTrace]:
-        """只追踪驱动"""
+    def trace_drivers(self, signal_name: str, verify: bool = True) -> List[DriverTrace]:
+        """只追踪驱动 (M5.1d: 默认 verify=True, 自动带 evidence)"""
         if not self._built:
             self.build()
-        return [DriverTrace(**d.__dict__) for d in self._drivers.get(signal_name, [])]
-    
-    def trace_loads(self, signal_name: str) -> List[LoadTrace]:
-        """只追踪负载"""
+        drivers = list(self._drivers.get(signal_name, []))
+        if verify and drivers:
+            from signal_tracer.models import build_evidence
+            for d in drivers:
+                fc = self._get_file_content(d.file)
+                if fc:
+                    d._evidence_override = build_evidence(
+                        file=d.file, line=d.line,
+                        source_expr=d.source_expr, signal_name=d.signal_name,
+                        scope_text=d.scope_text, file_content=fc, context_window=2,
+                    )
+        new_drivers = [DriverTrace(**_strip_evidence(d)) for d in drivers]
+        # 复制 _evidence_override 到新对象 (M5.1d)
+        for orig, new in zip(drivers, new_drivers):
+            ev = getattr(orig, '_evidence_override', None)
+            if ev:
+                new._evidence_override = ev
+        return new_drivers
+
+    def trace_loads(self, signal_name: str, verify: bool = True) -> List[LoadTrace]:
+        """只追踪负载 (M5.1d: 默认 verify=True, 自动带 evidence)"""
         if not self._built:
             self.build()
-        return [LoadTrace(**l.__dict__) for l in self._loads.get(signal_name, [])]
+        loads = list(self._loads.get(signal_name, []))
+        if verify and loads:
+            from signal_tracer.models import build_evidence
+            for l in loads:
+                fc = self._get_file_content(l.file)
+                if fc:
+                    l._evidence_override = build_evidence(
+                        file=l.file, line=l.line,
+                        source_expr=l.source_expr, signal_name=l.signal_name,
+                        scope_text=l.scope_text, file_content=fc, context_window=2,
+                    )
+        new_loads = [LoadTrace(**_strip_evidence(l)) for l in loads]
+        # 复制 _evidence_override 到新对象 (M5.1d)
+        for orig, new in zip(loads, new_loads):
+            ev = getattr(orig, '_evidence_override', None)
+            if ev:
+                new._evidence_override = ev
+        return new_loads
 
     def _get_file_content(self, file_path: str) -> Optional[str]:
         """M5.1: 从已加载文件查找内容 (用于证据链交叉验证)

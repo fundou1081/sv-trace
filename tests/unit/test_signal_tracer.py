@@ -1896,3 +1896,164 @@ class TestDriverChainEvidence:
             assert ev is not None
             assert ev.file_readable is True
             assert ev.credibility_score == 1.0
+
+
+# ---------- M5.1d: trace / trace_loads / trace_drivers 默认带 evidence ----------
+
+class TestTraceLoadsEvidence:
+    """M5.1d: trace() / trace_loads() / trace_drivers() 默认 verify=True
+    drivers 和 loads 都会自动带 evidence (credibility 0-1)
+    """
+
+    def test_trace_default_verify_drivers_have_evidence(self):
+        """trace() 默认 verify=True, 每个 driver 自动带 evidence"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] q, d;
+            logic clk;
+            always_ff @(posedge clk) q <= d;
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        r = t.trace('q')  # 默认 verify=True
+        assert len(r.drivers) >= 1
+        for d in r.drivers:
+            ev = getattr(d, '_evidence_override', None)
+            assert ev is not None
+            assert ev.file_readable is True
+            assert ev.credibility_score == 1.0
+
+    def test_trace_default_verify_loads_have_evidence(self):
+        """trace() 默认 verify=True, 每个 load 自动带 evidence (M5.1d 重点)"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] d, q;
+            always_comb q = d + 1;  // d 在 RHS, q 读取 d
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        # trace q: 查 q 的 loads (谁读 q) - 这里没有, 但我们用 q 反查
+        r = t.trace('q')
+        # q 没有被读, 所以 loads 是空的
+        # 用 d (被读) 来看 loads
+        r2 = t.trace('d')
+        assert len(r2.loads) >= 1, "d 应有至少 1 个 load (q 读了 d)"
+        for l in r2.loads:
+            ev = getattr(l, '_evidence_override', None)
+            assert ev is not None, f"load @ line {l.line} 应有 evidence"
+            assert ev.file_readable is True
+            # 真实反映: snippet 'q = d + 1;' 包含 'd' (signal_name), 但 source_expr 通常是 LHS
+            # 这里 load.source_expr 是 LHS 的 'q = d + 1;' 不含 d
+            # 所以 matches_source 可能 False, 但 matches_signal (load 的 signal_name 是 'd' 即查询信号) 应 True
+            # 注意: load 的 signal_name 是查询的信号 'd', 不是 d.to_context 中的
+            assert ev.matches_signal_name is True
+            ctx = l.to_context()
+            d_dict = ctx.to_dict()
+            assert d_dict['evidence_snippet'] != ''
+
+    def test_trace_loads_default_verify(self):
+        """trace_loads() 默认 verify=True: loads 自动带 evidence"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] a, b, c;
+            always_comb begin
+                a = b + c;   // a 读 b, c
+            end
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        loads_b = t.trace_loads('b')  # 默认 verify=True
+        assert len(loads_b) >= 1
+        for l in loads_b:
+            ev = getattr(l, '_evidence_override', None)
+            assert ev is not None
+            assert ev.file_readable is True
+            # snippet 包含 'b'
+            assert 'b' in ev.snippet
+            assert ev.is_verified is True
+
+    def test_trace_drivers_default_verify(self):
+        """trace_drivers() 默认 verify=True: drivers 自动带 evidence"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] q, d;
+            logic clk;
+            always_ff @(posedge clk) q <= d;
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        drivers = t.trace_drivers('q')  # 默认 verify=True
+        assert len(drivers) >= 1
+        for d in drivers:
+            ev = getattr(d, '_evidence_override', None)
+            assert ev is not None
+            assert ev.credibility_score == 1.0
+
+    def test_trace_loads_verify_false_no_evidence(self):
+        """verify=False: loads 不填充 evidence (向后兼容)"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] a, b, c;
+            always_comb a = b + c;
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        loads = t.trace_loads('b', verify=False)
+        for l in loads:
+            assert getattr(l, '_evidence_override', None) is None
+
+    def test_trace_loads_evidence_in_open_titan(self):
+        """OpenTitan 真实项目: trace_loads 自动带 evidence"""
+        from signal_tracer import SignalTracer
+        uart_dir = '/Users/fundou/my_dv_proj/opentitan/hw/ip/uart/rtl/'
+        files = {n: open(uart_dir + n).read() for n in
+                 ['uart.sv', 'uart_core.sv', 'uart_tx.sv', 'uart_rx.sv', 'uart_reg_pkg.sv', 'uart_reg_top.sv']}
+        t = SignalTracer()
+        for n, c in files.items():
+            t.add_file(uart_dir + n, c)
+        t.build()
+        # 查 reg2hw (input), 应有跨多个 always 的 loads
+        loads = t.trace_loads('reg2hw')
+        assert len(loads) > 0, "reg2hw 应有多个 loads"
+        for l in loads[:5]:  # 检查前 5 个
+            ev = getattr(l, '_evidence_override', None)
+            assert ev is not None
+            assert ev.file_readable is True
+            assert ev.credibility_score >= 0.6
+            ctx = l.to_context()
+            d_dict = ctx.to_dict()
+            assert d_dict['evidence_snippet'] != ''
+
+    def test_trace_to_context_includes_load_evidence(self):
+        """TraceSummary.to_contexts() 包含 load 的 evidence"""
+        from signal_tracer import SignalTracer
+        code = '''
+        module m;
+            logic [7:0] a, b, c;
+            always_comb a = b + c;
+        endmodule
+        '''
+        t = SignalTracer(code, 'm.sv')
+        t.build()
+        r = t.trace('a')
+        # a 应该有 driver (它本身是 LHS of `a = b + c;`)
+        # 和 load (没东西读 a)
+        # b 应该有 load (a 读 b)
+        r_b = t.trace('b')
+        assert len(r_b.loads) >= 1
+        for l in r_b.loads:
+            ctx = l.to_context()
+            d_dict = ctx.to_dict()
+            assert d_dict['credibility_score'] == 1.0
+            assert d_dict['is_verified'] is True
+            assert d_dict['evidence_snippet'] != ''
