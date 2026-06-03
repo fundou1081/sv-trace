@@ -757,7 +757,7 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **117/117 通过** (2.39s) |
+| 公开 API 测试 | **160/160 通过** (~7s) |
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
@@ -767,7 +767,7 @@ result = t.trace("signal_name")  # TraceSummary
 跑测试：
 
 ```bash
-python -m pytest tests/unit/test_signal_tracer.py -v
+python -m pytest tests/ -v
 ```
 
 ## 测试覆盖 (M0–M4)
@@ -790,6 +790,7 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M5.1e | `TestLoadChainEvidence` | +5 | `get_load_chain(verify=True)` 顺藤摸瓜查下游 (与 driver chain 对称) |
 | M5.1f | `TestDumpChain` | +9 | `dump_driver_chain()`/`dump_load_chain()` 一次 dump 整链为 dict (含 summary, LLM 友好) |
 | M5.1g | `TestDumpMultiDrivers` | +6 | `dump_multi_drivers()` 一次 dump 多驱动检测 (冲突列表 + 每个 driver evidence) |
+| M5.1h | `TestSyntaxNodeSnapshot` | +6 | syntax-based evidence 路径: SyntaxNodeSnapshot 冻结 + OpenTitan 跨文件 snippet 精度 |
 
 各阶段演进：
 
@@ -808,7 +809,10 @@ python -m pytest tests/unit/test_signal_tracer.py -v
 | M5.1d | 7 | 97 |
 | M5.1e | 5 | 102 |
 | M5.1f | 9 | 111 |
-| M5.1g | 6 | (主测试 117) |
+| M5.1g | 6 | 117 |
+| M5.1h | 6 | 123 |
+
+主测试套件 (含 `test_signal_tracer.py` 和 `test_evidence_via_syntax.py`) 累计 **160 个** (其他测试文件: 边界/CI/legacy 37 个)。
 
 详见 [tests/README.md](tests/README.md) 和 [TEST_PLAN.md](TEST_PLAN.md)。
 
@@ -872,6 +876,98 @@ readbuf_threshold @ spi_device.sv:600:
 
 evidence 不会"假装 OK"，会真实反映可信度。
 
+## 代码证据链语法路径 (M5.1h)
+
+**核心问题**: file-based evidence 依赖 `file:line` 准不准——line 错 (e.g. multi-statement `always_ff` block 里) 就会读到错的源码。M5.1h 走**从 pyslang 语法树拿 evidence** 的路径：line 用 SyntaxNode.sourceRange 算，snippet 用 `str(SyntaxNode)` 拿，跨文件也准。
+
+### 优势
+
+- **不依赖文件存在**: 内存里只有 SV code 也能产出 evidence
+- **总是和 pyslang 解析结果 100% 一致**: file-based 有 line 错 / 文件被改 / 路径不同步的风险，syntax-based 没有
+- **不依赖 line 准不准**: line 错了 syntax 仍指向正确位置
+- **多文件零 cost**: 不需要记哪个 file 对应哪个 offset
+
+### OpenTitan 真实示例 (uart 模块, 6 files / 431 drivers / 616 loads)
+
+```python
+import sys, os
+sys.path.insert(0, 'src')
+from signal_tracer import SignalTracer
+
+uart_dir = '/Users/fundou/my_dv_proj/opentitan/hw/ip/uart/rtl/'
+t = SignalTracer()
+for f in ['uart.sv', 'uart_core.sv', 'uart_reg_pkg.sv', 'uart_reg_top.sv', 'uart_rx.sv', 'uart_tx.sv']:
+    p = os.path.join(uart_dir, f)
+    if os.path.exists(p):
+        t.add_file(p, open(p).read())
+t.build()
+
+# trace_drivers('tx_enable') → evidence chain
+for d in t.trace_drivers('tx_enable'):
+    ctx = d.to_context()
+    cd = ctx.to_dict()
+    print(f'{os.path.basename(cd["file"])}:{cd["line"]}  cred={cd["credibility_score"]}  verif={cd["is_verified"]}')
+    print(f'  snippet: {cd["evidence_snippet"]!r}')
+```
+
+输出：
+
+```
+uart_core.sv:77  cred=1.0  verif=True
+  snippet: 'assign tx_enable        = reg2hw.ctrl.tx.q;'
+```
+
+### 多个真实信号的 evidence (OpenTitan uart, 全部 credibility=1.0)
+
+**Single-driver 信号**：
+
+```
+tx_enable     @ uart_core.sv:77    snippet='assign tx_enable        = reg2hw.ctrl.tx.q;'
+rx_enable     @ uart_core.sv:78    snippet='assign rx_enable        = reg2hw.ctrl.rx.q;'
+allzero_cnt_q @ uart_core.sv:109   snippet="if (!rst_ni)        allzero_cnt_q <= '0;"
+allzero_cnt_q @ uart_core.sv:110   snippet='else if (rx_enable) allzero_cnt_q <= allzero_cnt_d;'
+```
+
+**Multi-driver 冲突 (跨 3 个文件, snippet 精确定位每个 driver 位置)**：
+
+```
+tx        @ uart_tx.sv:32     snippet='assign tx = tx_q;'
+tx        @ uart_core.sv:217  snippet='assign tx = line_loopback ? rx : tx_out_q ;'
+baud_div_q @ uart_tx.sv:36    snippet="baud_div_q  <= 4'h0;"
+baud_div_q @ uart_rx.sv:41    snippet="baud_div_q  <= 4'h0;"
+baud_div_q @ uart_rx.sv:47    snippet='baud_div_q  <= baud_div_d;'
+tick_baud_q @ uart_tx.sv:37   snippet="tick_baud_q <= 1'b0;"
+tick_baud_q @ uart_tx.sv:41   snippet="tick_baud_q <= 1'b0;"
+tick_baud_q @ uart_rx.sv:42   snippet="tick_baud_q <= 1'b0;"
+tick_baud_q @ uart_rx.sv:48   snippet='tick_baud_q <= tick_baud_d;'
+```
+
+LLM 看 1 行 snippet 就能反查"`tx` 实际上是哪个 line 在驱动"，再 `cat uart_core.sv:217` 看到 `assign tx = line_loopback ? rx : tx_out_q ;` 就能确认是 loopback 模式。
+
+### SyntaxNodeSnapshot: 防 pyslang buffer 复用
+
+走 syntax 路径会调用 `str(SyntaxNode)` 拿 snippet。但 pyslang 的 `SyntaxNode.__str__()` 依赖内部 buffer 状态，第二个 `Compilation` 创建后，第一个的 SyntaxNode 调 `str()` 会返回截断的旧内容 (e.g. `b = foo(a)` → `b = foo`，丢 `(a)`)。M5.1h 引入 **`SyntaxNodeSnapshot`** 包装：
+
+- inject 时立刻 `str(node)` 拿到完整文本，冻结到 `self.text`
+- 代理 `sourceRange` / `kind` / `__iter__` 等元数据（`build_evidence_via_syntax` 和 `_find_subexpr_for_signal` 需读）
+- `__str__` 优先返回冻结的 text，**不受后续 Compilation 创建影响**
+
+**6 个回归测试** (`tests/unit/test_evidence_via_syntax.py::TestSyntaxNodeSnapshot`) 锁定这个行为，包括多 tracer 场景下的冻结验证。
+
+### file-based vs syntax-based 互补
+
+| 场景 | file-based | syntax-based | 说明 |
+|------|-----------|--------------|------|
+| 单行 assign (`assign x = y;`) | ✅ line 准 | ✅ snippet 准 | 两者都好 |
+| Multi-statement always_ff block | ⚠️ line=block 头 | ⚠️ sourceRange=block | 两者各有不足 (block 级粒度) |
+| Multi-driver 冲突 (跨文件) | ✅ line 准 | ✅ 跨文件准 | syntax 路径优势在跨文件 |
+| 文件被改/不同步 | ❌ | ✅ | syntax 路径不依赖文件 |
+| 内存-only SV code | ❌ | ✅ | syntax 路径唯一选 |
+
+**推荐**：默认走 `to_context(source_mode='auto')`，在 line 准的时候走 file-based 拿到更多 context；line 错/跨文件/内存模式走 syntax-based。
+
+
+
 ## 真实项目验证 (M4)
 
 在 OpenTitan 上验证, 全部 6 模块 **0 warning + 0 empty driver**:
@@ -895,6 +991,7 @@ evidence 不会"假装 OK"，会真实反映可信度。
 - load 链 + 证据链: `get_load_chain(verify=True)` 顺藤摸瓜下游, 链上每条 load 都带 evidence (M5.1e, 与 driver chain 对称)
 - dump_chain: 一次 dump 整链为 dict (含 summary avg/min/credibility/cross_files), 喂 LLM 1 个 prompt section 就够 (M5.1f)
 - dump_multi_drivers: 一次 dump 多驱动检测 (冲突列表 + 每个 driver evidence + 全局 summary), LLM 一眼看到所有冲突 (M5.1g)
+- syntax-based evidence: 从 pyslang SyntaxTree 直接拿, 跨文件 100% 准, 不依赖 file 存在 (M5.1h)
 - 嵌套: 任意深度 MemberAccess (e.g. `reg2hw.ctrl.tx.q`) + 跨 RangeSelect (`reg2hw.val[BufferAw:0]`)
 - 跨文件: 多 .sv 编译为同一 Compilation, 跨模块引用 + 层次路径 (`uart.uart_core.tx_enable`)
 - 跨文件行号: `pyslang SourceManager.getLineNumber()` 走 SourceLocation.buffer 精准算行
@@ -957,6 +1054,7 @@ sv-trace/
 - ✅ **M5.1e** get_load_chain 整合 evidence - 顺藤摸瓜查下游 (与 driver chain 对称)
 - ✅ **M5.1f** dump_chain 一次 dump 整链为 JSON - 含 summary, LLM 友好
 - ✅ **M5.1g** dump_multi_drivers - 一次 dump 多驱动检测 (冲突 + 每个 driver 证据)
+- ✅ **M5.1h** 代码证据链语法路径 - 从 pyslang SyntaxTree 直接拿 evidence (SyntaxNodeSnapshot 防 buffer 复用, 跨文件 100% 准)
 - 📋 **M5.2+** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。
