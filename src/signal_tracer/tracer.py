@@ -1172,7 +1172,10 @@ class SignalTracer:
             condition_stack=list(condition_stack),
         )
         # M5.2c: 注入 syntax node, 让 syntax-based evidence 能工作
-        trace._syntax_node = expr
+        # 注入 expr.syntax (语法节点) 而非 expr (语义 Expression),
+        # 因为 build_evidence_via_syntax 走 str(syntax_node) 拿 snippet,
+        # 对语义 Expression str() 返回的是 'Expression(ExpressionKind.X)' 类名, 不是源码
+        trace._syntax_node = getattr(expr, 'syntax', expr) or expr
         if full_name not in self._drivers:
             self._drivers[full_name] = []
         self._drivers[full_name].append(trace)
@@ -1215,8 +1218,8 @@ class SignalTracer:
                     hierarchical_path=scope.instance_path,
                     condition_stack=list(condition_stack),
                 )
-                # M5.2c: 注入 syntax node
-                load_trace._syntax_node = expr
+                # M5.2c: 注入 syntax node (同 driver, 走 syntax 节点)
+                load_trace._syntax_node = getattr(expr, 'syntax', expr) or expr
                 self._loads[full_sig].append(load_trace)
                 self._loads[sig].append(load_trace)
 
