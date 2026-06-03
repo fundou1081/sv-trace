@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from signal_tracer.models import (
     TraceResult, TraceType, ScopeKind, DriverTrace, LoadTrace,
     ScopeInfo, SignalInfo, TraceSummary,
-    _set_source_manager,  # M5.2c fix: 同步 SourceManager 给 build_evidence_via_syntax
+    _set_source_manager,  # M5.1h fix: 同步 SourceManager 给 build_evidence_via_syntax
 )
 from signal_tracer.port_resolver import PortResolver, PortConnection
 
@@ -403,7 +403,7 @@ class SignalTracer:
 
         # M4: 保存 SourceManager, 后续所有行号计算都走它 (跨文件精确)
         self._source_manager = comp.sourceManager
-        # M5.2c fix: 同步给 models 里的 singleton, build_evidence_via_syntax 拿得到
+        # M5.1h fix: 同步给 models 里的 singleton, build_evidence_via_syntax 拿得到
         _set_source_manager(self._source_manager)
 
         # Get elaborated root and traverse all semantic symbols
@@ -1171,7 +1171,7 @@ class SignalTracer:
             hierarchical_path=scope.instance_path,
             condition_stack=list(condition_stack),
         )
-        # M5.2c: 注入 syntax node, 让 syntax-based evidence 能工作
+        # M5.1h: 注入 syntax node, 让 syntax-based evidence 能工作
         # 注入 expr.syntax (语法节点) 而非 expr (语义 Expression),
         # 因为 build_evidence_via_syntax 走 str(syntax_node) 拿 snippet,
         # 对语义 Expression str() 返回的是 'Expression(ExpressionKind.X)' 类名, 不是源码
@@ -1218,7 +1218,7 @@ class SignalTracer:
                     hierarchical_path=scope.instance_path,
                     condition_stack=list(condition_stack),
                 )
-                # M5.2c: 注入 syntax node (同 driver, 走 syntax 节点)
+                # M5.1h: 注入 syntax node (同 driver, 走 syntax 节点)
                 load_trace._syntax_node = getattr(expr, 'syntax', expr) or expr
                 self._loads[full_sig].append(load_trace)
                 self._loads[sig].append(load_trace)
@@ -1447,7 +1447,7 @@ class SignalTracer:
         return ""
 
     def _expr_to_source_text(self, expr, fallback: str = '') -> str:
-        """M5.2c step 5: 从 syntax node 拿表达式在源码中的真实文本
+        """M5.1h step 5: 从 syntax node 拿表达式在源码中的真实文本
 
         背景: 语义 Expression 的 str() 返回 'BinaryExpression(Add, a, b)' 这种
         C++ 风格文本, 而 syntax node 的 str() 返回 'a + b' 真实源码。后者才能
@@ -1467,7 +1467,7 @@ class SignalTracer:
         return text if text else fallback
 
     def _get_rhs_info_semantic(self, expr) -> Dict:
-        """从语义表达式获取 RHS 信息 (文本 and 加载的信号) - M5.2c step 5 wrapper
+        """从语义表达式获取 RHS 信息 (文本 and 加载的信号) - M5.1h step 5 wrapper
 
         实际 kind-specific 逻辑在 _get_rhs_info_semantic_kind。本函数:
         1. 调 kind 拿 signals + kind-级别 text (例如 'a Add b')

@@ -21,14 +21,17 @@
 | **M5.1e get_load_chain 整合** | ✅ 完成 | +5 | 顺藤摸瓜查下游 (与 driver chain 对称) |
 | **M5.1f dump_chain** | ✅ 完成 | +9 | 一次 dump 整链为 JSON (含 summary, LLM 友好) |
 | **M5.1g dump_multi_drivers** | ✅ 完成 | +6 | 一次 dump 多驱动检测 (冲突 + summary) |
+| **M5.1h syntax-based evidence** | ✅ 完成 | +27 | 走 pyslang syntax tree 拿 snippet/line (与 file-based 并存), source_expr 走真实源码, load trace narrow 到 sub-expr, context_window 走 SourceManager |
 | **M5.2a ElementSelect 嵌套** | ✅ 完成 | +3 | OpenTitan 发现: 修嵌套 ElementSelect+RangeSelect |
 | **M5.2b 智能分类** | ✅ 完成 | +7 | 4 类分类, 304 → 5 真冲突 (98% 噪声过滤) |
 | **M5.2c 分类器优化** | 📋 待开始 | — | 修 3 个分类器限制 (见 TODO 章节) |
 | **M5.3 极致优化** | 📋 待开始 | — | 增量 / 并发 / 缓存 |
 
-**当前总计**: **127/127 测试通过** (1.83s → 4.11s)
+**当前总计**: **154/154 测试通过** (1.83s → 4.11s → 6.0s)
 
 **OpenTitan 20 模块 真实项目验证**: 239 个 .sv, 50,294 drivers, 94,206 loads, 0 empty (0.00%), 304 多驱动信号 → 5 真冲突候选 (98% 噪声过滤)
+
+**M5.1h 命名说明**: 原本代码中 syntax-based evidence 被命名为 "M5.2c", 但与 TODO 的 M5.2c 分类器优化冲突。已重命名为 **M5.1h** (M5.1 证据家族延续)。M5.2c 分类器优化 TODO 保持原意。
 
 ---
 
@@ -138,6 +141,49 @@ OpenTitan 20 模块验证发现: 旧 `find_multi_drivers` 报 304 个 '冲突', 
 - `bit_partition` (0) - 位选区间不重叠 (按位分区写)
 - `generate_block` (0) - generate 块内同名 local
 +7 测试 (累计 127/127)。OpenTitan 5 个真 multi-driver bug 候选分布在 spi_device/aes/otbn/kmac。
+
+## ✅ M5.1h: syntax-based evidence (与 file-based 并存的第二条 evidence 路径)
+
+**缘起**: 原本 M5.1 evidence 只走 file IO (读文件按行取 snippet)。虽然准确, 但有几个限制:
+
+1. line 错位时 evidence 跳到错误的行
+2. 需要文件存在 (memory-only SV code 不工作)
+3. source_expr 走 str(语义 Expression) 拿到 C++ enum 风格 (e.g. 'a Add b'), 与源码 ('a + b') 不匹配, matches_source_expr 永远 False
+
+**修法**: 走 pyslang syntax tree:
+
+- `syntax_node.sourceRange` + `SourceManager.getLineNumber(loc)` 拿真源码行
+- `str(syntax_node.syntax)` 拿原文 snippet (不走 file IO)
+- `str(syntax_node.syntax)` 拿 source_expr 原文 (修 'Add' 问题)
+- 后序 DFS 找包含 signal_name 的最具体 syntax 子节点 (load trace narrow 到 identifier 或 RangeSelect)
+- `sm.getSourceText(buffer_id)` + `splitlines()` 拿 context_window (与 file-based 同算法)
+
+**与 file-based 对比**:
+
+| 字段 | file-based | syntax-based (M5.1h) |
+|------|------------|---------------------|
+| line | 4 | 4 (同) |
+| context_before/after | 填充 | 填充 (同) |
+| snippet | 整行 | narrowed sub-expr (load) / 整 RHS (driver) |
+| matches_source_expr | ✓ (Step 5 后) | ✓ (Step 5 后) |
+| matches_signal_name | ✓ | ✓ |
+| is_verified | True | True |
+| credibility_score | 1.0 | 0.8 (无 file_readable) |
+| file_readable | True | False |
+
+**7 步迭代** (每个 commit + 测试锁定):
+
+1. `SignalTracer.build()` 同步 SourceManager singleton (line 不再是 0)
+2. 注入 `expr.syntax` 而非 `expr` (snippet 拿源码不拿类名)
+3. 兼容语义节点 + `context_available` 显式标记
+4. 20 个测试套件 (TestSourceManagerSync / TestSyntaxNodeInjection / TestBuildEvidenceViaSyntax / TestSyntaxVsFileConsistency / TestToContextIntegration / TestCrossFile / TestEvidenceStringFormat)
+5. `_get_rhs_info_semantic` 走真实源码 (修 'a Add b' → 'a + b', credibility 从 0.6 升到 1.0)
+6. load trace snippet narrow 到 sub-expr (load 'a' 拿到 'a' 不是 'a + b')
+7. syntax 模式 context_window 走 SourceManager + getSourceText (原 M5.3 TODO 落地)
+
+**结果**: 154/154 测试通过 (+27)。file-based 路径不受影响, 仍是 backward compat。
+
+**命名说明**: 原本代码中命名为 "M5.2c", 但与 TODO 的 M5.2c 分类器优化冲突。已重命名为 **M5.1h** (M5.1 证据家族延续, 不动 M5.2c 名)。
 
 ## 📋 M5.2c: 改进 M5.2b 分类器 (留待优化)
 

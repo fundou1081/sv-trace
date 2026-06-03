@@ -66,7 +66,7 @@ class TraceResult:
     # 元数据
     confidence: str = "high"
 
-    # M5.2c: 内部 _syntax_node (pyslang syntax 节点, 用于 syntax-based evidence)
+    # M5.1h: 内部 _syntax_node (pyslang syntax 节点, 用于 syntax-based evidence)
     # 不在 __init__ 必传, tracer 在 build 时 setattr 注入
     _syntax_node: Any = field(default=None, repr=False, compare=False)
 
@@ -84,7 +84,7 @@ class TraceResult:
         Args:
             file_content: 可选, 直接传文件内容避免 I/O (用于测试)
             context_window: 前后各取几行作为上下文 (默认 2)
-            source_mode: M5.2c - evidence 来源
+            source_mode: M5.1h - evidence 来源
                 - 'file' (旧): 读文件按行号取 snippet
                 - 'syntax' (新): 走 pyslang syntax tree, 从 _syntax_node 拿
                 - 'auto' (默认): 优先 syntax (如果有), 否则 file
@@ -98,7 +98,7 @@ class TraceResult:
         syn_node = getattr(self, '_syntax_node', None)
 
         if source_mode == 'syntax' and syn_node is not None:
-            # M5.2c step 6: load trace 才 narrow 到 signal_name (RHS sub-expr),
+            # M5.1h step 6: load trace 才 narrow 到 signal_name (RHS sub-expr),
             # driver trace 用整节点 (因为 signal_name 是 LHS, narrow 丢 source_expr=RHS)
             narrow = self.signal_name if self.trace_type == TraceType.LOAD else None
             evidence = build_evidence_via_syntax(
@@ -466,7 +466,7 @@ class CodeEvidence:
     3. 该行真的有 signal_name (LHS)
     4. scope_text 与文件一致
 
-    M5.2c: 加 source 字段标识 evidence 来源 ('file' 或 'syntax'),
+    M5.1h: 加 source 字段标识 evidence 来源 ('file' 或 'syntax'),
     让 caller 知道 snippet 是从文件 IO 读的还是 pyslang syntax tree 直接拿的。
     双版本 (file/syntax) 让用户可对比验证一致性。
     """
@@ -480,8 +480,8 @@ class CodeEvidence:
     matches_signal_name: bool = False           # snippet 中能找到 LHS signal_name
     file_readable: bool = False                  # 文件是否成功读取
     snippet_present: bool = False                # line 是否有内容
-    source: str = "file"                        # M5.2c: 'file' (IO 读) 或 'syntax' (pyslang syntax tree)
-    context_available: bool = True               # M5.2c fix: context_window 是否成功填充 (syntax 模式暂 False)
+    source: str = "file"                        # M5.1h: 'file' (IO 读) 或 'syntax' (pyslang syntax tree)
+    context_available: bool = True               # M5.1h fix: context_window 是否成功填充 (syntax 模式暂 False)
 
     @property
     def is_verified(self) -> bool:
@@ -492,7 +492,7 @@ class CodeEvidence:
         - line 实际存在
         - 该行真的包含 source_expr 或 signal_name
 
-        M5.2c fix: 对 syntax 模式, file_readable=False (没读文件), 但
+        M5.1h fix: 对 syntax 模式, file_readable=False (没读文件), 但
         snippet 仍可从 syntax tree 拿到, 仍能 contains source_expr/signal_name。
         所以 is_verified 同时支持 file 路径和 syntax 路径。
         """
@@ -538,8 +538,8 @@ class CodeEvidence:
             'matches_signal_name': self.matches_signal_name,
             'file_readable': self.file_readable,
             'snippet_present': self.snippet_present,
-            'source': self.source,  # M5.2c: 'file' 或 'syntax'
-            'context_available': self.context_available,  # M5.2c step 3
+            'source': self.source,  # M5.1h: 'file' 或 'syntax'
+            'context_available': self.context_available,  # M5.1h step 3
             'is_verified': self.is_verified,
             'credibility_score': self.credibility_score,
         }
@@ -563,7 +563,7 @@ class CodeEvidence:
         """
         lines = []
         lines.append(f"Evidence for {self.scope_text or 'trace'} @ {self.file}:{self.line}")
-        lines.append(f"  source: {self.source}  # M5.2c: file | syntax")
+        lines.append(f"  source: {self.source}  # M5.1h: file | syntax")
         lines.append(f"  file_readable: {self.file_readable}")
         if self.snippet_present:
             lines.append(f"  snippet: {self.snippet}")
@@ -592,9 +592,11 @@ class CodeEvidence:
                     actual_line = self.line + i + 1
                     lines.append(f"  {actual_line:4d} | {ctx}")
         else:
-            # M5.2c step 3: syntax 模式暂无 context_window, 只显示当前行
+            # context_available=False 但 snippet_present=True 的退化路径
+            # (例: SourceManager singleton 未设 / buffer 拿不到)
+            # 只显示当前行, 不带 context
             if self.snippet_present:
-                lines.append(f"  {self.line:4d} > {self.snippet}  (syntax 模式暂无 context_window, M5.3 TODO)")
+                lines.append(f"  {self.line:4d} > {self.snippet}  (context unavailable)")
         return '\n'.join(lines)
 
 
@@ -735,7 +737,7 @@ def build_evidence(
         line=line,
         snippet="",
         scope_text=scope_text,
-        source="file",  # M5.2c: file-based evidence
+        source="file",  # M5.1h: file-based evidence
     )
 
     # 读文件
@@ -788,9 +790,9 @@ def build_evidence_via_syntax(
     context_window: int = 2,
     narrow_to: Optional[str] = None,
 ) -> "CodeEvidence":
-    """M5.2c: 从 pyslang syntax tree 直接拿 evidence (不走文件 IO)
+    """M5.1h: 从 pyslang syntax tree 直接拿 evidence (不走文件 IO)
 
-    narrow_to: M5.2c step 6 - 如给定, 把 snippet 缩到包含该名字的最具体子节点
+    narrow_to: M5.1h step 6 - 如给定, 把 snippet 缩到包含该名字的最具体子节点
         (例: 'c = a + b' 中 load 'a' 拿到 'a' 而不是 'c = a + b')。
         默认为 None, 不缩 (保持整节点)。caller (to_context) 会按 trace_type
         传 signal_name (load) 或 None (driver, 因为 driver 的 signal_name 是
@@ -816,13 +818,13 @@ def build_evidence_via_syntax(
         line=0,  # syntax-based 不依赖 line, 由 sourceRange.start.line 算
         snippet="",
         scope_text=scope_text,
-        source="syntax",  # M5.2c: 标识是 syntax-based
+        source="syntax",  # M5.1h: 标识是 syntax-based
     )
 
     if syntax_node is None:
         return evidence
 
-    # M5.2c step 3 fix: 兼容 caller 传语义 Expression (e.g. 测试代码 / 旧 trace)
+    # M5.1h step 3 fix: 兼容 caller 传语义 Expression (e.g. 测试代码 / 旧 trace)
     # 语义节点 str() 返回类名, sourceRange 仍可用, 但 snippet 要走 .syntax
     if not hasattr(syntax_node, 'kind') or not hasattr(syntax_node, '__class__'):
         return evidence
@@ -854,7 +856,7 @@ def build_evidence_via_syntax(
     # 语法节点 str() 返回从 buffer 起点到 node 末的文本 (带前导空白)
     # 不影响 evidence 验证 (包含关系) 但 snippet 会包含 leading newline/indent
     #
-    # M5.2c step 6: 如果给了 signal_name, narrowing 到该 signal 对应的最具体子节点
+    # M5.1h step 6: 如果给了 signal_name, narrowing 到该 signal 对应的最具体子节点
     # 例: trace 是 'c = a + b' 中 a 的 load, 整节点是 'a + b', narrowing 后是 'a'
     # 这样 snippet 更准确 (避免传 'a + b' 给用户, 而他实际只关心 'a')
     #
@@ -872,7 +874,7 @@ def build_evidence_via_syntax(
         evidence.snippet = syn_text.strip()
         evidence.snippet_present = True
 
-    # 3. context_window - M5.2c step 7 实现
+    # 3. context_window - M5.1h step 7 实现
     # 走 SourceManager + sourceRange 拿行号 + 拿 buffer 文本 + splitlines
     # 与 file-based build_evidence 算法一致, context_before/after 可对比
     before, after, ctx_line = _extract_syntax_context(sr, context_window=context_window)
@@ -905,7 +907,7 @@ def build_evidence_via_syntax(
     return evidence
 
 
-# M5.2c: helper 拿 SourceManager
+# M5.1h: helper 拿 SourceManager
 _singleton_sm = None
 def _get_source_manager():
     """从 SignalTracer 全局拿 SourceManager (懒初始化)
@@ -945,7 +947,7 @@ def _sm_location_at(sm, buffer_id, offset):
 
 
 def _extract_syntax_context(sr, context_window: int = 2) -> tuple:
-    """M5.2c step 7: 从 SourceManager + sourceRange 拿 context_window 行 context
+    """M5.1h step 7: 从 SourceManager + sourceRange 拿 context_window 行 context
 
     与 file-based build_evidence 的算法保持一致 (同样的 start/end 索引, 同样
     的 rstrip), 让两路产出的 context_before/after 可直接对比。
@@ -991,7 +993,7 @@ def _extract_syntax_context(sr, context_window: int = 2) -> tuple:
 
 
 def _find_subexpr_for_signal(syntax_node, signal_name: str):
-    """M5.2c step 6: 后序 DFS 找包含 signal_name 的最具体 syntax 子节点
+    """M5.1h step 6: 后序 DFS 找包含 signal_name 的最具体 syntax 子节点
 
     背景: load trace 的 _syntax_node 注入的是整条 RHS (e.g. 'a + b')。
     验证上没问题 (matches_signal_name=True), 但 snippet 噪声大。
@@ -1004,7 +1006,7 @@ def _find_subexpr_for_signal(syntax_node, signal_name: str):
 
     边界:
     - 'a' 在 'a + a' 出现两次 → 返回左起第一个
-    - 'mem[3:0]' vs 'bigmem[3:0]' → 子串匹配会误中 (已知限制, TODO M5.3 用 word-boundary)
+    - 'mem[3:0]' vs 'bigmem[3:0]' → 子串匹配会误中 (已知限制, 待优化用 word-boundary)
     - 没有匹配 → 返回原 syntax_node (不退化)
     """
     if syntax_node is None or not signal_name:

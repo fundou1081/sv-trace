@@ -1,4 +1,4 @@
-"""M5.2c: syntax-based evidence 路径测试
+"""M5.1h: syntax-based evidence 路径测试
 
 锁定 Step 1-3 修复:
 - Step 1: SignalTracer.build() 同步 SourceManager 给 evidence singleton
@@ -168,9 +168,9 @@ endmodule
         assert ev.is_verified is False
 
     def test_syntax_mode_marks_context_unavailable(self):
-        """M5.2c step 7: syntax 模式 context 也可拿到, 走 SourceManager + getSourceText
+        """M5.1h step 7: syntax 模式 context 也可拿到, 走 SourceManager + getSourceText
 
-        修复前 (Step 3-4): context_available=False, context_before/after=[] (M5.3 TODO)
+        修复前 (Step 3-4): context_available=False, context_before/after=[]
         修复后 (Step 7): context_before/after 填充, context_available=True (与 file 模式一样)
         """
         t = self._make_tracer()
@@ -288,7 +288,7 @@ endmodule
         assert syn_ev.source == 'syntax'
 
     def test_source_expr_uses_real_source_text(self):
-        """M5.2c step 5: source_expr 是真实源码 (e.g. 'a + b'), 不是 C++ enum ('a Add b')
+        """M5.1h step 5: source_expr 是真实源码 (e.g. 'a + b'), 不是 C++ enum ('a Add b')
 
         修复前: _get_rhs_info_semantic_kind 里 BinaryOp op_text='Add' 拼出 'a Add b',
         snippet 'c = a + b;' 不包含 'a Add b' -> matches_source_expr=False。
@@ -313,7 +313,7 @@ endmodule
 
 
 class TestLoadTraceNarrowing:
-    """M5.2c step 6: load trace 的 syntax snippet narrow 到具体 sub-expression
+    """M5.1h step 6: load trace 的 syntax snippet narrow 到具体 sub-expression
 
     driver trace 的 signal_name 是 LHS, 不能 narrow (会丢 source_expr=RHS)。
     load trace 的 signal_name 是 RHS signal, narrow 到该 sub-expr 更准。
@@ -532,12 +532,12 @@ class TestEvidenceStringFormat:
         assert 'a = 1' in s
 
     def test_syntax_mode_marks_no_context(self):
-        """M5.2c step 7: syntax 模式 to_evidence_string 现在也有 context (与 file 一样)
+        """M5.1h step 7: syntax 模式 to_evidence_string 现在也有 context (与 file 一样)
 
-        修复前 (Step 3): 显示 'M5.3 TODO' 提示
+        修复前 (Step 3): 显示 'context unavailable' 提示
         修复后 (Step 7): 与 file 模式一致, 都有 context_before/after 显示
 
-        用多行文件确保 context 实际有内容 (单行文件 line=1 没前后行会回退到 TODO 提示)。
+        用多行文件确保 context 实际有内容 (单行文件 line=1 没前后行会回退到退化路径)。
         """
         t = SignalTracer()
         t.add_file('m.sv', '''module m;
@@ -556,7 +556,8 @@ endmodule
         s = ev.to_evidence_string()
         assert 'source: syntax' in s
         # Step 7 后 syntax 模式也有 context (file 多行, line 4 有前后)
-        assert 'M5.3 TODO' not in s
+        # 退化路径会含 'context unavailable' 提示
+        assert 'context unavailable' not in s
         assert '| ' in s  # context 行有 '| ' 分隔符
         # context_before 包含 'always_comb begin' (line 3, 算法与 file-based 同)
         assert 'always_comb begin' in s
