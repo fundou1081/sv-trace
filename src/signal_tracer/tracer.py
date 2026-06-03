@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 
 from signal_tracer.models import (
     TraceResult, TraceType, ScopeKind, DriverTrace, LoadTrace,
-    ScopeInfo, SignalInfo, TraceSummary
+    ScopeInfo, SignalInfo, TraceSummary,
+    _set_source_manager,  # M5.2c fix: 同步 SourceManager 给 build_evidence_via_syntax
 )
 from signal_tracer.port_resolver import PortResolver, PortConnection
 
@@ -402,6 +403,8 @@ class SignalTracer:
 
         # M4: 保存 SourceManager, 后续所有行号计算都走它 (跨文件精确)
         self._source_manager = comp.sourceManager
+        # M5.2c fix: 同步给 models 里的 singleton, build_evidence_via_syntax 拿得到
+        _set_source_manager(self._source_manager)
 
         # Get elaborated root and traverse all semantic symbols
         root = comp.getRoot()
