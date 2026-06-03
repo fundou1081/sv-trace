@@ -6,8 +6,63 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import pyslang
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 from enum import Enum
+
+
+class SyntaxNodeSnapshot:
+    """M5.1h: 冻结的 syntax node 包装
+
+    背景: pyslang SyntaxNode 的 __str__() 依赖内部 buffer/Compilation 状态, 当
+    多个 Compilation 并存或被释放后, 后续 str() 可能返回截断/锎误的旧内容
+    (如 "b = foo(a)" → "b = foo")。
+
+    解法: 在 inject 时立刻 str() 拿到完整文本, 缓存在 self.text, 并保留对
+    原 SyntaxNode 的引用 (用于 sourceRange、kind、__iter__ 等元数据)。
+    __str__ 优先返回冻结的 text。
+    """
+
+    __slots__ = ("_node", "text")
+
+    def __init__(self, node, text=None):
+        self._node = node
+        if text is None:
+            try:
+                text = str(node) if node is not None else ""
+            except Exception:
+                text = ""
+        self.text = text
+
+    def __str__(self):
+        return self.text
+
+    def __repr__(self):
+        return f"SyntaxNodeSnapshot({self.text!r})"
+
+    # 代理原 SyntaxNode 的关键属性 (build_evidence_via_syntax 会读)
+    @property
+    def sourceRange(self):
+        return getattr(self._node, "sourceRange", None) if self._node is not None else None
+
+    @property
+    def kind(self):
+        return getattr(self._node, "kind", None) if self._node is not None else None
+
+    def __iter__(self):
+        if self._node is None:
+            return iter(())
+        try:
+            return iter(self._node)
+        except Exception:
+            return iter(())
+
+    def __getattr__(self, name):
+        # 转发其他属性访问到原 SyntaxNode
+        if name in ("_node", "text"):
+            raise AttributeError(name)
+        if self._node is None:
+            raise AttributeError(name)
+        return getattr(self._node, name)
 
 
 class TraceType(Enum):
@@ -68,6 +123,7 @@ class TraceResult:
 
     # M5.1h: 内部 _syntax_node (pyslang syntax 节点, 用于 syntax-based evidence)
     # 不在 __init__ 必传, tracer 在 build 时 setattr 注入
+    # 实际可能是 SyntaxNode (pyslang 原生) 或 SyntaxNodeSnapshot (str() 冻结版, 防 buffer 复用)
     _syntax_node: Any = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
@@ -865,7 +921,6 @@ def build_evidence_via_syntax(
     # source_expr 不在 shrunk text 中 → 退回原节点。
     narrowed_node = syntax_node
     if narrow_to and syntax_node is not None:
-        # 只有显式传 narrow_to 才缩 (caller 知道是 load trace 时才传)
         candidate = _find_subexpr_for_signal(syntax_node, narrow_to)
         if candidate is not None:
             narrowed_node = candidate
@@ -1000,7 +1055,9 @@ def _find_subexpr_for_signal(syntax_node, signal_name: str):
     本函数让 evidence 层 narrowing: 给定 signal_name='a' 返 IdentifierNameSyntax(a),
     'mem[3:0]' 返 IdentifierSelectNameSyntax(mem[3:0])。
 
-    算法: 后序 DFS, 返回 str() 含 signal_name 的节点中 str 最短的 (最具体)。
+    算法: 后序 DFS, 优先级:
+    1. 精确匹配 (str == signal_name) → 立即返回
+    2. 子串匹配 → 选 str 最短的 (最具体)
     平局返回左起第一个 (与 source 顺序一致)。
     防御: Token 节点 (pyslang leaf) 迭代可能崩, 跳过。
 
@@ -1012,45 +1069,46 @@ def _find_subexpr_for_signal(syntax_node, signal_name: str):
     if syntax_node is None or not signal_name:
         return syntax_node
 
+    best_node = None
+    best_len = len(str(syntax_node).strip()) if syntax_node else float('inf')
+    found_any = False
+
     def visit(node):
-        """返回 (best_node, any_match_in_subtree)"""
+        nonlocal best_node, best_len, found_any
         if node is None:
-            return None, False
-        # Token 没 sourceRange, str() 返回 'Token(X)' 不含 signal_name, 跳过
+            return
         node_type = type(node).__name__
         if node_type == 'Token':
-            return None, False
+            return
         try:
             own_text = str(node).strip()
         except Exception:
-            return None, False
-        if not own_text or signal_name not in own_text:
-            return None, False
-        # 自己 match
-        best = node
-        best_len = len(own_text)
-        # 已是最短可能, 不用再递归
-        if best_len == len(signal_name):
-            return best, True
-        # 找子节点更具体的
+            return
+        if not own_text:
+            return
+        if signal_name not in own_text:
+            return
+        found_any = True
+        # 精确匹配 → 立即返回 (最高优先级)
+        if own_text == signal_name:
+            best_node = node
+            best_len = len(signal_name)
+            return  # 精确匹配不可超越
+        # 子串匹配: 只有比当前 best 更短才更新
+        if len(own_text) < best_len:
+            best_node = node
+            best_len = len(own_text)
+        # 继续 DFS 寻找更具体的匹配
         try:
             iter_children = list(node)
         except Exception:
-            iter_children = []
+            return
         for child in iter_children:
-            child_best, child_has = visit(child)
-            if child_best is not None and child_has:
-                try:
-                    child_len = len(str(child_best).strip())
-                except Exception:
-                    continue
-                if child_len < best_len:
-                    best = child_best
-                    best_len = child_len
-                    if best_len == len(signal_name):
-                        break
-        return best, True
+            visit(child)
+            # 一旦找到精确匹配就停止
+            if best_len == len(signal_name):
+                break
 
-    result, _ = visit(syntax_node)
-    return result if result is not None else syntax_node
+    visit(syntax_node)
+    return best_node if best_node is not None else syntax_node
 

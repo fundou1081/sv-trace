@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from signal_tracer.models import (
     TraceResult, TraceType, ScopeKind, DriverTrace, LoadTrace,
     ScopeInfo, SignalInfo, TraceSummary,
+    SyntaxNodeSnapshot,  # M5.1h: 冻结 syntax node 文本, 防 pyslang buffer 复用
     _set_source_manager,  # M5.1h fix: 同步 SourceManager 给 build_evidence_via_syntax
 )
 from signal_tracer.port_resolver import PortResolver, PortConnection
@@ -539,6 +540,12 @@ class SignalTracer:
             reset='',
             hierarchical_path=assign_hpath,
         )
+        # M5.1h: 注入 syntax node (continuous assign 也需要)
+        # assign_expr.syntax = AssignmentExpressionSyntax, str() 返回完整 'c = a & b'
+        # M5.1h: 用 SyntaxNodeSnapshot 冻结 str(), 防 pyslang buffer 复用后被截断
+        trace._syntax_node = SyntaxNodeSnapshot(
+            getattr(assign_expr, 'syntax', None) or getattr(sym, 'syntax', None)
+        )
         if full_name not in self._drivers:
             self._drivers[full_name] = []
         self._drivers[full_name].append(trace)
@@ -571,6 +578,11 @@ class SignalTracer:
                     clock='',
                     reset='',
                     hierarchical_path=assign_hpath,
+                )
+                # M5.1h: load 也注入 syntax node (RHS 表达式)
+                # M5.1h: 用 SyntaxNodeSnapshot 冻结 str()
+                load_trace._syntax_node = SyntaxNodeSnapshot(
+                    getattr(assign_expr.right, 'syntax', None) or getattr(sym, 'syntax', None)
                 )
                 self._loads[full_sig].append(load_trace)
                 self._loads[sig].append(load_trace)
@@ -1175,7 +1187,10 @@ class SignalTracer:
         # 注入 expr.syntax (语法节点) 而非 expr (语义 Expression),
         # 因为 build_evidence_via_syntax 走 str(syntax_node) 拿 snippet,
         # 对语义 Expression str() 返回的是 'Expression(ExpressionKind.X)' 类名, 不是源码
-        trace._syntax_node = getattr(expr, 'syntax', expr) or expr
+        # M5.1h: 用 SyntaxNodeSnapshot 冻结 str()
+        trace._syntax_node = SyntaxNodeSnapshot(
+            getattr(expr, 'syntax', expr) or expr
+        )
         if full_name not in self._drivers:
             self._drivers[full_name] = []
         self._drivers[full_name].append(trace)
@@ -1219,7 +1234,15 @@ class SignalTracer:
                     condition_stack=list(condition_stack),
                 )
                 # M5.1h: 注入 syntax node (同 driver, 走 syntax 节点)
-                load_trace._syntax_node = getattr(expr, 'syntax', expr) or expr
+                # M5.1h fix: load trace 用 expr.right.syntax (RHS 表达式节点),
+                # 不然 function call 场景下 expr.syntax 会把 load 'a' 指向 'foo(a)' 而非 'a'
+                # M5.1h: 用 SyntaxNodeSnapshot 冻结 str()
+                rhs_syntax = getattr(expr, 'right', None)
+                if rhs_syntax is not None:
+                    rhs_syntax = getattr(rhs_syntax, 'syntax', rhs_syntax)
+                load_trace._syntax_node = SyntaxNodeSnapshot(
+                    rhs_syntax or getattr(expr, 'syntax', expr) or expr
+                )
                 self._loads[full_sig].append(load_trace)
                 self._loads[sig].append(load_trace)
 
