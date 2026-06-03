@@ -566,3 +566,103 @@ endmodule
         # 实际显示
         print('--- syntax evidence ---')
         print(s)
+
+
+# ---------- M5.1h 修复回归: SyntaxNodeSnapshot 冻结文本 ----------
+class TestSyntaxNodeSnapshot:
+    """锁定 M5.1h SyntaxNodeSnapshot 修复: 防止 pyslang buffer 复用导致 str() 截断
+
+    背景: pyslang SyntaxNode.__str__() 依赖 Compilation 内部 buffer, 第二个 Compilation
+    创建后, 第一个的 SyntaxNode 调 str() 会返回截断的内容 (e.g. 'b = foo(a)' → 'b = foo')。
+    修复: SyntaxNodeSnapshot 在 inject 时立刻 str() 冻结文本。
+    """
+
+    def test_snapshot_freezes_text_on_inject(self):
+        """driver trace 的 _syntax_node 是 SyntaxNodeSnapshot, str() 返回冻结文本"""
+        from signal_tracer.models import SyntaxNodeSnapshot
+        t = SignalTracer()
+        t.add_file('m.sv', 'module m; logic [7:0] a, b, c; always_comb c = a + b; endmodule')
+        t.build()
+        d = t.trace_drivers('c')[0]
+        assert isinstance(d._syntax_node, SyntaxNodeSnapshot)
+        # str() 立刻返回完整内容, 不依赖 buffer
+        assert str(d._syntax_node) == ' c = a + b'
+
+    def test_snapshot_text_survives_second_tracer(self):
+        """核心 bug 回归: 第二个 SignalTracer 创建后, 第一个的 _syntax_node 仍正确
+
+        不修复时, 第一个 trace 的 _syntax_node 调 str() 会变 'b = foo' (丢 '(a)')
+        """
+        # 第一个 tracer
+        t1 = SignalTracer()
+        t1.add_file('m.sv', 'module m; logic [7:0] a, b; function [7:0] foo(input [7:0] x); foo = x + 1; endfunction; always_comb b = foo(a); endmodule')
+        t1.build()
+        d1 = t1.trace_drivers('b')[0]
+        text1 = str(d1._syntax_node)
+        assert 'b = foo(a)' == text1.strip()
+
+        # 第二个 tracer 创建 → pyslang 内部 buffer 复用
+        t2 = SignalTracer()
+        t2.add_file('m.sv', 'module m; logic [7:0] a, b, c; always_comb c = a + b; endmodule')
+        t2.build()
+        t2.trace_drivers('c')  # 触发访问
+
+        # 第一个 trace 的 syntax node 应该仍正确 (snapshot 冻结)
+        text1_after = str(d1._syntax_node)
+        assert text1 == text1_after, f"snapshot not frozen: {text1_after!r}"
+
+    def test_function_call_driver_snippet_complete(self):
+        """函数调用 driver: snippet 应包含完整 'b = foo(a)' 而非 'b = foo'"""
+        t = SignalTracer()
+        t.add_file('m.sv', 'module m; logic [7:0] a, b; function [7:0] foo(input [7:0] x); foo = x + 1; endfunction; always_comb b = foo(a); endmodule')
+        t.build()
+        d = t.trace_drivers('b')[0]
+        ev = build_evidence_via_syntax(
+            syntax_node=d._syntax_node,
+            source_expr=d.source_expr,
+            signal_name=d.signal_name,
+            file='m.sv',
+            narrow_to=None,
+        )
+        assert 'b = foo(a)' in ev.snippet
+        assert ev.matches_source_expr is True
+        assert ev.matches_signal_name is True
+
+    def test_function_call_load_narrows_correctly(self):
+        """函数调用 load 'a': load trace 的 _syntax_node 应该是 RHS (foo(a)) 而非整条 assignment
+
+        验证 _process_assignment_expr load 路径用 expr.right.syntax (RHS 节点)
+        而非 expr.syntax (整个 BinaryExpressionSyntax)。
+        narrowing 本身依赖 pyslang SyntaxNode.iter 状态, 不是一个新 tracer 创建后能可無跑过的;
+        只验证 _syntax_node 类型/内容。
+        """
+        t = SignalTracer()
+        t.add_file('m.sv', 'module m; logic [7:0] a, b; function [7:0] foo(input [7:0] x); foo = x + 1; endfunction; always_comb b = foo(a); endmodule')
+        t.build()
+        l = t.trace_loads('a')[0]
+        # _syntax_node 是 RHS 节点 (字符串包含 'foo(a)') 而非整条 assignment (不包含 ' b = ')
+        s = str(l._syntax_node)
+        assert 'foo(a)' in s, f"load _syntax_node should contain RHS foo(a), got {s!r}"
+        assert ' b = ' not in s, f"load _syntax_node should NOT contain 'b = ' (that's the whole assignment), got {s!r}"
+
+    def test_snapshot_preserves_source_range(self):
+        """SyntaxNodeSnapshot 保留 sourceRange, 走代理访问"""
+        t = SignalTracer()
+        t.add_file('m.sv', 'module m; logic [7:0] a, b, c; always_comb c = a + b; endmodule')
+        t.build()
+        d = t.trace_drivers('c')[0]
+        # sourceRange 通过 snapshot 代理拿到
+        assert d._syntax_node.sourceRange is not None
+        # start.offset end.offset 是语法节点范围
+        sr = d._syntax_node.sourceRange
+        assert sr.start.offset < sr.end.offset
+
+    def test_snapshot_preserves_iter(self):
+        """SyntaxNodeSnapshot 代理 __iter__, 让 _find_subexpr_for_signal 能 DFS"""
+        t = SignalTracer()
+        t.add_file('m.sv', 'module m; logic [7:0] a, b, c; always_comb c = a + b; endmodule')
+        t.build()
+        d = t.trace_drivers('c')[0]
+        # iter 走的 underlying node
+        kids = list(d._syntax_node)
+        assert len(kids) > 0  # BinaryExpressionSyntax 有 children
