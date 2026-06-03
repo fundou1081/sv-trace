@@ -98,6 +98,9 @@ class TraceResult:
         syn_node = getattr(self, '_syntax_node', None)
 
         if source_mode == 'syntax' and syn_node is not None:
+            # M5.2c step 6: load trace 才 narrow 到 signal_name (RHS sub-expr),
+            # driver trace 用整节点 (因为 signal_name 是 LHS, narrow 丢 source_expr=RHS)
+            narrow = self.signal_name if self.trace_type == TraceType.LOAD else None
             evidence = build_evidence_via_syntax(
                 syntax_node=syn_node,
                 source_expr=self.source_expr,
@@ -105,9 +108,11 @@ class TraceResult:
                 scope_text=self.scope_text,
                 file=self.file,
                 context_window=context_window,
+                narrow_to=narrow,
             )
         elif source_mode == 'auto' and syn_node is not None and pre_built is None:
             # auto + 有 syntax node + 没 pre-built: 走 syntax
+            narrow = self.signal_name if self.trace_type == TraceType.LOAD else None
             evidence = build_evidence_via_syntax(
                 syntax_node=syn_node,
                 source_expr=self.source_expr,
@@ -115,6 +120,7 @@ class TraceResult:
                 scope_text=self.scope_text,
                 file=self.file,
                 context_window=context_window,
+                narrow_to=narrow,
             )
         elif pre_built is not None:
             evidence = pre_built
@@ -780,8 +786,16 @@ def build_evidence_via_syntax(
     scope_text: str = "",
     file: str = "",
     context_window: int = 2,
+    narrow_to: Optional[str] = None,
 ) -> "CodeEvidence":
     """M5.2c: 从 pyslang syntax tree 直接拿 evidence (不走文件 IO)
+
+    narrow_to: M5.2c step 6 - 如给定, 把 snippet 缩到包含该名字的最具体子节点
+        (例: 'c = a + b' 中 load 'a' 拿到 'a' 而不是 'c = a + b')。
+        默认为 None, 不缩 (保持整节点)。caller (to_context) 会按 trace_type
+        传 signal_name (load) 或 None (driver, 因为 driver 的 signal_name 是
+        LHS, 缩窄会丢 source_expr=RHS 上下文)。
+
 
     与 build_evidence (file-based) 对比:
     - file-based: 给定 file + line, 读文件 split('\n')[line-1]
@@ -839,7 +853,21 @@ def build_evidence_via_syntax(
     # 2. 拿 source text
     # 语法节点 str() 返回从 buffer 起点到 node 末的文本 (带前导空白)
     # 不影响 evidence 验证 (包含关系) 但 snippet 会包含 leading newline/indent
-    syn_text = str(syntax_node) if syntax_node is not None else ''
+    #
+    # M5.2c step 6: 如果给了 signal_name, narrowing 到该 signal 对应的最具体子节点
+    # 例: trace 是 'c = a + b' 中 a 的 load, 整节点是 'a + b', narrowing 后是 'a'
+    # 这样 snippet 更准确 (避免传 'a + b' 给用户, 而他实际只关心 'a')
+    #
+    # 防御: driver trace 的 signal_name 是 LHS (e.g. 'c'), narrowing 会把 snippet
+    # 缩到 'c' 并丢掉 source_expr='a + b' 上下文。回退检查: narrowing 后
+    # source_expr 不在 shrunk text 中 → 退回原节点。
+    narrowed_node = syntax_node
+    if narrow_to and syntax_node is not None:
+        # 只有显式传 narrow_to 才缩 (caller 知道是 load trace 时才传)
+        candidate = _find_subexpr_for_signal(syntax_node, narrow_to)
+        if candidate is not None:
+            narrowed_node = candidate
+    syn_text = str(narrowed_node) if narrowed_node is not None else ''
     if syn_text and syn_text.strip():
         evidence.snippet = syn_text.strip()
         evidence.snippet_present = True
@@ -851,7 +879,7 @@ def build_evidence_via_syntax(
     evidence.context_after = []
     evidence.context_available = False  # M5.2c step 3: 显式标记 syntax 模式没 context
 
-    # 验证
+    # 验证 (用 narrowed syn_text, 防止 signal_name 只是大表达式一部分时误判)
     if source_expr and source_expr in syn_text:
         evidence.matches_source_expr = True
     if signal_name and signal_name in syn_text:
@@ -908,3 +936,67 @@ def _sm_location_at(sm, buffer_id, offset):
         return pyslang.SourceLocation(buffer_id, offset)
     except Exception:
         return None
+
+
+def _find_subexpr_for_signal(syntax_node, signal_name: str):
+    """M5.2c step 6: 后序 DFS 找包含 signal_name 的最具体 syntax 子节点
+
+    背景: load trace 的 _syntax_node 注入的是整条 RHS (e.g. 'a + b')。
+    验证上没问题 (matches_signal_name=True), 但 snippet 噪声大。
+    本函数让 evidence 层 narrowing: 给定 signal_name='a' 返 IdentifierNameSyntax(a),
+    'mem[3:0]' 返 IdentifierSelectNameSyntax(mem[3:0])。
+
+    算法: 后序 DFS, 返回 str() 含 signal_name 的节点中 str 最短的 (最具体)。
+    平局返回左起第一个 (与 source 顺序一致)。
+    防御: Token 节点 (pyslang leaf) 迭代可能崩, 跳过。
+
+    边界:
+    - 'a' 在 'a + a' 出现两次 → 返回左起第一个
+    - 'mem[3:0]' vs 'bigmem[3:0]' → 子串匹配会误中 (已知限制, TODO M5.3 用 word-boundary)
+    - 没有匹配 → 返回原 syntax_node (不退化)
+    """
+    if syntax_node is None or not signal_name:
+        return syntax_node
+
+    def visit(node):
+        """返回 (best_node, any_match_in_subtree)"""
+        if node is None:
+            return None, False
+        # Token 没 sourceRange, str() 返回 'Token(X)' 不含 signal_name, 跳过
+        node_type = type(node).__name__
+        if node_type == 'Token':
+            return None, False
+        try:
+            own_text = str(node).strip()
+        except Exception:
+            return None, False
+        if not own_text or signal_name not in own_text:
+            return None, False
+        # 自己 match
+        best = node
+        best_len = len(own_text)
+        # 已是最短可能, 不用再递归
+        if best_len == len(signal_name):
+            return best, True
+        # 找子节点更具体的
+        try:
+            iter_children = list(node)
+        except Exception:
+            iter_children = []
+        for child in iter_children:
+            child_best, child_has = visit(child)
+            if child_best is not None and child_has:
+                try:
+                    child_len = len(str(child_best).strip())
+                except Exception:
+                    continue
+                if child_len < best_len:
+                    best = child_best
+                    best_len = child_len
+                    if best_len == len(signal_name):
+                        break
+        return best, True
+
+    result, _ = visit(syntax_node)
+    return result if result is not None else syntax_node
+

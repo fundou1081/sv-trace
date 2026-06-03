@@ -272,19 +272,128 @@ endmodule
         assert file_ev.matches_source_expr is True
         assert syn_ev.matches_source_expr is True
 
-    def test_credibility_score_syntax_lower(self):
-        """syntax 路径没 file_readable (0.2), 所以 credibility 略低
 
-        M5.2c step 5 修后: source_expr 走真实源码 ('a + b'), matches_source_expr
-        两路都为 True。file 加 file_readable 仍领先 0.2。
-        - file:  file_readable(0.2) + snippet(0.2) + source_expr(0.4) + signal_name(0.2) = 1.0
-        - syntax: snippet(0.2) + source_expr(0.4) + signal_name(0.2) = 0.8
+class TestLoadTraceNarrowing:
+    """M5.2c step 6: load trace 的 syntax snippet narrow 到具体 sub-expression
+
+    driver trace 的 signal_name 是 LHS, 不能 narrow (会丢 source_expr=RHS)。
+    load trace 的 signal_name 是 RHS signal, narrow 到该 sub-expr 更准。
+    """
+
+    def test_load_a_narrows_to_identifier(self):
+        """load 'a' in 'c = a + b' -> snippet='a' (不是 'c = a + b')"""
+        t = SignalTracer()
+        t.add_file('m.sv', '''module m;
+  logic [7:0] a, b, c;
+  always_comb begin
+    c = a + b;
+  end
+endmodule
+''')
+        t.build()
+        l = t.trace_loads('a')[0]
+        ev = l.to_context(source_mode='syntax').code_evidence
+        assert ev.snippet == 'a'
+        assert ev.matches_signal_name is True
+
+    def test_load_b_narrows_to_identifier(self):
+        """load 'b' in 'c = a + b' -> snippet='b'"""
+        t = SignalTracer()
+        t.add_file('m.sv', '''module m;
+  logic [7:0] a, b, c;
+  always_comb begin
+    c = a + b;
+  end
+endmodule
+''')
+        t.build()
+        l = t.trace_loads('b')[0]
+        ev = l.to_context(source_mode='syntax').code_evidence
+        assert ev.snippet == 'b'
+
+    def test_load_rangeselect_narrows_to_whole_bit_slice(self):
+        """load 'mem' in 'c = mem[3:0] & mask[3:0]' -> snippet='mem[3:0]'
+        (narrowing 到最具体含 'mem' 的子节点, 是 RangeSelectSyntax, 显示具体位选)
         """
-        file_ev, syn_ev, _ = self._both_evidences()
-        assert file_ev.credibility_score == pytest.approx(1.0)
-        assert syn_ev.credibility_score == pytest.approx(0.8)
-        # syntax 仍略低 0.2 (file_readable 那一项)
-        assert file_ev.credibility_score > syn_ev.credibility_score
+        t = SignalTracer()
+        t.add_file('m.sv', '''module m;
+  logic [7:0] c;
+  logic [3:0] mem, mask;
+  always_comb c = mem[3:0] & mask[3:0];
+endmodule
+''')
+        t.build()
+        l = t.trace_loads('mem')[0]
+        ev = l.to_context(source_mode='syntax').code_evidence
+        assert ev.snippet == 'mem[3:0]'
+        assert ev.matches_signal_name is True
+
+    def test_driver_trace_not_narrowed(self):
+        """driver trace 的 snippet 是整节点 (e.g. 'c = a + b'), 不 narrow 到 LHS
+
+        如果 narrow 到 'c', 会丢 source_expr='a + b' 上下文, matches_source_expr 变 False。
+        """
+        t = SignalTracer()
+        t.add_file('m.sv', '''module m;
+  logic [7:0] a, b, c;
+  always_comb begin
+    c = a + b;
+  end
+endmodule
+''')
+        t.build()
+        d = t.trace_drivers('c')[0]
+        ev = d.to_context(source_mode='syntax').code_evidence
+        # 整节点保留
+        assert ev.snippet == 'c = a + b'
+        # matches_source_expr 验证 source_expr='a + b' 在 snippet 中
+        assert ev.matches_source_expr is True
+        # credibility 仍能拿到 0.8
+        assert ev.credibility_score == pytest.approx(0.8)
+
+    def test_repeated_signal_narrows_to_first(self):
+        """'c = a + a' 中 load 'a' 出现两次, narrow 到左起第一个 'a'"""
+        t = SignalTracer()
+        t.add_file('m.sv', '''module m;
+  logic a, b, c;
+  always_comb c = a + a;
+endmodule
+''')
+        t.build()
+        loads = t.trace_loads('a')
+        assert len(loads) == 2  # 2 个 load (左 + 右)
+        for l in loads:
+            ev = l.to_context(source_mode='syntax').code_evidence
+            assert ev.snippet == 'a'  # 两条都 narrow 到 'a'
+
+    def test_no_narrow_when_signal_not_in_node(self):
+        """signal_name 不在 syntax_node 中时, 不 narrow (退化到整节点)
+
+        例: load trace 的 signal_name 不在 syntax 树中 (pyslang 未解析出的信号),
+        DFS 找不到, fallback 到整节点。snippet 是整表达式。
+        """
+        t = SignalTracer()
+        t.add_file('m.sv', '''module m;
+  logic [7:0] a, b, c;
+  always_comb begin
+    c = a + b;
+  end
+endmodule
+''')
+        t.build()
+        # signal_name='nonexistent_xyz' 不在 syntax 树中
+        d = t.trace_drivers('c')[0]
+        # 手动调 build_evidence_via_syntax, narrow_to 找不到
+        ev = build_evidence_via_syntax(
+            syntax_node=d._syntax_node,
+            source_expr=d.source_expr,
+            signal_name='nonexistent_xyz',
+            narrow_to='nonexistent_xyz',
+        )
+        # narrow_to 找不到, 退化到整节点
+        assert ev.snippet == 'c = a + b'
+        # matches_signal_name=False (因为 'nonexistent_xyz' 不在 snippet)
+        assert ev.matches_signal_name is False
 
 
 # ---------- to_context 集成 ----------
