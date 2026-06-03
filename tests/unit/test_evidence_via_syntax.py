@@ -168,7 +168,11 @@ endmodule
         assert ev.is_verified is False
 
     def test_syntax_mode_marks_context_unavailable(self):
-        """syntax 模式: context_available 必须 False, 区别 file 模式"""
+        """M5.2c step 7: syntax 模式 context 也可拿到, 走 SourceManager + getSourceText
+
+        修复前 (Step 3-4): context_available=False, context_before/after=[] (M5.3 TODO)
+        修复后 (Step 7): context_before/after 填充, context_available=True (与 file 模式一样)
+        """
         t = self._make_tracer()
         d = t.trace_drivers('c')[0]
         ev = build_evidence_via_syntax(
@@ -176,9 +180,44 @@ endmodule
             source_expr=d.source_expr,
             signal_name=d.signal_name,
         )
-        assert ev.context_available is False
-        assert ev.context_before == []
-        assert ev.context_after == []
+        # Step 7 后两路都拿得到 context
+        assert ev.context_available is True
+        assert len(ev.context_before) > 0  # '  always_comb begin'
+        assert len(ev.context_after) > 0   # '  end', 'endmodule'
+        # 与 file 模式产出顺序一致 (start/end 索引算法同)
+        file_ev = d._evidence_override
+        assert ev.context_before == file_ev.context_before
+        assert ev.context_after == file_ev.context_after
+
+    def test_syntax_context_unavailable_when_no_sourcemgr(self):
+        """syntax 模式没 SourceManager (singleton) 时 context_available=False
+
+        防御: _get_source_manager() 返回 None 时 _extract_syntax_context 返回空。
+        """
+        from signal_tracer.models import _set_source_manager, build_evidence_via_syntax as bvs
+        # 临时清空 singleton
+        saved = _set_source_manager(None)  # 这么写 _set_source_manager 不接受 None
+        # 不用上面这个, 改成走一个没 build 的 tracer
+        t = self._make_tracer()
+        # 不调 build, 拿不到 _syntax_node. 换个方式:
+        # 直接 mock 一个没 SourceManager 的环境
+        import signal_tracer.models as m
+        original_sm = m._singleton_sm
+        m._singleton_sm = None
+        try:
+            d = t.trace_drivers('c')[0]
+            # 手动清掉 build 时的 singleton (上面已经设为 None)
+            ev = bvs(
+                syntax_node=d._syntax_node,
+                source_expr=d.source_expr,
+                signal_name=d.signal_name,
+            )
+            # context 拿不到, 但其他字段还行
+            assert ev.context_available is False
+            assert ev.context_before == []
+            assert ev.context_after == []
+        finally:
+            m._singleton_sm = original_sm
 
     def test_file_mode_default_context_available(self):
         """file 模式: context_available 默认 True (backward compat)"""
@@ -493,10 +532,21 @@ class TestEvidenceStringFormat:
         assert 'a = 1' in s
 
     def test_syntax_mode_marks_no_context(self):
-        """syntax 模式 to_evidence_string 应显示 'M5.3 TODO' 提示"""
-        # 直接走 tracer 拿 _syntax_node, 避免手写 pyslang drill-down
+        """M5.2c step 7: syntax 模式 to_evidence_string 现在也有 context (与 file 一样)
+
+        修复前 (Step 3): 显示 'M5.3 TODO' 提示
+        修复后 (Step 7): 与 file 模式一致, 都有 context_before/after 显示
+
+        用多行文件确保 context 实际有内容 (单行文件 line=1 没前后行会回退到 TODO 提示)。
+        """
         t = SignalTracer()
-        t.add_file('m.sv', 'module m; logic a, b; always_comb a = b; endmodule\n')
+        t.add_file('m.sv', '''module m;
+  logic a, b;
+  always_comb begin
+    a = b;
+  end
+endmodule
+''')
         t.build()
         d = t.trace_drivers('a')[0]
         ev = build_evidence_via_syntax(
@@ -505,4 +555,13 @@ class TestEvidenceStringFormat:
         )
         s = ev.to_evidence_string()
         assert 'source: syntax' in s
-        assert 'M5.3' in s or 'context_window' in s
+        # Step 7 后 syntax 模式也有 context (file 多行, line 4 有前后)
+        assert 'M5.3 TODO' not in s
+        assert '| ' in s  # context 行有 '| ' 分隔符
+        # context_before 包含 'always_comb begin' (line 3, 算法与 file-based 同)
+        assert 'always_comb begin' in s
+        # context_after 包含 'end' (line 5)
+        assert 'end' in s
+        # 实际显示
+        print('--- syntax evidence ---')
+        print(s)

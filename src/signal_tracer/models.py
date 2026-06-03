@@ -872,12 +872,18 @@ def build_evidence_via_syntax(
         evidence.snippet = syn_text.strip()
         evidence.snippet_present = True
 
-    # 3. context_window 在 syntax 模式下暂不实现 (M5.3 TODO)
-    # 原因: SourceManager 没直接给 "拿整行" 的方法, 需要走 start_loc + offset 算行边界
-    # 当前选择: 明确标 context_available=False, 不沉默地返回空列表
-    evidence.context_before = []
-    evidence.context_after = []
-    evidence.context_available = False  # M5.2c step 3: 显式标记 syntax 模式没 context
+    # 3. context_window - M5.2c step 7 实现
+    # 走 SourceManager + sourceRange 拿行号 + 拿 buffer 文本 + splitlines
+    # 与 file-based build_evidence 算法一致, context_before/after 可对比
+    before, after, ctx_line = _extract_syntax_context(sr, context_window=context_window)
+    evidence.context_before = before
+    evidence.context_after = after
+    # ctx_line 应该等于 evidence.line; 如果不等说明 SourceManager 对该 loc 返回的行不对
+    if before or after:
+        evidence.context_available = True
+    else:
+        # 拿不到 context (SourceManager 未设, sr 无效, 越界等), 保留默认 False
+        evidence.context_available = False
 
     # 验证 (用 narrowed syn_text, 防止 signal_name 只是大表达式一部分时误判)
     if source_expr and source_expr in syn_text:
@@ -936,6 +942,52 @@ def _sm_location_at(sm, buffer_id, offset):
         return pyslang.SourceLocation(buffer_id, offset)
     except Exception:
         return None
+
+
+def _extract_syntax_context(sr, context_window: int = 2) -> tuple:
+    """M5.2c step 7: 从 SourceManager + sourceRange 拿 context_window 行 context
+
+    与 file-based build_evidence 的算法保持一致 (同样的 start/end 索引, 同样
+    的 rstrip), 让两路产出的 context_before/after 可直接对比。
+
+    跨文件: sr.start.buffer 拿对应的 buffer_id, getSourceText 拿全文。
+
+    防御: SourceManager 没设 / sr 无效 / 文本拿不到 → 返回空 (与 syntax 路径
+    其他失败一致), 不影响主流程。
+
+    Returns: (context_before, context_after, line)
+    """
+    sm = _get_source_manager()
+    if sm is None or sr is None:
+        return [], [], 0
+    if context_window < 1:
+        return [], [], 0
+    try:
+        start_loc = sr.start
+        line = sm.getLineNumber(start_loc)
+        if line < 1:
+            return [], [], 0
+        buffer_id = getattr(start_loc, 'buffer', None)
+        if buffer_id is None:
+            return [], [], line
+        full_text = sm.getSourceText(buffer_id)
+        if not full_text:
+            return [], [], line
+        # pyslang 在 in-memory 文本末尾加 \x00, 去掉避免影响 splitlines
+        if full_text.endswith('\x00'):
+            full_text = full_text[:-1]
+        # splitlines() 同时处理 \n 和 \r\n
+        file_lines = full_text.splitlines()
+        if line > len(file_lines):
+            return [], [], line
+        # 与 file-based build_evidence 同样的 start/end 计算 (line 1-indexed)
+        start = max(0, line - context_window)
+        before = [file_lines[i].rstrip() for i in range(start, line - 1)]
+        end = min(len(file_lines), line + context_window)
+        after = [file_lines[i].rstrip() for i in range(line, end)]
+        return before, after, line
+    except Exception:
+        return [], [], 0
 
 
 def _find_subexpr_for_signal(syntax_node, signal_name: str):
