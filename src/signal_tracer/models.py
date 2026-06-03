@@ -475,6 +475,7 @@ class CodeEvidence:
     file_readable: bool = False                  # 文件是否成功读取
     snippet_present: bool = False                # line 是否有内容
     source: str = "file"                        # M5.2c: 'file' (IO 读) 或 'syntax' (pyslang syntax tree)
+    context_available: bool = True               # M5.2c fix: context_window 是否成功填充 (syntax 模式暂 False)
 
     @property
     def is_verified(self) -> bool:
@@ -484,7 +485,17 @@ class CodeEvidence:
         - 文件可读
         - line 实际存在
         - 该行真的包含 source_expr 或 signal_name
+
+        M5.2c fix: 对 syntax 模式, file_readable=False (没读文件), 但
+        snippet 仍可从 syntax tree 拿到, 仍能 contains source_expr/signal_name。
+        所以 is_verified 同时支持 file 路径和 syntax 路径。
         """
+        # 路径 1: file-based - 需要 file_readable
+        # 路径 2: syntax-based - 不需要 file_readable, 但需要 source=syntax
+        if self.source == 'syntax':
+            return self.snippet_present and (
+                self.matches_source_expr or self.matches_signal_name
+            )
         return self.file_readable and self.snippet_present and (
             self.matches_source_expr or self.matches_signal_name
         )
@@ -522,6 +533,7 @@ class CodeEvidence:
             'file_readable': self.file_readable,
             'snippet_present': self.snippet_present,
             'source': self.source,  # M5.2c: 'file' 或 'syntax'
+            'context_available': self.context_available,  # M5.2c step 3
             'is_verified': self.is_verified,
             'credibility_score': self.credibility_score,
         }
@@ -545,6 +557,7 @@ class CodeEvidence:
         """
         lines = []
         lines.append(f"Evidence for {self.scope_text or 'trace'} @ {self.file}:{self.line}")
+        lines.append(f"  source: {self.source}  # M5.2c: file | syntax")
         lines.append(f"  file_readable: {self.file_readable}")
         if self.snippet_present:
             lines.append(f"  snippet: {self.snippet}")
@@ -558,16 +571,24 @@ class CodeEvidence:
         checks.append(f"signal_name match: {'✓' if self.matches_signal_name else '✗'}")
         lines.append(f"  matches: {', '.join(checks)}")
         lines.append(f"  credibility: {self.credibility_score:.2f}/1.0 ({'VERIFIED' if self.is_verified else 'UNVERIFIED'})")
-        if self.context_before:
-            for i, ctx in enumerate(self.context_before):
-                actual_line = self.line - (len(self.context_before) - i)
-                lines.append(f"  {actual_line:4d} | {ctx}")
-        if self.snippet_present:
-            lines.append(f"  {self.line:4d} > {self.snippet}")
-        if self.context_after:
-            for i, ctx in enumerate(self.context_after):
-                actual_line = self.line + i + 1
-                lines.append(f"  {actual_line:4d} | {ctx}")
+        if not self.context_available and (self.context_before or self.context_after):
+            # 防御: context_available=False 但有 context 数据, 说明状态不一致
+            pass
+        if self.context_available:
+            if self.context_before:
+                for i, ctx in enumerate(self.context_before):
+                    actual_line = self.line - (len(self.context_before) - i)
+                    lines.append(f"  {actual_line:4d} | {ctx}")
+            if self.snippet_present:
+                lines.append(f"  {self.line:4d} > {self.snippet}")
+            if self.context_after:
+                for i, ctx in enumerate(self.context_after):
+                    actual_line = self.line + i + 1
+                    lines.append(f"  {actual_line:4d} | {ctx}")
+        else:
+            # M5.2c step 3: syntax 模式暂无 context_window, 只显示当前行
+            if self.snippet_present:
+                lines.append(f"  {self.line:4d} > {self.snippet}  (syntax 模式暂无 context_window, M5.3 TODO)")
         return '\n'.join(lines)
 
 
@@ -787,6 +808,17 @@ def build_evidence_via_syntax(
     if syntax_node is None:
         return evidence
 
+    # M5.2c step 3 fix: 兼容 caller 传语义 Expression (e.g. 测试代码 / 旧 trace)
+    # 语义节点 str() 返回类名, sourceRange 仍可用, 但 snippet 要走 .syntax
+    if not hasattr(syntax_node, 'kind') or not hasattr(syntax_node, '__class__'):
+        return evidence
+    # 粗略判断: 语义 Expression 一般有 .kind == ExpressionKind.X, syntax 节点有 .kind == SyntaxKind.X
+    # 更稳的判断: 有 .syntax 属性 且 无 .kind.name == 'Expression' — 直接走 .syntax
+    if hasattr(syntax_node, 'syntax') and getattr(syntax_node, 'syntax', None) is not None \
+            and getattr(syntax_node, 'kind', None) is not None \
+            and 'Expression' in str(type(syntax_node.kind)):
+        syntax_node = syntax_node.syntax
+
     # 拿 syntax 的 sourceRange
     sr = getattr(syntax_node, 'sourceRange', None)
     if sr is None:
@@ -805,42 +837,19 @@ def build_evidence_via_syntax(
     evidence.line = line
 
     # 2. 拿 source text
-    # pyslang 没有直接给 node.source_text, 但我们可以通过 sourceRange + SourceManager
-    # 拿到 starting buffer 的 text, 然后 offset range
-    # 但 syntax_node 通常有 .syntax.text 字段 (pyslang syntax 节点的字符串表示)
+    # 语法节点 str() 返回从 buffer 起点到 node 末的文本 (带前导空白)
+    # 不影响 evidence 验证 (包含关系) 但 snippet 会包含 leading newline/indent
     syn_text = str(syntax_node) if syntax_node is not None else ''
     if syn_text and syn_text.strip():
         evidence.snippet = syn_text.strip()
         evidence.snippet_present = True
 
-    # 3. context_before/after (offset-based)
-    # 用 SourceManager 拿 start.buffer 的 SourceLocation, 然后 +/- 几行
-    try:
-        sm = _get_source_manager()
-        if sm is not None and hasattr(sr.start, 'buffer'):
-            start_loc = sr.start
-            # 拿 start_loc 的 line, 然后 [line - context_window, line + context_window)
-            base_line = sm.getLineNumber(start_loc)
-            # 拿每一行的 sourceRange, 拿原文
-            for offset in range(1, context_window + 1):
-                prev_loc = _sm_location_at(sm, start_loc.buffer, max(0, sr.start.offset - offset))
-                if prev_loc is None:
-                    break
-                # 没简单方法拿整行原文, 我们用 snippet + str(syntax_node).count 试探
-                # 简化: 拿整行通过 getColumnNumber 找行尾
-            # 实际: SourceManager 没有直接给 "拿整行" 的方法
-            # 我们用 SourceLocation.offset 配合 start.offset 算行起止
-            # 但 pyslang 有 getLineNumber(loc) 和 getColumnNumber(loc), 没 getLineStart
-            # 退而求其次: 用 snippet + 父节点 syntax
-            # M5.2c 简化: 不提供 context_window 在 syntax 模式下
-            pass
-    except Exception:
-        pass
-
-    # M5.2c: context_window 在 syntax 模式下暂不提供 (需要更复杂实现)
-    # TODO: M5.3 加从父节点 syntax 拿 context 的支持
+    # 3. context_window 在 syntax 模式下暂不实现 (M5.3 TODO)
+    # 原因: SourceManager 没直接给 "拿整行" 的方法, 需要走 start_loc + offset 算行边界
+    # 当前选择: 明确标 context_available=False, 不沉默地返回空列表
     evidence.context_before = []
     evidence.context_after = []
+    evidence.context_available = False  # M5.2c step 3: 显式标记 syntax 模式没 context
 
     # 验证
     if source_expr and source_expr in syn_text:
@@ -849,6 +858,7 @@ def build_evidence_via_syntax(
         evidence.matches_signal_name = True
 
     # 拿 file (从 location 拿, 如果有)
+    sm = _get_source_manager()
     if not file:
         try:
             if hasattr(sr.start, 'buffer') and sm is not None:
