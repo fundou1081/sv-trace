@@ -248,13 +248,43 @@ endmodule
         assert file_ev.source == 'file'
         assert syn_ev.source == 'syntax'
 
+    def test_source_expr_uses_real_source_text(self):
+        """M5.2c step 5: source_expr 是真实源码 (e.g. 'a + b'), 不是 C++ enum ('a Add b')
+
+        修复前: _get_rhs_info_semantic_kind 里 BinaryOp op_text='Add' 拼出 'a Add b',
+        snippet 'c = a + b;' 不包含 'a Add b' -> matches_source_expr=False。
+        修复后: wrapper _get_rhs_info_semantic 覆盖 text 为 str(expr.syntax).strip(),
+        拿到 'a + b' 真实源码 -> matches_source_expr=True。
+        """
+        t = SignalTracer()
+        t.add_file('m.sv', self.CODE)
+        t.build()
+        d = t.trace_drivers('c')[0]
+        # source_expr 应该是 'a + b' (含空格, 原始 source)
+        assert d.source_expr == 'a + b', f"got {d.source_expr!r}, expected 'a + b'"
+        # 两条 evidence 都应 matches_source_expr=True
+        file_ev = d._evidence_override
+        syn_ev = build_evidence_via_syntax(
+            syntax_node=d._syntax_node,
+            source_expr=d.source_expr,
+            signal_name=d.signal_name,
+        )
+        assert file_ev.matches_source_expr is True
+        assert syn_ev.matches_source_expr is True
+
     def test_credibility_score_syntax_lower(self):
-        """syntax 路径没 file_readable (0.2), 所以 credibility 略低"""
-        # file: file_readable(0.2) + snippet(0.2) + signal_name(0.2) = 0.6
-        # syntax: snippet(0.2) + signal_name(0.2) = 0.4
+        """syntax 路径没 file_readable (0.2), 所以 credibility 略低
+
+        M5.2c step 5 修后: source_expr 走真实源码 ('a + b'), matches_source_expr
+        两路都为 True。file 加 file_readable 仍领先 0.2。
+        - file:  file_readable(0.2) + snippet(0.2) + source_expr(0.4) + signal_name(0.2) = 1.0
+        - syntax: snippet(0.2) + source_expr(0.4) + signal_name(0.2) = 0.8
+        """
         file_ev, syn_ev, _ = self._both_evidences()
-        assert file_ev.credibility_score == pytest.approx(0.6)
-        assert syn_ev.credibility_score == pytest.approx(0.4)
+        assert file_ev.credibility_score == pytest.approx(1.0)
+        assert syn_ev.credibility_score == pytest.approx(0.8)
+        # syntax 仍略低 0.2 (file_readable 那一项)
+        assert file_ev.credibility_score > syn_ev.credibility_score
 
 
 # ---------- to_context 集成 ----------

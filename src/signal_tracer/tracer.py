@@ -1445,8 +1445,45 @@ class SignalTracer:
                 return getattr(literal, 'valueText', '') or "'0"
 
         return ""
-    
+
+    def _expr_to_source_text(self, expr, fallback: str = '') -> str:
+        """M5.2c step 5: 从 syntax node 拿表达式在源码中的真实文本
+
+        背景: 语义 Expression 的 str() 返回 'BinaryExpression(Add, a, b)' 这种
+        C++ 风格文本, 而 syntax node 的 str() 返回 'a + b' 真实源码。后者才能
+        与文件行 / 上下文做包含验证 (matches_source_expr)。
+
+        fallback: 语义节点没有 .syntax 时返回 (如 import-only 表达式)。
+        """
+        if expr is None:
+            return fallback
+        syn = getattr(expr, 'syntax', None)
+        if syn is None:
+            return fallback
+        try:
+            text = str(syn).strip()
+        except Exception:
+            return fallback
+        return text if text else fallback
+
     def _get_rhs_info_semantic(self, expr) -> Dict:
+        """从语义表达式获取 RHS 信息 (文本 and 加载的信号) - M5.2c step 5 wrapper
+
+        实际 kind-specific 逻辑在 _get_rhs_info_semantic_kind。本函数:
+        1. 调 kind 拿 signals + kind-级别 text (例如 'a Add b')
+        2. 覆盖 text 为 str(expr.syntax).strip() (真实源码 'a + b')
+
+        这样 _process_assignment_expr 拿到的 source_expr 总是真实源码,
+        matches_source_expr 能成立, credibility 提升到 1.0。
+        """
+        result = self._get_rhs_info_semantic_kind(expr)
+        # 覆盖 text 为 syntax 真实文本
+        syn_text = self._expr_to_source_text(expr, result.get('text', ''))
+        if syn_text:
+            result['text'] = syn_text
+        return result
+
+    def _get_rhs_info_semantic_kind(self, expr) -> Dict:
         """从语义表达式获取 RHS 信息 (文本 and 加载的信号)
         
         防御性检查: 遇到未知的表达式类型会记录并返回空，避免静默失败。
