@@ -1168,6 +1168,8 @@ class SignalTracer:
             hierarchical_path=scope.instance_path,
             condition_stack=list(condition_stack),
         )
+        # M5.2c: 注入 syntax node, 让 syntax-based evidence 能工作
+        trace._syntax_node = expr
         if full_name not in self._drivers:
             self._drivers[full_name] = []
         self._drivers[full_name].append(trace)
@@ -1210,6 +1212,8 @@ class SignalTracer:
                     hierarchical_path=scope.instance_path,
                     condition_stack=list(condition_stack),
                 )
+                # M5.2c: 注入 syntax node
+                load_trace._syntax_node = expr
                 self._loads[full_sig].append(load_trace)
                 self._loads[sig].append(load_trace)
 

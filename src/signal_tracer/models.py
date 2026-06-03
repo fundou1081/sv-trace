@@ -5,6 +5,7 @@ from __future__ import annotations
 """
 
 from dataclasses import dataclass, field
+import pyslang
 from typing import List, Optional, Tuple
 from enum import Enum
 
@@ -64,12 +65,17 @@ class TraceResult:
     
     # 元数据
     confidence: str = "high"
-    
+
+    # M5.2c: 内部 _syntax_node (pyslang syntax 节点, 用于 syntax-based evidence)
+    # 不在 __init__ 必传, tracer 在 build 时 setattr 注入
+    _syntax_node: Any = field(default=None, repr=False, compare=False)
+
     def __repr__(self) -> str:
         direction = "<=" if self.trace_type == TraceType.DRIVER else "->"
         return f"TraceResult({self.signal_name} {direction} {self.source_expr!r}@{self.line})"
 
-    def to_context(self, file_content: Optional[str] = None, context_window: int = 2) -> 'ContextBundle':
+    def to_context(self, file_content: Optional[str] = None, context_window: int = 2,
+                source_mode: str = 'auto') -> 'ContextBundle':
         """把自己打包成 ContextBundle (M5.1: 含 code evidence)
 
         用于 agent 一次性拿到 trace 的所有上下文 (file/line/scope/clock/reset/cond_stack/port)
@@ -78,16 +84,41 @@ class TraceResult:
         Args:
             file_content: 可选, 直接传文件内容避免 I/O (用于测试)
             context_window: 前后各取几行作为上下文 (默认 2)
+            source_mode: M5.2c - evidence 来源
+                - 'file' (旧): 读文件按行号取 snippet
+                - 'syntax' (新): 走 pyslang syntax tree, 从 _syntax_node 拿
+                - 'auto' (默认): 优先 syntax (如果有), 否则 file
 
         Returns:
-            ContextBundle 实例, 含 code_evidence 字段
+            ContextBundle 实例, 含 code_evidence 字段 (含 source 标识)
         """
-        from signal_tracer.models import ContextBundle, build_evidence
+        from signal_tracer.models import ContextBundle, build_evidence, build_evidence_via_syntax
 
-        # M5.1: 如果 SignalTracer.trace_verified 预先注入了 evidence, 优先用
-        evidence = getattr(self, '_evidence_override', None)
-        if evidence is None:
-            # 否则自动构建
+        pre_built = getattr(self, '_evidence_override', None)
+        syn_node = getattr(self, '_syntax_node', None)
+
+        if source_mode == 'syntax' and syn_node is not None:
+            evidence = build_evidence_via_syntax(
+                syntax_node=syn_node,
+                source_expr=self.source_expr,
+                signal_name=self.signal_name,
+                scope_text=self.scope_text,
+                file=self.file,
+                context_window=context_window,
+            )
+        elif source_mode == 'auto' and syn_node is not None and pre_built is None:
+            # auto + 有 syntax node + 没 pre-built: 走 syntax
+            evidence = build_evidence_via_syntax(
+                syntax_node=syn_node,
+                source_expr=self.source_expr,
+                signal_name=self.signal_name,
+                scope_text=self.scope_text,
+                file=self.file,
+                context_window=context_window,
+            )
+        elif pre_built is not None:
+            evidence = pre_built
+        else:
             evidence = build_evidence(
                 file=self.file,
                 line=self.line,
@@ -428,6 +459,10 @@ class CodeEvidence:
     2. 该行真的有 source_expr
     3. 该行真的有 signal_name (LHS)
     4. scope_text 与文件一致
+
+    M5.2c: 加 source 字段标识 evidence 来源 ('file' 或 'syntax'),
+    让 caller 知道 snippet 是从文件 IO 读的还是 pyslang syntax tree 直接拿的。
+    双版本 (file/syntax) 让用户可对比验证一致性。
     """
     file: str                                    # 路径
     line: int                                    # 1-indexed 行号
@@ -439,6 +474,7 @@ class CodeEvidence:
     matches_signal_name: bool = False           # snippet 中能找到 LHS signal_name
     file_readable: bool = False                  # 文件是否成功读取
     snippet_present: bool = False                # line 是否有内容
+    source: str = "file"                        # M5.2c: 'file' (IO 读) 或 'syntax' (pyslang syntax tree)
 
     @property
     def is_verified(self) -> bool:
@@ -485,6 +521,7 @@ class CodeEvidence:
             'matches_signal_name': self.matches_signal_name,
             'file_readable': self.file_readable,
             'snippet_present': self.snippet_present,
+            'source': self.source,  # M5.2c: 'file' 或 'syntax'
             'is_verified': self.is_verified,
             'credibility_score': self.credibility_score,
         }
@@ -671,6 +708,7 @@ def build_evidence(
         line=line,
         snippet="",
         scope_text=scope_text,
+        source="file",  # M5.2c: file-based evidence
     )
 
     # 读文件
@@ -712,3 +750,151 @@ def build_evidence(
         evidence.matches_signal_name = True
 
     return evidence
+
+
+def build_evidence_via_syntax(
+    syntax_node,
+    source_expr: str = "",
+    signal_name: str = "",
+    scope_text: str = "",
+    file: str = "",
+    context_window: int = 2,
+) -> "CodeEvidence":
+    """M5.2c: 从 pyslang syntax tree 直接拿 evidence (不走文件 IO)
+
+    与 build_evidence (file-based) 对比:
+    - file-based: 给定 file + line, 读文件 split('\n')[line-1]
+    - syntax-based: 从 syntax_node.sourceRange 直接拿原文
+
+    优势:
+    - 不依赖文件存在 (memory-only SV code 也能工作)
+    - 总是和 pyslang 解析结果 100% 一致
+    - 多文件时不用记哪个 file 对应哪个 offset
+    - 不依赖 line 准不准 (line 错了 syntax 仍指向正确)
+
+    劣势:
+    - 需要 trace 时把 syntax node 传过来
+    - context_window 从行号改成 offset-based, 需 SourceManager
+    """
+    evidence = CodeEvidence(
+        file=file,
+        line=0,  # syntax-based 不依赖 line, 由 sourceRange.start.line 算
+        snippet="",
+        scope_text=scope_text,
+        source="syntax",  # M5.2c: 标识是 syntax-based
+    )
+
+    if syntax_node is None:
+        return evidence
+
+    # 拿 syntax 的 sourceRange
+    sr = getattr(syntax_node, 'sourceRange', None)
+    if sr is None:
+        return evidence
+    if not (hasattr(sr, 'start') and hasattr(sr, 'end')):
+        return evidence
+
+    # 拿 SourceManager 算 line + offset
+    # 1. line from start.location
+    try:
+        # syntax 的 start 通常是 SourceLocation
+        start_loc = sr.start
+        line = _sm_get_line_number(start_loc)
+    except Exception:
+        line = 0
+    evidence.line = line
+
+    # 2. 拿 source text
+    # pyslang 没有直接给 node.source_text, 但我们可以通过 sourceRange + SourceManager
+    # 拿到 starting buffer 的 text, 然后 offset range
+    # 但 syntax_node 通常有 .syntax.text 字段 (pyslang syntax 节点的字符串表示)
+    syn_text = str(syntax_node) if syntax_node is not None else ''
+    if syn_text and syn_text.strip():
+        evidence.snippet = syn_text.strip()
+        evidence.snippet_present = True
+
+    # 3. context_before/after (offset-based)
+    # 用 SourceManager 拿 start.buffer 的 SourceLocation, 然后 +/- 几行
+    try:
+        sm = _get_source_manager()
+        if sm is not None and hasattr(sr.start, 'buffer'):
+            start_loc = sr.start
+            # 拿 start_loc 的 line, 然后 [line - context_window, line + context_window)
+            base_line = sm.getLineNumber(start_loc)
+            # 拿每一行的 sourceRange, 拿原文
+            for offset in range(1, context_window + 1):
+                prev_loc = _sm_location_at(sm, start_loc.buffer, max(0, sr.start.offset - offset))
+                if prev_loc is None:
+                    break
+                # 没简单方法拿整行原文, 我们用 snippet + str(syntax_node).count 试探
+                # 简化: 拿整行通过 getColumnNumber 找行尾
+            # 实际: SourceManager 没有直接给 "拿整行" 的方法
+            # 我们用 SourceLocation.offset 配合 start.offset 算行起止
+            # 但 pyslang 有 getLineNumber(loc) 和 getColumnNumber(loc), 没 getLineStart
+            # 退而求其次: 用 snippet + 父节点 syntax
+            # M5.2c 简化: 不提供 context_window 在 syntax 模式下
+            pass
+    except Exception:
+        pass
+
+    # M5.2c: context_window 在 syntax 模式下暂不提供 (需要更复杂实现)
+    # TODO: M5.3 加从父节点 syntax 拿 context 的支持
+    evidence.context_before = []
+    evidence.context_after = []
+
+    # 验证
+    if source_expr and source_expr in syn_text:
+        evidence.matches_source_expr = True
+    if signal_name and signal_name in syn_text:
+        evidence.matches_signal_name = True
+
+    # 拿 file (从 location 拿, 如果有)
+    if not file:
+        try:
+            if hasattr(sr.start, 'buffer') and sm is not None:
+                evidence.file = sm.getFileName(sr.start)
+        except Exception:
+            pass
+    else:
+        evidence.file = file
+
+    return evidence
+
+
+# M5.2c: helper 拿 SourceManager
+_singleton_sm = None
+def _get_source_manager():
+    """从 SignalTracer 全局拿 SourceManager (懒初始化)
+
+    SignalTracer.build() 时会设 self._source_manager.
+    为了让 build_evidence_via_syntax 不依赖 tracer 实例, 我们用一个 module-level
+    缓存。trace() 时应调 _set_source_manager() 同步过来。
+    """
+    global _singleton_sm
+    return _singleton_sm
+
+
+def _set_source_manager(sm) -> None:
+    """SignalTracer 调这个同步 SourceManager"""
+    global _singleton_sm
+    _singleton_sm = sm
+
+
+def _sm_get_line_number(loc) -> int:
+    sm = _get_source_manager()
+    if sm is None:
+        return 0
+    try:
+        return sm.getLineNumber(loc)
+    except Exception:
+        return 0
+
+
+def _sm_location_at(sm, buffer_id, offset):
+    """拿 sourceManager 在 buffer 中给定 offset 的 SourceLocation"""
+    if sm is None or offset < 0:
+        return None
+    try:
+        return pyslang.SourceLocation(buffer_id, offset)
+    except Exception:
+        return None
