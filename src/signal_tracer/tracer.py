@@ -4,7 +4,6 @@
 """
 
 import pyslang
-from pyslang import SyntaxKind, TokenKind
 from typing import Dict, List, Set, Optional, Tuple
 from dataclasses import dataclass, field
 

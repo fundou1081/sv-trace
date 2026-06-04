@@ -1,0 +1,19 @@
+include LICENSE
+include README.md
+include CHANGELOG.md
+include pyproject.toml
+
+# 递归 include 所有非 .py 文件 (排除 __pycache__, .pyc 等)
+recursive-include src *.pyi
+recursive-include src *.txt
+recursive-include src *.md
+recursive-include src *.cfg
+recursive-include src *.toml
+
+# 排除编译产物
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude .DS_Store
+global-exclude .pytest_cache
+global-exclude .git*

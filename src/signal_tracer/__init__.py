@@ -38,6 +38,8 @@ from signal_tracer.tracer import (
     trace_signal_from_file,
 )
 
+__version__ = "1.0.0"
+
 __all__ = [
     # 数据模型
     'TraceResult',
