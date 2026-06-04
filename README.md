@@ -3,7 +3,7 @@
 > SystemVerilog signal tracer — 给一个信号名，返回它在源码里的所有 driver / load，以及完整的上下文（文件、行号、scope 源码、时钟/复位、条件栈、层次路径、跨模块端口连接）。
 
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
-[![pyslang](https://img.shields.io/badge/pyslang-%3E%3D10.0-orange.svg)](https://github.com/MikePopoloski/slang)
+[![pyslang](https://img.shields.io/badge/pyslang-10.x_|_11.x-orange.svg)](https://github.com/MikePopoloski/slang)
 [![Status](https://img.shields.io/badge/status-alpha-yellow.svg)]()
 
 ## 目标
@@ -20,7 +20,7 @@ pip install sv-trace
 pip install -e .
 ```
 
-唯一依赖：`pyslang >= 10.0`
+唯一依赖：`pyslang >= 10.0`（同时兼容 10.x 和 11.x，详见下 [跨版本兼容](#跨版本兼容) 章节）
 
 ## 快速开始
 
@@ -758,6 +758,7 @@ result = t.trace("signal_name")  # TraceSummary
 | 指标 | 数据 |
 |------|------|
 | 公开 API 测试 | **160/160 通过** (~7s) |
+| 跨版本验证 | ✅ pyslang 10.x **和** 11.x 都 160/160 (make test-cross-version) |
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
@@ -768,6 +769,9 @@ result = t.trace("signal_name")  # TraceSummary
 
 ```bash
 python -m pytest tests/ -v
+
+# 跨 pyslang 10/11 版本验证
+make test-cross-version
 ```
 
 ## 测试覆盖 (M0–M4)
@@ -791,6 +795,7 @@ python -m pytest tests/ -v
 | M5.1f | `TestDumpChain` | +9 | `dump_driver_chain()`/`dump_load_chain()` 一次 dump 整链为 dict (含 summary, LLM 友好) |
 | M5.1g | `TestDumpMultiDrivers` | +6 | `dump_multi_drivers()` 一次 dump 多驱动检测 (冲突列表 + 每个 driver evidence) |
 | M5.1h | `TestSyntaxNodeSnapshot` | +6 | syntax-based evidence 路径: SyntaxNodeSnapshot 冻结 + OpenTitan 跨文件 snippet 精度 |
+| M5.1h+ | (Makefile target) | — | 跨 pyslang 10.x/11.x 验证 (`make test-cross-version` 双 venv 跑 160+160 tests) |
 
 各阶段演进：
 
@@ -966,7 +971,33 @@ LLM 看 1 行 snippet 就能反查"`tx` 实际上是哪个 line 在驱动"，再
 
 **推荐**：默认走 `to_context(source_mode='auto')`，在 line 准的时候走 file-based 拿到更多 context；line 错/跨文件/内存模式走 syntax-based。
 
+## 跨版本兼容
 
+### pyslang 10 / 11 都能跑
+
+sv-trace 在两个主版本下都保持 160/160 tests pass。安装时不需要指定上限 (`pyslang>=10.0`)，因为项目里加了 try/fallback import pattern 走 11 的新位置。
+
+| pyslang | sv-trace 1.0.0 | 状态 |
+|---------|---------------|------|
+| 10.0.x | ✅ work | 测过 (主推 venv) |
+| 11.0.x | ✅ work | 测过 (make test-cross-version) |
+| 12+ | ❓ | 未测 |
+
+### 手动验证
+
+```bash
+$ make test-cross-version
+Testing wheel on pyslang 10.0...
+160 passed in 7.59s
+Testing wheel on pyslang 11.0...
+160 passed in 6.05s
+```
+
+这个 target 会启两个 venv（一个 v10，一个 v11），各装 wheel 跑 pytest，确保未来升级 pyslang 时不会悄无声息地 break。
+
+### 为什么不锁版本
+
+`pyslang` 是个活跃开发的 C++ binding，每年大版本会重排 API。从 v10 升 v11 移走了 `SyntaxTree` 到 `pyslang.syntax`、移走了 `Compilation` 到 `pyslang.ast`。我们加 try/fallback 兼容两层都吃；不想用 `<11` 上限让以后 v12/v13 用户装不上。
 
 ## 真实项目验证 (M4)
 
@@ -1055,6 +1086,7 @@ sv-trace/
 - ✅ **M5.1f** dump_chain 一次 dump 整链为 JSON - 含 summary, LLM 友好
 - ✅ **M5.1g** dump_multi_drivers - 一次 dump 多驱动检测 (冲突 + 每个 driver 证据)
 - ✅ **M5.1h** 代码证据链语法路径 - 从 pyslang SyntaxTree 直接拿 evidence (SyntaxNodeSnapshot 防 buffer 复用, 跨文件 100% 准)
+- ✅ **M5.1h** 跨 pyslang 10.x / 11.x 兼容 (try/fallback import pattern, `make test-cross-version` 自动验证两版本)
 - 📋 **M5.2+** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。
