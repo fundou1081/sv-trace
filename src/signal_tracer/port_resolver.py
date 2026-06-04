@@ -7,7 +7,12 @@
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
-from pyslang import SyntaxTree
+# M5.1h fix: pyslang 11 把 SyntaxTree 移到了 pyslang.syntax 子模块
+# 尝试新位置, fallback 到旧位置 (兼容 v10 和 v11+)
+try:
+    from pyslang.syntax import SyntaxTree
+except ImportError:
+    from pyslang import SyntaxTree
 
 
 @dataclass

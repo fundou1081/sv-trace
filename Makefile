@@ -62,7 +62,7 @@ dist-clean:
 # 注意: 必须在项目根目录跑 (tests 用相对路径 tests/fixtures/...)
 dist-verify: build
 	@$(PYTHON) -m venv /tmp/sv-trace-verify
-	@/tmp/sv-trace-verify/bin/pip install --quiet "pyslang>=10.0,<11" pytest
+	@/tmp/sv-trace-verify/bin/pip install --quiet "pyslang>=10.0" pytest
 	@/tmp/sv-trace-verify/bin/pip install --quiet --force-reinstall --no-deps dist/sv_trace-*.whl
 	@/tmp/sv-trace-verify/bin/python -c "from signal_tracer import SignalTracer, trace_signal, __version__; print(f'sv-trace {__version__} OK')"
 	@/tmp/sv-trace-verify/bin/python -m pytest tests/ -q 2>&1 | tail -3
@@ -83,3 +83,19 @@ publish: dist-clean build
 yank-legacy:
 	@$(PYTHON) -m twine yank --repository $(PYPI_REPO) sv-trace==0.1.0 || true
 	@$(PYTHON) -m twine yank --repository $(PYPI_REPO) sv-trace==0.1.1 || true
+
+# Cross-version smoke test (确保 wheel 在 v10 和 v11 都能装)
+test-cross-version: build
+	@echo "Testing wheel on pyslang 10.0..."
+	@rm -rf /tmp/sv-pyslang-10 /tmp/sv-pyslang-11
+	@$(PYTHON) -m venv /tmp/sv-pyslang-10
+	@/tmp/sv-pyslang-10/bin/pip install --quiet "pyslang>=10.0,<11" pytest
+	@/tmp/sv-pyslang-10/bin/pip install --quiet --force-reinstall --no-deps dist/sv_trace-*.whl
+	@/tmp/sv-pyslang-10/bin/python -m pytest tests/ -q 2>&1 | tail -1
+	@echo ""
+	@echo "Testing wheel on pyslang 11.0..."
+	@$(PYTHON) -m venv /tmp/sv-pyslang-11
+	@/tmp/sv-pyslang-11/bin/pip install --quiet "pyslang>=11.0" pytest
+	@/tmp/sv-pyslang-11/bin/pip install --quiet --force-reinstall --no-deps dist/sv_trace-*.whl
+	@/tmp/sv-pyslang-11/bin/python -m pytest tests/ -q 2>&1 | tail -1
+	@rm -rf /tmp/sv-pyslang-10 /tmp/sv-pyslang-11

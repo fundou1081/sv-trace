@@ -4,7 +4,7 @@
 """
 
 import pyslang
-from typing import Dict, List, Set, Optional, Tuple
+from typing import Dict, List, Set, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 from signal_tracer.models import (
@@ -14,6 +14,15 @@ from signal_tracer.models import (
     _set_source_manager,  # M5.1h fix: 同步 SourceManager 给 build_evidence_via_syntax
 )
 from signal_tracer.port_resolver import PortResolver, PortConnection
+
+# M5.1h fix: pyslang 11+ 将 SyntaxTree / Compilation 移到了子模块
+# 走 try/fallback 路径同时兼容 v10 (都在 root) 和 v11+ (在子模块)
+try:
+    from pyslang.syntax import SyntaxTree as _SyntaxTree
+    from pyslang.ast import Compilation as _Compilation
+except ImportError:
+    from pyslang import SyntaxTree as _SyntaxTree
+    from pyslang import Compilation as _Compilation
 
 
 def _strip_evidence(trace_result) -> dict:
@@ -345,7 +354,7 @@ class SignalTracer:
         self._files: List[Tuple[str, str]] = []
         self._sv_code = sv_code  # 保留作向后兼容 (单文件时 = _files[0][1])
         self._file_path = file_path
-        self._tree: pyslang.SyntaxTree = None
+        self._tree: '_SyntaxTree' = None  # M5.1h: 兼容 pyslang 10/11, 走 _SyntaxTree 导入
         self._drivers: Dict[str, List[TraceResult]] = {}
         self._loads: Dict[str, List[TraceResult]] = {}
         self._scopes: List[ScopeInfo] = []
@@ -395,9 +404,9 @@ class SignalTracer:
             return self
 
         # M3: 多棵 SyntaxTree 加到同一 Compilation (跨文件 module 解析)
-        comp = pyslang.Compilation()
+        comp = _Compilation()
         for file_path, sv_code in self._files:
-            tree = pyslang.SyntaxTree.fromText(sv_code, file_path or '')
+            tree = _SyntaxTree.fromText(sv_code, file_path or '')
             comp.addSyntaxTree(tree)
         comp.freeze()
 

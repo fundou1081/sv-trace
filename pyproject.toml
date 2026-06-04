@@ -30,7 +30,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "pyslang>=10.0,<11",
+    "pyslang>=10.0",
 ]
 
 [project.optional-dependencies]

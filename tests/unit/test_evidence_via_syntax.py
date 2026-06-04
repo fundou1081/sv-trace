@@ -132,8 +132,11 @@ endmodule
         # 用 pyslang 拿一个真语义 expr
         import pyslang
         from signal_tracer.models import _set_source_manager
-        comp = pyslang.Compilation()
-        comp.addSyntaxTree(pyslang.SyntaxTree.fromText(
+        # M5.1h fix: pyslang 11+ 兼容 — Compilation / SyntaxTree 都可能不在 root
+        _Compilation = getattr(pyslang, 'Compilation', None) or pyslang.ast.Compilation
+        _SyntaxTree = getattr(pyslang, 'SyntaxTree', None) or pyslang.syntax.SyntaxTree
+        comp = _Compilation()
+        comp.addSyntaxTree(_SyntaxTree.fromText(
             'module n; logic x, y; assign y = x; endmodule\n',
             'n.sv'))
         _set_source_manager(comp.sourceManager)

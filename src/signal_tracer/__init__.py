@@ -1,4 +1,4 @@
-"""signal_tracer - 信号追踪器
+"""signal_trace - 信号追踪器
 
 给一个信号，返回它的所有驱动(drivers)和负载(loads)，包含文件位置和 scope 源码。
 
@@ -19,6 +19,15 @@ Usage:
     chain = result.get_driver_chain()
     print(f"Driver chain: {' <- '.join(chain)}")
 """
+
+import pyslang
+
+# M5.1h fix: pyslang 11+ 将 SyntaxTree 移到了 pyslang.syntax 子模块
+# 项目代码拿不到就让它可访问
+try:
+    SyntaxTree = pyslang.syntax.SyntaxTree
+except AttributeError:
+    SyntaxTree = pyslang.SyntaxTree
 
 from signal_tracer.models import (
     TraceResult,
