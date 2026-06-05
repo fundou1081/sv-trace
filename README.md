@@ -696,6 +696,149 @@ OpenTitan 真实示例 (uart): 8 个冲突信号 (36 个总 driver), 全 credibi
 - `include_scope_text=False` (默认) — 不含 scope_text (字符串可能较长)
 - `verify=True` (默认) — 自动填充 evidence
 
+## 人类友好箭头式输出 (M5.1j)
+
+所有 trace 都能用箭头式表达数据流向 — 人眼在终端/文档/聊天里一眼看懂谁驱动谁、谁被读。
+
+### 箭头语义 (固定)
+
+| 符号 | 含义 |
+|------|------|
+| `←` | driver (信号被这个表达式驱动) |
+| `→` | load (信号被这个表达式读取) |
+| `⚠` | 多驱动冲突 |
+| `✓` | verified (credibility >= 0.8) |
+| `✗` | not verified (credibility < 0.8) |
+| `⤴` | cross-file 跨文件 |
+| `↻` | cycle detected |
+
+### 5 个 API 层级 (都可以用箭头式)
+
+```python
+from signal_tracer import trace_signal, SignalTracer
+
+# 1. TraceResult / TraceSummary — 一键全部 drivers+loads
+result = trace_signal("count", sv, "counter.sv")
+print(result.to_arrow())
+# DRIVERS (2):
+#   count ← 8'h00 @ counter.sv:9 [counter] ✓ cred=1.00
+#   count ← count + data_in @ counter.sv:10 [counter] ✓ cred=1.00
+# LOADS (0):
+#   (none)
+
+# 2. 单条 trace
+for d in result.drivers:
+    print(d.to_arrow())
+# count ← 8'h00 @ counter.sv:9 [counter] ✓ cred=1.00
+
+# 3. SignalTracer — 一键多驱动
+t = SignalTracer()
+t.add_file("buggy.sv", multi_sv); t.build()
+print(t.multi_drivers_to_arrow())
+# data ⚠ 2 drivers:
+#   data ← 8'hAA @ buggy.sv:9 [buggy] ✓ cred=1.00
+#   data ← 8'h55 @ buggy.sv:12 [buggy] ✓ cred=1.00
+
+# 4. 链追踪 — 完整上溯/下溯链
+print(t.chain_to_arrow("data_out", direction="driver"))
+# data_out ← c ⤴ ← b ← a
+
+# 5. dump 转箭头 — 全链 + summary
+print(t.dump_to_arrow("data_out"))
+# Chain data_out: 4 hops, avg_cred=0.95, cross-file ✓, cycle ✗
+#   data_out ← c ✓ ← b ✓ ← a ✓
+```
+
+### 直接用 formatter 函数
+
+```python
+from signal_tracer import format_driver, format_load, format_all, ARROW_DRIVER, ARROW_LOAD
+
+print(format_driver(result.drivers[0]))
+print(format_all(result))
+print(ARROW_DRIVER)  # '←'
+print(ARROW_LOAD)    # '→'
+```
+
+### 与 `summary()` 区别
+
+| 方法 | 适合场景 |
+|------|----------|
+| `summary()` | 短/字段化/适合 LLM 当 context (e.g. 'counter.sv:10 (always_ff) clk=clk reset=rst_n cond=[!rst_n]') |
+| `to_arrow()` | 箭头/数据流/适合人眼扫/聊天贴出来 (e.g. 'count ← count + data_in @ counter.sv:11 ✓ cred=1.0') |
+
+两者并存, 根据场景选。
+
+### Tree / Vertical 风格 (M5.1k) — 长链/文档/聊天友好
+
+当链太长 (≥ 4 个信号) 或要贴到文档/聊天里, 一行箭头看不清楚。换成 **tree 风格** (类似 `tree(1)` 工具的输出) 或 **vertical 风格** (每行一个信号 + 箭头):
+
+```python
+t = SignalTracer()
+t.add_file('top.sv', top_code)
+t.add_file('mid.sv', mid_code)
+t.add_file('leaf.sv', leaf_code)
+t.build()
+```
+
+**5 种风格 (全部带 tree 节点) — 选一个**:
+
+```python
+# 1. arrow (默认): 一行, 短链友好
+print(t.chain_to_arrow('top.u_mid.u_leaf_a.out_data', style='arrow'))
+# out_data ← out_data ← mid_data  (↻ cycle detected)
+
+# 2. tree: tree 风格, Unicode box-drawing
+print(t.chain_to_arrow('top.u_mid.u_leaf_a.out_data', style='tree'))
+# Driver chain: top.u_mid.u_leaf_a.out_data (3 hops, ↻ cycle)
+#   ├─ out_data  [leaf.sv:11]  ✓ cred=1.00
+#   │  ← out_data  [leaf.sv:12]  ✓ cred=1.00
+#   └─ ← mid_data  [leaf.sv:9]  ✓ cred=1.00
+
+# 3. ascii: 同 tree 但用 ASCII (老终端 / 邮件 / 纯文本 log)
+print(t.chain_to_arrow('top.u_mid.u_leaf_a.out_data', style='ascii'))
+# Driver chain: top.u_mid.u_leaf_a.out_data (3 hops, ↻ cycle)
+#   +-- out_data  [leaf.sv:11]  ✓ cred=1.00
+#   |  ← out_data  [leaf.sv:12]  ✓ cred=1.00
+#   +-- ← mid_data  [leaf.sv:9]  ✓ cred=1.00
+
+# 4. vertical: 每行一个信号, 缩进表示深度
+print(t.chain_to_arrow('top.u_mid.u_leaf_a.out_data', style='vertical'))
+# out_data @ leaf.sv:11 ✓ cred=1.00
+#   ← out_data @ leaf.sv:12 ✓ cred=1.00
+#     ← mid_data @ leaf.sv:9 ✓ cred=1.00
+
+# 5. all / both: arrow + tree 两个都返
+print(t.chain_to_arrow('top.u_mid.u_leaf_a.out_data', style='all'))
+```
+
+**dump 也支持 tree/vertical**:
+
+```python
+# dump_to_arrow 默认 1 行, style='tree' 转 tree
+print(t.dump_to_arrow('top.u_mid.u_leaf_a.out_data', style='tree'))
+# Driver chain: top.u_mid.u_leaf_a.out_data (3 hops)
+#   ├─ out_data  [leaf.sv:11]
+#   │  ← out_data  [leaf.sv:12]
+#   └─ ← mid_data  [leaf.sv:9]
+
+# 还可以用 alias
+t.chain_to_tree(signal, use_box=True)   # tree style
+t.chain_to_tree(signal, use_box=False)  # ASCII
+t.chain_to_vertical(signal)             # vertical
+t.dump_to_tree(signal, use_box=True)    # dump + tree
+t.dump_to_tree(signal, use_box=False)   # dump + ascii
+```
+
+**`format_driver_chain` / `format_dump_summary` 也都接受 `style` 参数**, 给纯函数用户用。
+
+**怎么选风格**:
+- **短链 (≤ 3 个信号)**: `arrow` (默认) — 一行就够
+- **中链 (4-7) + 看代码**: `tree` — 节点 + location + cred 一起看
+- **中链 + 贴 chat/markdown**: `vertical` — 不依赖 box-drawing
+- **老终端 / 邮件 / 纯文本 log**: `ascii` — 不需要 Unicode
+- **要全面**: `all` — arrow + tree 都给
+
 ## 公开 API
 
 ### 函数式
@@ -757,8 +900,8 @@ result = t.trace("signal_name")  # TraceSummary
 
 | 指标 | 数据 |
 |------|------|
-| 公开 API 测试 | **160/160 通过** (~7s) |
-| 跨版本验证 | ✅ pyslang 10.x **和** 11.x 都 160/160 (make test-cross-version) |
+| 公开 API 测试 | **210/210 通过** (~4s) (含 50 个箭头式输出测试: 28 M5.1j + 22 M5.1k tree/vertical/ascii) |
+| 跨版本验证 | ✅ pyslang 10.x **和** 11.x 都 210/210 (make test-cross-version) |
 | 真实项目验证 | ✅ OpenTitan 6 模块 (30,218 drivers, 0 warning, 0 empty) |
 | 跨文件 fixture | 3 文件 / 3 层 instance (`tests/fixtures/m3_hierarchical/`) |
 | Benchmark | 11/11 (0 warning, 0 exception) |
@@ -1087,6 +1230,8 @@ sv-trace/
 - ✅ **M5.1g** dump_multi_drivers - 一次 dump 多驱动检测 (冲突 + 每个 driver 证据)
 - ✅ **M5.1h** 代码证据链语法路径 - 从 pyslang SyntaxTree 直接拿 evidence (SyntaxNodeSnapshot 防 buffer 复用, 跨文件 100% 准)
 - ✅ **M5.1h** 跨 pyslang 10.x / 11.x 兼容 (try/fallback import pattern, `make test-cross-version` 自动验证两版本)
+- ✅ **M5.1j** 人类友好箭头式输出 - `to_arrow()` / `to_arrow_all()` / `chain_to_arrow()` / `multi_drivers_to_arrow()` / `dump_to_arrow()` 五个 API 层级, 8 个独立 formatter 函数 (driver/load/chain/multi/evidence/dump), 箭头统一语义 (←/→/⚠/✓/✗/⤴/↻)
+- ✅ **M5.1k** Tree/Vertical/ASCII 风格 - 长链/文档/聊天友好, 5 种风格 (`arrow` 默认 / `tree` Unicode / `ascii` / `vertical` / `all`), 适用于 `chain_to_arrow()` / `dump_to_arrow()` / `format_driver_chain()` / `format_dump_summary()`, alias 方法: `chain_to_tree()` / `chain_to_vertical()` / `dump_to_tree()`
 - 📋 **M5.2+** 极致优化（增量、并发、缓存）
 
 完整路线图见 [TODO.md](TODO.md)。

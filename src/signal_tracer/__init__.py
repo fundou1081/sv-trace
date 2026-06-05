@@ -46,6 +46,18 @@ from signal_tracer.tracer import (
     trace_signal,
     trace_signal_from_file,
 )
+# M5.1j: 人类友好箭头式输出 (formatters 模块独立, 下面这些函数也直接可 import)
+from signal_tracer.formatters import (
+    format_driver,
+    format_load,
+    format_trace_arrow,
+    format_driver_chain,
+    format_multi_driver,
+    format_evidence_chain,
+    format_dump_summary,
+    format_all,
+    ARROW_DRIVER, ARROW_LOAD,
+)
 
 __version__ = "1.0.0"
 
@@ -66,4 +78,15 @@ __all__ = [
     # 便捷函数
     'trace_signal',
     'trace_signal_from_file',
+    # M5.1j: 人类友好箭头式输出
+    'format_driver',
+    'format_load',
+    'format_trace_arrow',
+    'format_driver_chain',
+    'format_multi_driver',
+    'format_evidence_chain',
+    'format_dump_summary',
+    'format_all',
+    'ARROW_DRIVER',
+    'ARROW_LOAD',
 ]

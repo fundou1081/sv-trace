@@ -2783,6 +2783,177 @@ class SignalTracer:
             summary_only=summary_only,
         )
 
+    # === M5.1j: 箭头式人类友好输出 ===
+
+    def to_arrow(self, signal_name: str, verify: bool = True, max_expr_len: int = 40) -> str:
+        """一键输出某信号 drivers + loads 的箭头式表达 (M5.1j)
+
+        例:
+          DRIVERS (2):
+            count ← 8'h00 @ counter.sv:9 [counter] ✓ cred=1.00
+            count ← count + data_in @ counter.sv:11 [counter] ✓ cred=1.00
+          LOADS (0):
+            (none)
+
+        Args:
+            signal_name: 起始信号名
+            verify: 是否带 credibility (默认 True)
+            max_expr_len: source_expr 截断长度 (默认 40)
+
+        Returns:
+            多行 str, drivers/loads 分段, 每行一条 trace
+        """
+        result = self.trace(signal_name, verify=verify)
+        return result.to_arrow(max_expr_len=max_expr_len)
+
+    def chain_to_arrow(self, signal_name: str, direction: str = "driver",
+                       max_depth: int = 10, style: str = "arrow") -> str:
+        """driver/load 链的输出 (M5.1j/k)
+
+        style 选 (M5.1k):
+          - "arrow" (默认): 一行箭头式, 例 'data_out ← c ⤴ ← b ← a'
+          - "tree": tree 风格, 适合长链, 例:
+              Driver chain: data_out (4 hops, ⤴ cross-file)
+              ├─ data_out    [top.sv:5]    ✓ cred=1.00
+              │  ← c         [sub.sv:12]   ✓ cred=0.95
+              │  ← b         [sub.sv:8]    ✓ cred=1.00
+              └─ a           [top.sv:3]    ✓ cred=1.00
+          - "ascii": 同 tree 但 ASCII 字符 (+-- / | / +--)
+          - "vertical": 每行一个信号 + 箭头 (紧凑, 适合 chat)
+          - "all" / "both": arrow + tree 两个都返 (多行)
+
+        Args:
+            signal_name: 起始信号名
+            direction: 'driver' (上溯) 或 'load' (下溯)
+            max_depth: 最大深度
+            style: 输出风格 (M5.1k)
+
+        Returns:
+            一行 (arrow) / 多行 (tree/vertical/all)
+        """
+        from signal_tracer.formatters import format_driver_chain
+        if direction == "driver":
+            chain = self.get_driver_chain(signal_name, max_depth=max_depth, verify=True)
+        else:
+            chain = self.get_load_chain(signal_name, max_depth=max_depth, verify=True)
+        # cycle detection: 链上同一个信号名出现 > 1 次就是环
+        chain_names = [getattr(c, 'signal_name', str(c)) for c in chain]
+        has_cycle = len(chain_names) != len(set(chain_names))
+        # cross-files
+        try:
+            if direction == "driver":
+                dump = self.dump_driver_chain(signal_name, max_depth=max_depth, summary_only=True)
+            else:
+                dump = self.dump_load_chain(signal_name, max_depth=max_depth, summary_only=True)
+            summary = dump.get("summary", {}) if isinstance(dump, dict) else {}
+            cf = summary.get("cross_files", [])
+            if isinstance(cf, bool):
+                cross_files = ["(multi-file)"] if cf else None
+            elif isinstance(cf, list):
+                cross_files = cf if len(cf) > 1 else None
+            else:
+                cross_files = None
+        except Exception:
+            cross_files = None
+        return format_driver_chain(
+            chain, signal=signal_name, direction=direction,
+            has_cycle=has_cycle, cross_files=cross_files,
+            style=style,
+        )
+
+    def chain_to_tree(self, signal_name: str, direction: str = "driver",
+                      max_depth: int = 10, use_box: bool = True) -> str:
+        """driver/load 链的 tree 风格输出 (M5.1k, 跟 chain_to_arrow(style='tree') 同效)
+
+        Args:
+            signal_name: 起始信号名
+            direction: 'driver' 或 'load'
+            max_depth: 最大深度
+            use_box: True 用 Unicode box-drawing, False 用 ASCII
+
+        Returns:
+            多行 tree 字符串
+        """
+        return self.chain_to_arrow(
+            signal_name, direction=direction, max_depth=max_depth,
+            style="tree" if use_box else "ascii",
+        )
+
+    def chain_to_vertical(self, signal_name: str, direction: str = "driver",
+                          max_depth: int = 10) -> str:
+        """driver/load 链的 vertical 风格输出 (每行一个信号 + 箭头) (M5.1k)
+
+        Args:
+            signal_name: 起始信号名
+            direction: 'driver' 或 'load'
+            max_depth: 最大深度
+
+        Returns:
+            多行 vertical 字符串
+        """
+        return self.chain_to_arrow(
+            signal_name, direction=direction, max_depth=max_depth,
+            style="vertical",
+        )
+
+    def multi_drivers_to_arrow(self) -> str:
+        """多驱动冲突一键箭头输出 (M5.1j)
+
+        例:
+          data ⚠ 2 drivers:
+            data ← 8'hAA @ multi.sv:10 [buggy] ✓ cred=1.00
+            data ← 8'h55 @ multi.sv:15 [buggy] ✓ cred=1.00
+
+          another ⚠ 2 drivers:
+            another ← ...
+        """
+        from signal_tracer.formatters import format_multi_driver
+        multi = self.find_multi_drivers(verify=True)
+        if not multi:
+            return "(no multi-driver signals)"
+        lines = []
+        for sig, drivers in multi.items():
+            lines.append(format_multi_driver(sig, drivers))
+        return "\n".join(lines)
+
+    def dump_to_arrow(self, signal_name: str, direction: str = "driver",
+                      max_depth: int = 10, style: str = "arrow") -> str:
+        """dump_driver_chain / dump_load_chain 的 dict 转箭头式 (M5.1j/k)
+
+        style 选:
+          - "arrow" (默认): 一行 + summary
+          - "tree": tree 风格
+          - "ascii": ASCII tree
+          - "vertical": 每行一个信号
+          - "all" / "both": arrow + tree 两个都返
+
+        例 (arrow):
+          Chain data_out: 4 hops, avg_cred=0.95, cross-file ✗, cycle ✗
+            data_out ← c ✓ ← b ✓ ← a ✓
+
+        例 (tree):
+          Driver chain: data_out (4 hops)
+          ├─ data_out    [top.sv:5]    ✓ cred=1.00
+          │  ← c         [sub.sv:12]   ✓ cred=0.95
+          │  ← b         [sub.sv:8]    ✓ cred=1.00
+          └─ a           [top.sv:3]    ✓ cred=1.00
+        """
+        from signal_tracer.formatters import format_dump_summary
+        if direction == "driver":
+            dump = self.dump_driver_chain(signal_name, max_depth=max_depth)
+        else:
+            dump = self.dump_load_chain(signal_name, max_depth=max_depth)
+        return format_dump_summary(dump, style=style)
+
+    def dump_to_tree(self, signal_name: str, direction: str = "driver",
+                     max_depth: int = 10, use_box: bool = True) -> str:
+        """dump 转 tree 风格 (M5.1k, 跟 dump_to_arrow(style='tree') 同效)"""
+        return self.dump_to_arrow(
+            signal_name, direction=direction, max_depth=max_depth,
+            style="tree" if use_box else "ascii",
+        )
+
+
     def _is_real_signal(self, name: str) -> bool:
         """判断 name 是否是真实信号名 (不是字面常量 / 关键字)
 

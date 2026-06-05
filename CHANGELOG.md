@@ -38,6 +38,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Works on in-memory SV code (no file required).
 - `SyntaxNodeSnapshot` wrapper freezes the syntax text to defend against pyslang buffer reuse bugs.
 
+#### M5.1j - Human-friendly arrow output (NEW in 1.0.0)
+- All trace APIs now have `to_arrow()` methods that emit arrow-formatted, human-readable output.
+- Unified arrow semantics across the API: `←` driver / `→` load / `⚠` multi-driver / `✓` verified / `✗` not verified / `⤴` cross-file / `↻` cycle.
+- 5 API tiers all support arrow format: `TraceResult.to_arrow()` / `TraceSummary.to_arrow()` / `ContextBundle.to_arrow()` / `SignalTracer.to_arrow()` / `SignalTracer.chain_to_arrow()` / `SignalTracer.multi_drivers_to_arrow()` / `SignalTracer.dump_to_arrow()`.
+- 8 standalone formatter functions exported from `signal_tracer`: `format_driver` / `format_load` / `format_trace_arrow` / `format_driver_chain` / `format_multi_driver` / `format_evidence_chain` / `format_dump_summary` / `format_all`.
+- Constants exported: `ARROW_DRIVER = '←'`, `ARROW_LOAD = '→'`.
+- Coexists with `summary()`: use `summary()` for short LLM context, `to_arrow()` for human-readable chat/terminal output.
+
+#### M5.1k - Tree / Vertical / ASCII styles for long chains (NEW in 1.0.0)
+- 5 output styles for chain/dump: `arrow` (1-line, default) / `tree` (Unicode box-drawing, `├─│└─`) / `ascii` (ASCII, `+--|`) / `vertical` (per-line, indented) / `all` (arrow + tree both).
+- API: `chain_to_arrow(style=...)` / `dump_to_arrow(style=...)` / `format_driver_chain(style=...)` / `format_dump_summary(style=...)`.
+- Alias methods for short hands: `chain_to_tree(use_box=True/False)` / `chain_to_vertical()` / `dump_to_tree(use_box=True/False)`.
+- Tree style is for long chains (≥ 4 signals) where 1-line gets too long; vertical style is for chat/markdown where box-drawing might break; ASCII style is for old terminals / email / plain-text logs.
+
 #### M4 - Real project validation
 - Validated on **OpenTitan 6 modules**: uart (418 drivers), spi_device (3,229), dma (401), i2c (1,235), aes (24,065), hmac (870). **30,218 total drivers, 0 warning, 0 empty driver.**
 

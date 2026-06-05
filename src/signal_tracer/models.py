@@ -130,6 +130,21 @@ class TraceResult:
         direction = "<=" if self.trace_type == TraceType.DRIVER else "->"
         return f"TraceResult({self.signal_name} {direction} {self.source_expr!r}@{self.line})"
 
+    def to_arrow(self, max_expr_len: int = 40) -> str:
+        """生成箭头式人类友好输出 (M5.1j)
+
+        例 (driver):
+          count ← count + data_in @ counter.sv:11 [top] ✓ cred=1.00
+        例 (load):
+          count → mem[rd_ptr] @ fifo.sv:42 [fifo_ctrl]
+        """
+        from signal_tracer.formatters import format_driver, format_load
+        # TraceResult 自身已有 trace_type 字段, 比 ContextBundle 更准
+        is_load = self.trace_type == TraceType.LOAD
+        if is_load:
+            return format_load(self, max_expr_len=max_expr_len)
+        return format_driver(self, max_expr_len=max_expr_len)
+
     def to_context(self, file_content: Optional[str] = None, context_window: int = 2,
                 source_mode: str = 'auto') -> 'ContextBundle':
         """把自己打包成 ContextBundle (M5.1: 含 code evidence)
@@ -416,6 +431,20 @@ class TraceSummary:
                         )
         return chain
 
+    # M5.1j: 人类友好箭头式输出
+    def to_arrow(self, max_expr_len: int = 40) -> str:
+        """TraceSummary 一键输出 drivers + loads 的箭头式表达 (M5.1j)
+
+        例:
+          DRIVERS (2):
+            count ← 8'h00 @ counter.sv:9 [counter] ✓ cred=1.00
+            count ← count + data_in @ counter.sv:10 [counter] ✓ cred=1.00
+          LOADS (0):
+            (none)
+        """
+        from signal_tracer.formatters import format_all
+        return format_all(self, max_expr_len=max_expr_len)
+
 
 @dataclass(frozen=True)
 class ContextBundle:
@@ -509,6 +538,35 @@ class ContextBundle:
         if self.condition_stack:
             parts.append(f'cond={list(self.condition_stack)}')
         return ' '.join(parts)
+
+    def to_arrow(self, max_expr_len: int = 40) -> str:
+        """生成箭头式人类友好输出 (M5.1j)
+
+        例:
+          count ← count + data_in @ counter.sv:11 [top] ✓ cred=1.00
+          reg2hw.ctrl.tx.q ← reg2hw.ctrl.tx.q.q ⤴ @ reg_top.sv:42 ✓ cred=0.95
+
+        与 summary() 区别:
+          - summary() 适合 LLM 当 context (短, 字段化)
+          - to_arrow() 适合人眼扫 (箭头表示数据流, location 后置)
+
+        ContextBundle 默认按 driver 输出 (有 clock/reset 的 trace 一般是 driver);
+        要区分 load, 可在 source_signals 启发后手动选。Result.to_arrow() 是准的 (有 trace_type)。
+        """
+        # 延迟 import 避免循环
+        from signal_tracer.formatters import format_driver
+        # 从 code_evidence 拿 credibility_score (0-1)
+        cred = self.code_evidence.credibility_score if self.code_evidence else None
+        tmp = type('TmpTrace', (), {
+            'signal_name': self.signal_name,
+            'source_expr': self.source_expr,
+            'file': self.file,
+            'line': self.line,
+            'hierarchical_path': self.hierarchical_path,
+            'is_cross_file': False,
+            '_credibility': cred,
+        })()
+        return format_driver(tmp, max_expr_len=max_expr_len)
 
 
 @dataclass
